@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!-- NuGet package metadata -->
+    <PackageId>Vespa.NET.Testcontainers</PackageId>
+    <RootNamespace>Vespa.Testcontainers</RootNamespace>
+    <AssemblyName>Vespa.NET.Testcontainers</AssemblyName>
+    <Description>Testcontainers integration for Vespa.NET — spin up a real Vespa instance in unit and integration tests.</Description>
+    <PackageTags>vespa;vespa.ai;testcontainers;docker;integration-testing;testing</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Testcontainers" Version="4.11.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <PackageReference Remove="Microsoft.SourceLink.GitHub" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vespa.NET\Vespa.NET.csproj" />
+  </ItemGroup>
+
+</Project>

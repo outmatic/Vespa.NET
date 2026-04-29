@@ -1,0 +1,10 @@
+schema testdoc {
+    document testdoc {
+        field name type string {
+            indexing: summary | index
+        }
+        field value type int {
+            indexing: summary | attribute
+        }
+    }
+}

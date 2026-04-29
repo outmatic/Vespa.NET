@@ -1,0 +1,55 @@
+## A streamlined .gitignore for modern .NET projects
+## https://github.com/github/gitignore/blob/main/Dotnet.gitignore
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+[Pp]ublish/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# NuGet Packages
+*.nupkg
+*.snupkg
+
+# dotenv
+.env
+
+# Others
+~$*
+*~
+CodeCoverage/
+*.binlog
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.VisualState.xml
+TestResult.xml
+nunit-*.xml
+/BenchmarkDotNet.Artifacts
+
+# IDE
+*.user
+*.suo
+.vs/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

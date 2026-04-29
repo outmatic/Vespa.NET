@@ -1,0 +1,16 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Vespa.NET.Benchmarks/Vespa.NET.Benchmarks.csproj" />
+  </Folder>
+  <Project Path="samples/Vespa.NET.Samples/Vespa.NET.Samples.csproj" />
+  <Project Path="src/Vespa.NET/Vespa.NET.csproj" />
+  <Project Path="src/Vespa.NET.Models/Vespa.NET.Models.csproj" />
+  <Project Path="src/Vespa.NET.Testcontainers/Vespa.NET.Testcontainers.csproj" />
+  <Project Path="tests/Vespa.NET.IntegrationTests/Vespa.NET.IntegrationTests.csproj" />
+  <Project Path="tests/Vespa.NET.Tests/Vespa.NET.Tests.csproj" />
+</Solution>
