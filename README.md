@@ -2,7 +2,7 @@
 
 # Vespa.NET
 
-**The .NET SDK for [Vespa.ai](https://vespa.ai) — from schema to search in one line of code.**
+**The strongly-typed .NET SDK for [Vespa.ai](https://vespa.ai).**
 
 [![NuGet](https://img.shields.io/nuget/v/Vespa.NET?style=flat-square&logo=nuget&color=004880)](https://www.nuget.org/packages/Vespa.NET)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512bd4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
