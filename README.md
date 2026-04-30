@@ -131,11 +131,11 @@ var results = await client.Search.NearestNeighborSearchAsync<Product>(
 await foreach (var d in client.Documents.VisitAsync<Product>(selection: "product.price > 100"))
     Process(d.Fields);
 
-// Selection-based bulk ops — auto-loops on Vespa's continuation token
-var resp = await client.Documents.UpdateBySelectionAsync(
+// Selection-based bulk ops — typed builder, auto-loops on Vespa's continuation token
+var resp = await client.Documents.UpdateBySelectionAsync<Product>(
     "product.category == \"legacy\"",
-    new() { ["status"] = FieldOp.Assign("archived") },
-    "product", cluster: "content");
+    ops => ops.Field(p => p.Status, FieldOp.Assign("archived")),
+    cluster: "content");
 // resp.DocumentCount is the total across all chunks
 
 // Cross-cluster copy

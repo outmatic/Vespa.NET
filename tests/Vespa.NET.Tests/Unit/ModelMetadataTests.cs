@@ -361,6 +361,158 @@ public class ModelMetadataTests
         Assert.Equal(new FieldOperation("increment", 5.0), captured["year"]);
     }
 
+    // ── UpdateFieldsByGroup/ByNumber/BySelection extensions ───────────────────
+
+    [Fact]
+    public async Task UpdateFieldsByGroupAsync_TypedBuilder_ResolvesFieldNamesAndInfersMeta()
+    {
+        Dictionary<string, FieldOperation>? captured = null;
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateFieldsByGroupAsync("g1", "lid1", It.IsAny<Dictionary<string, FieldOperation>>(),
+                "music", "mynamespace", false, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, Dictionary<string, FieldOperation>, string, string?, bool, string?, DocumentRequestOptions?, CancellationToken>(
+                (_, _, ops, _, _, _, _, _, _) => captured = ops)
+            .ReturnsAsync(new VespaResponse { IsSuccess = true });
+
+        await mock.Object.UpdateFieldsByGroupAsync<Music>("g1", "lid1", ops => ops
+            .Field(m => m.ArtistName, FieldOp.Assign("Beatles"))
+            .Field(m => m.Year, FieldOp.Increment()));
+
+        Assert.NotNull(captured);
+        Assert.Equal(2, captured.Count);
+        Assert.True(captured.ContainsKey("artist_name"));
+        Assert.True(captured.ContainsKey("year"));
+    }
+
+    [Fact]
+    public async Task UpdateFieldsByGroupAsync_Dictionary_InfersDocTypeAndNamespace()
+    {
+        var fieldOps = new Dictionary<string, FieldOperation> { ["year"] = FieldOp.Increment() };
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateFieldsByGroupAsync("g1", "lid1", fieldOps,
+                "music", "mynamespace", false, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VespaResponse { IsSuccess = true });
+
+        await mock.Object.UpdateFieldsByGroupAsync<Music>("g1", "lid1", fieldOps);
+
+        mock.Verify(m => m.UpdateFieldsByGroupAsync("g1", "lid1", fieldOps,
+            "music", "mynamespace", false, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateFieldsByNumberAsync_TypedBuilder_ResolvesFieldNamesAndInfersMeta()
+    {
+        Dictionary<string, FieldOperation>? captured = null;
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateFieldsByNumberAsync(42L, "lid1", It.IsAny<Dictionary<string, FieldOperation>>(),
+                "music", "mynamespace", false, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Callback<long, string, Dictionary<string, FieldOperation>, string, string?, bool, string?, DocumentRequestOptions?, CancellationToken>(
+                (_, _, ops, _, _, _, _, _, _) => captured = ops)
+            .ReturnsAsync(new VespaResponse { IsSuccess = true });
+
+        await mock.Object.UpdateFieldsByNumberAsync<Music>(42L, "lid1", ops => ops
+            .Field(m => m.ArtistName, FieldOp.Assign("Beatles")));
+
+        Assert.NotNull(captured);
+        Assert.Single(captured);
+        Assert.True(captured.ContainsKey("artist_name"));
+    }
+
+    [Fact]
+    public async Task UpdateFieldsByNumberAsync_Dictionary_InfersDocTypeAndNamespace()
+    {
+        var fieldOps = new Dictionary<string, FieldOperation> { ["year"] = FieldOp.Increment() };
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateFieldsByNumberAsync(42L, "lid1", fieldOps,
+                "music", "mynamespace", false, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VespaResponse { IsSuccess = true });
+
+        await mock.Object.UpdateFieldsByNumberAsync<Music>(42L, "lid1", fieldOps);
+
+        mock.Verify(m => m.UpdateFieldsByNumberAsync(42L, "lid1", fieldOps,
+            "music", "mynamespace", false, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateBySelectionAsync_TypedBuilder_ResolvesFieldNamesAndInfersMeta()
+    {
+        Dictionary<string, FieldOperation>? captured = null;
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateBySelectionAsync("music.year < 2000", It.IsAny<Dictionary<string, FieldOperation>>(),
+                "music", "mynamespace", "content", It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, Dictionary<string, FieldOperation>, string, string?, string?, SelectionRequestOptions?, CancellationToken>(
+                (_, ops, _, _, _, _, _) => captured = ops)
+            .ReturnsAsync(new VespaResponse { IsSuccess = true });
+
+        await mock.Object.UpdateBySelectionAsync<Music>(
+            "music.year < 2000",
+            ops => ops.Field(m => m.ArtistName, FieldOp.Assign("archived")),
+            cluster: "content");
+
+        Assert.NotNull(captured);
+        Assert.Single(captured);
+        Assert.True(captured.ContainsKey("artist_name"));
+    }
+
+    [Fact]
+    public async Task UpdateBySelectionAsync_Dictionary_InfersDocTypeAndNamespace()
+    {
+        var fieldOps = new Dictionary<string, FieldOperation> { ["year"] = FieldOp.Increment() };
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateBySelectionAsync("music.year < 2000", fieldOps,
+                "music", "mynamespace", null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VespaResponse { IsSuccess = true });
+
+        await mock.Object.UpdateBySelectionAsync<Music>("music.year < 2000", fieldOps);
+
+        mock.Verify(m => m.UpdateBySelectionAsync("music.year < 2000", fieldOps,
+            "music", "mynamespace", null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateBySelectionPageAsync_TypedBuilder_ResolvesFieldNamesAndInfersMeta()
+    {
+        Dictionary<string, FieldOperation>? captured = null;
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateBySelectionPageAsync("music.year < 2000", It.IsAny<Dictionary<string, FieldOperation>>(),
+                "music", "mynamespace", null, "tok", It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, Dictionary<string, FieldOperation>, string, string?, string?, string?, SelectionRequestOptions?, CancellationToken>(
+                (_, ops, _, _, _, _, _, _) => captured = ops)
+            .ReturnsAsync(new SelectionPageResult());
+
+        await mock.Object.UpdateBySelectionPageAsync<Music>(
+            "music.year < 2000",
+            ops => ops.Field(m => m.Year, FieldOp.Increment()),
+            continuation: "tok");
+
+        Assert.NotNull(captured);
+        Assert.Single(captured);
+        Assert.True(captured.ContainsKey("year"));
+    }
+
+    [Fact]
+    public async Task UpdateBySelectionPageAsync_Dictionary_InfersDocTypeAndNamespace()
+    {
+        var fieldOps = new Dictionary<string, FieldOperation> { ["year"] = FieldOp.Increment() };
+
+        var mock = new Mock<IDocumentOperations>();
+        mock.Setup(m => m.UpdateBySelectionPageAsync("music.year < 2000", fieldOps,
+                "music", "mynamespace", null, null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SelectionPageResult());
+
+        await mock.Object.UpdateBySelectionPageAsync<Music>("music.year < 2000", fieldOps);
+
+        mock.Verify(m => m.UpdateBySelectionPageAsync("music.year < 2000", fieldOps,
+            "music", "mynamespace", null, null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── SearchOperationsExtensions ────────────────────────────────────────────
 
     [Fact]
