@@ -11,7 +11,6 @@ namespace Vespa.Query;
 ///     .WithProfile("semantic")
 ///     .Feature("query(threshold)", 0.8)
 ///     .Feature("query(embedding)", myTensor)
-///     .MatchFeatures("bm25(title)", "closeness(field, embedding)")
 ///     .RerankCount(200)
 ///     .Build();
 /// </code>
@@ -21,7 +20,6 @@ public sealed class RankingBuilder
 {
     private string? _profile;
     private readonly Dictionary<string, object> _features = [];
-    private readonly List<string> _matchFeatures = [];
     private readonly Dictionary<string, object> _properties = [];
     private int? _rerankCount;
     private bool? _listFeatures;
@@ -67,24 +65,6 @@ public sealed class RankingBuilder
     public RankingBuilder Feature(string name, object value)
     {
         _features[name] = value;
-        return this;
-    }
-
-    /// <summary>
-    /// Add one match feature to be returned per hit.
-    /// Match features are computed rank expressions whose values appear
-    /// in <see cref="SearchHit{T}.MatchFeatures"/>.
-    /// </summary>
-    public RankingBuilder MatchFeature(string featureExpression)
-    {
-        _matchFeatures.Add(featureExpression);
-        return this;
-    }
-
-    /// <summary>Add multiple match features at once</summary>
-    public RankingBuilder MatchFeatures(params string[] featureExpressions)
-    {
-        _matchFeatures.AddRange(featureExpressions);
         return this;
     }
 
@@ -179,7 +159,6 @@ public sealed class RankingBuilder
     {
         Profile = _profile,
         Features = _features.Count > 0 ? new Dictionary<string, object>(_features) : null,
-        MatchFeatures = _matchFeatures.Count > 0 ? string.Join(" ", _matchFeatures) : null,
         RerankCount = _rerankCount,
         ListFeatures = _listFeatures,
         Properties = _properties.Count > 0 ? new Dictionary<string, object>(_properties) : null,

@@ -12,6 +12,32 @@ public class SearchRequestSerializationTests
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    // --- Hit matchfeatures ---
+
+    [Fact]
+    public void SearchHit_TensorMatchFeature_Deserializes()
+    {
+        // Tensor-valued match features render as JSON objects - a double-typed
+        // dictionary made the whole search response deserialization throw.
+        var json = """
+        {
+            "id": "id:test:music::1",
+            "relevance": 1.0,
+            "matchfeatures": {
+                "bm25(title)": 1.5,
+                "closeness(field,embedding)": {"type": "tensor<float>(x[2])", "values": [1.0, 2.0]}
+            }
+        }
+        """;
+
+        var hit = JsonSerializer.Deserialize<SearchHit<Dictionary<string, object>>>(json, JsonOpts);
+
+        Assert.NotNull(hit);
+        Assert.Equal(1.5, hit.GetMatchFeature("bm25(title)"));
+        Assert.Null(hit.GetMatchFeature("closeness(field,embedding)"));
+        Assert.Equal(JsonValueKind.Object, hit.MatchFeatures!["closeness(field,embedding)"].ValueKind);
+    }
+
     // --- Model parameters ---
 
     [Fact]

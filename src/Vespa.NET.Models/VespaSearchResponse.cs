@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Vespa.Models;
@@ -92,8 +93,23 @@ public sealed record SearchHit<T> where T : class
     [JsonPropertyName("fields")]
     public T? Fields { get; init; }
 
+    /// <summary>
+    /// Match features computed for this hit. Values can be numbers or tensors
+    /// (rendered as JSON objects); use <see cref="GetMatchFeature"/> for scalars.
+    /// </summary>
     [JsonPropertyName("matchfeatures")]
-    public Dictionary<string, double>? MatchFeatures { get; init; }
+    public Dictionary<string, JsonElement>? MatchFeatures { get; init; }
+
+    /// <summary>
+    /// Returns the named match feature as a double, or <see langword="null"/> when
+    /// the feature is missing or not a scalar (e.g. a tensor).
+    /// </summary>
+    public double? GetMatchFeature(string name) =>
+        MatchFeatures is not null &&
+        MatchFeatures.TryGetValue(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number
+            ? value.GetDouble()
+            : null;
 }
 
 /// <summary>

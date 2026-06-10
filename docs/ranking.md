@@ -13,7 +13,6 @@ var ranking = RankingBuilder
     .WithProfile("semantic")
     .Feature("query(threshold)", 0.8)
     .Feature("query(embedding)", queryEmbedding)
-    .MatchFeatures("bm25(name)", "closeness(field, embedding)")
     .RerankCount(200)
     .SoftTimeout(enable: true, factor: 0.7)
     .MatchPhase("popularity", maxHits: 10000)
@@ -38,7 +37,6 @@ Define rank profiles directly on your model with `[VespaRankProfile]`:
     FirstPhase = "closeness(field, embedding)",
     SecondPhase = "closeness(field, embedding) * attribute(popularity)",
     SecondPhaseRerankCount = 200,
-    MatchFeatures = "bm25(title) closeness(field, embedding)",
     Functions = "freshness: now - attribute(timestamp)")]
 public record Product { ... }
 ```
@@ -54,7 +52,6 @@ public record Product { ... }
 | `SecondPhaseRerankCount` | Number of documents to re-rank in second phase |
 | `GlobalPhase` | Global-phase ranking expression |
 | `GlobalPhaseRerankCount` | Number of documents to re-rank in global phase |
-| `MatchFeatures` | Features available during matching |
 | `SummaryFeatures` | Features included in search results |
 | `DiversityAttribute` | Attribute field for result diversity |
 | `DiversityMinGroups` | Minimum number of diverse groups |
@@ -68,7 +65,6 @@ public record Product { ... }
 |---|---|
 | `.WithProfile(name)` | Ranking profile name |
 | `.Feature(name, value)` | Query feature (tensor or scalar) |
-| `.MatchFeatures(...)` | Features to compute during matching |
 | `.RerankCount(n)` | Second-phase rerank count |
 | `.SoftTimeout(enable, factor)` | Soft timeout with coverage factor |
 | `.MatchPhase(field, maxHits)` | Match-phase with attribute field |

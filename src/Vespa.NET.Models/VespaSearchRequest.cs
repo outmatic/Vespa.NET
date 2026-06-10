@@ -320,12 +320,6 @@ public sealed class RankingConfig
     public Dictionary<string, object>? Properties { get; set; }
 
     /// <summary>
-    /// Space-separated list of rank features to include in every hit's <c>matchfeatures</c> field.
-    /// </summary>
-    [JsonPropertyName("matchFeatures")]
-    public string? MatchFeatures { get; set; }
-
-    /// <summary>
     /// Number of top-N documents to consider for second-phase re-ranking
     /// </summary>
     [JsonPropertyName("rerankCount")]

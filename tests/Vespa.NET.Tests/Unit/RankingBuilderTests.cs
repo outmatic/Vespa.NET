@@ -37,7 +37,6 @@ public class RankingBuilderTests
     {
         var config = RankingBuilder.WithProfile("default").Build();
         Assert.Null(config.Features);
-        Assert.Null(config.MatchFeatures);
         Assert.Null(config.RerankCount);
         Assert.Null(config.ListFeatures);
         Assert.Null(config.Properties);
@@ -93,58 +92,6 @@ public class RankingBuilderTests
         var tensor = new[] { 0.1, 0.2, 0.3 };
         var config = RankingBuilder.Create().Feature("query(embedding)", tensor).Build();
         Assert.Same(tensor, config.Features!["query(embedding)"]);
-    }
-
-    // --- MatchFeatures ---
-
-    [Fact]
-    public void MatchFeature_Single_SetsMatchFeaturesString()
-    {
-        var config = RankingBuilder.Create().MatchFeature("bm25(title)").Build();
-        Assert.Equal("bm25(title)", config.MatchFeatures);
-    }
-
-    [Fact]
-    public void MatchFeature_Multiple_JoinedWithSpace()
-    {
-        var config = RankingBuilder.Create()
-            .MatchFeature("bm25(title)")
-            .MatchFeature("closeness(field, embedding)")
-            .Build();
-
-        Assert.Equal("bm25(title) closeness(field, embedding)", config.MatchFeatures);
-    }
-
-    [Fact]
-    public void MatchFeatures_ParamsOverload_AllJoined()
-    {
-        var config = RankingBuilder.Create()
-            .MatchFeatures("bm25(title)", "nativeFieldMatch(body)", "closeness(field, embedding)")
-            .Build();
-
-        Assert.Equal("bm25(title) nativeFieldMatch(body) closeness(field, embedding)", config.MatchFeatures);
-    }
-
-    [Fact]
-    public void MatchFeature_None_IsNull()
-    {
-        var config = RankingBuilder.WithProfile("p").Build();
-        Assert.Null(config.MatchFeatures);
-    }
-
-    [Fact]
-    public void MatchFeatures_MixSingleAndParams_AllPresent()
-    {
-        var config = RankingBuilder.Create()
-            .MatchFeature("bm25(title)")
-            .MatchFeatures("closeness(field, embedding)", "nativeRank")
-            .Build();
-
-        // Feature names can contain spaces (e.g. "closeness(field, embedding)")
-        // so verify by substring containment, not by splitting on space
-        Assert.Contains("bm25(title)", config.MatchFeatures);
-        Assert.Contains("closeness(field, embedding)", config.MatchFeatures);
-        Assert.Contains("nativeRank", config.MatchFeatures);
     }
 
     // --- RerankCount ---
@@ -211,14 +158,12 @@ public class RankingBuilderTests
         var config = RankingBuilder
             .WithProfile("semantic")
             .Feature("query(threshold)", 0.7)
-            .MatchFeatures("bm25(title)", "closeness(field, embedding)")
             .RerankCount(100)
             .ListAllFeatures(false)
             .Build();
 
         Assert.Equal("semantic", config.Profile);
         Assert.Equal(0.7, config.Features!["query(threshold)"]);
-        Assert.Equal("bm25(title) closeness(field, embedding)", config.MatchFeatures);
         Assert.Equal(100, config.RerankCount);
         Assert.False(config.ListFeatures);
     }
@@ -266,18 +211,6 @@ public class RankingBuilderTests
 
         var json = JsonSerializer.Serialize(request, JsonOpts);
         Assert.Contains(@"""profile"":""semantic""", json);
-    }
-
-    [Fact]
-    public void Serialization_MatchFeatures_EmitsMatchFeaturesField()
-    {
-        var config = RankingBuilder.Create()
-            .MatchFeatures("bm25(title)", "closeness(field, embedding)")
-            .Build();
-
-        var json = JsonSerializer.Serialize(config, JsonOpts);
-        Assert.Contains("matchFeatures", json);
-        Assert.Contains("bm25(title)", json);
     }
 
     [Fact]
