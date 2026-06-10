@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Vespa.Models;
 
@@ -722,14 +723,48 @@ public sealed partial class DocumentOperations(
         {
             if (string.IsNullOrWhiteSpace(line))
                 continue;
-            // JSONL responses interleave document lines with continuation/sessionStats metadata.
-            // Document lines contain "fields": — skip everything else.
-            if (!line.Contains("\"fields\":", StringComparison.Ordinal))
-                continue;
-            var doc = VespaIdInjector.DeserializeAndInject<T>(line);
+            var doc = ParseJsonlLine<T>(line);
             if (doc is not null)
                 yield return doc;
         }
+    }
+
+    /// <summary>
+    /// Parses one document/v1 JSONL stream line. Document lines are
+    /// <c>{"put":"id:...","fields":{...}}</c>, tombstones (only with
+    /// <c>includeRemoves=true</c>) are <c>{"remove":"id:..."}</c> and yield a document
+    /// with <see langword="null"/> <c>Fields</c>; <c>{"continuation":{...}}</c> progress
+    /// markers and other metadata return <see langword="null"/>.
+    /// </summary>
+    private static VespaDocument<T>? ParseJsonlLine<T>(string line) where T : class
+    {
+        using var json = JsonDocument.Parse(line);
+        var root = json.RootElement;
+
+        if (root.TryGetProperty("remove", out var removeElem))
+            return new VespaDocument<T>
+            {
+                Id = VespaDocumentId.GetUserSpecified(removeElem.GetString() ?? string.Empty)
+            };
+
+        string? id = null;
+        if (root.TryGetProperty("put", out var putElem))
+            id = putElem.GetString();
+        else if (root.TryGetProperty("id", out var idElem))
+            id = idElem.GetString();
+
+        if (id is null)
+            return null;
+
+        var doc = new VespaDocument<T>
+        {
+            Id = VespaDocumentId.GetUserSpecified(id),
+            Fields = root.TryGetProperty("fields", out var fieldsElem)
+                ? fieldsElem.Deserialize<T>(VespaJsonOptions.Default)
+                : null
+        };
+        VespaIdInjector.Inject(doc);
+        return doc;
     }
 
     public async IAsyncEnumerable<VespaDocument<T>> VisitAsync<T>(

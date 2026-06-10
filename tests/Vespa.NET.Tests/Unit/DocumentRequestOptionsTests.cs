@@ -205,6 +205,66 @@ public class DocumentRequestOptionsTests
     }
 
     [Fact]
+    public async Task VisitJsonlAsync_ParsesRealStreamFormat()
+    {
+        // Real document/v1 stream=true lines use "put", interleaved with continuation markers
+        // (docs.vespa.ai/en/reference/document-v1-api-reference.html)
+        var jsonl = """
+        {"put":"id:test:music::1","fields":{"title":"Song A"}}
+        {"continuation":{"token":"abc","percentFinished":40.0}}
+        {"put":"id:test:music::2","fields":{"title":"Song B"}}
+        """;
+
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(jsonl.Trim())
+            });
+
+        using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
+        var ops = new DocumentOperations(http, _options);
+
+        var docs = new List<VespaDocument<Dictionary<string, object>>>();
+        await foreach (var doc in ops.VisitJsonlAsync<Dictionary<string, object>>("music"))
+            docs.Add(doc);
+
+        Assert.Equal(2, docs.Count);
+        Assert.Equal("1", docs[0].Id);
+        Assert.Equal("2", docs[1].Id);
+        Assert.NotNull(docs[0].Fields);
+    }
+
+    [Fact]
+    public async Task VisitJsonlAsync_WithIncludeRemoves_YieldsTombstones()
+    {
+        var jsonl = """
+        {"put":"id:test:music::1","fields":{"title":"Song A"}}
+        {"remove":"id:test:music::4"}
+        """;
+
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(jsonl.Trim())
+            });
+
+        using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
+        var ops = new DocumentOperations(http, _options);
+
+        var docs = new List<VespaDocument<Dictionary<string, object>>>();
+        await foreach (var doc in ops.VisitJsonlAsync<Dictionary<string, object>>("music", includeRemoves: true))
+            docs.Add(doc);
+
+        Assert.Equal(2, docs.Count);
+        Assert.Equal("4", docs[1].Id);
+        Assert.Null(docs[1].Fields);
+    }
+
+    [Fact]
     public async Task VisitJsonlAsync_UrlIncludesStreamParam()
     {
         string? capturedUrl = null;
