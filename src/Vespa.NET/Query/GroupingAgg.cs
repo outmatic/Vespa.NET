@@ -27,12 +27,20 @@ public static class GroupingAgg
     public static string Xor(string field) => $"xor({field})";
 
     /// <summary>
-    /// percentile(n, field) — the n-th percentile (0–100) of the field values in the group.
+    /// quantiles([q1, q2, …], field) — quantile estimates of the field values in the group.
     /// </summary>
-    /// <param name="percentile">Percentile value between 0 and 100 (e.g. 95 for p95).</param>
+    /// <param name="quantiles">Quantile values between 0 and 1 inclusive (e.g. 0.95 for p95).</param>
     /// <param name="field">The numeric field to aggregate.</param>
-    public static string Percentile(double percentile, string field) =>
-        $"percentile({percentile.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {field})";
+    public static string Quantiles(IReadOnlyList<double> quantiles, string field)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(quantiles.Count, nameof(quantiles));
+        foreach (var q in quantiles)
+            if (q is < 0 or > 1)
+                throw new ArgumentOutOfRangeException(nameof(quantiles), q, "Quantile values must be between 0 and 1 inclusive.");
+
+        var list = string.Join(", ", quantiles.Select(q => q.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return $"quantiles([{list}], {field})";
+    }
 
     /// <summary>
     /// relevance() — the average relevance score of documents in the group.
@@ -97,11 +105,20 @@ public static class GroupingAgg
     /// <summary>cat(f1, f2) — string concatenation of two fields</summary>
     public static string Cat(string field1, string field2) => $"cat({field1}, {field2})";
 
-    /// <summary>md5(field, n) — MD5 hash truncated to n bits</summary>
-    public static string Md5(string field, int bits) => $"md5({field}, {bits})";
+    /// <summary>
+    /// md5(field, maxLength, bits) — MD5 over the binary representation of the argument,
+    /// keeping the lowest <paramref name="bits"/> bits.
+    /// </summary>
+    public static string Md5(string field, int maxLength, int bits) => $"md5({field}, {maxLength}, {bits})";
 
-    /// <summary>uca(field, locale) — Unicode Collation Algorithm sort key</summary>
-    public static string Uca(string field, string locale) => $"uca({field}, {locale})";
+    /// <summary>
+    /// uca(field, "locale"[, "strength"]) — Unicode Collation Algorithm sort key.
+    /// </summary>
+    /// <param name="field">The expression to collate.</param>
+    /// <param name="locale">Locale string, e.g. <c>"sv"</c>.</param>
+    /// <param name="strength">Optional strength: <c>"PRIMARY"</c>, <c>"SECONDARY"</c>, <c>"TERTIARY"</c>, <c>"QUATERNARY"</c> or <c>"IDENTICAL"</c>.</param>
+    public static string Uca(string field, string locale, string? strength = null) =>
+        strength is null ? $"uca({field}, \"{locale}\")" : $"uca({field}, \"{locale}\", \"{strength}\")";
 
     /// <summary>zcurve.x(field) — X coordinate from z-curve encoded value</summary>
     public static string ZCurveX(string field) => $"zcurve.x({field})";

@@ -476,12 +476,32 @@ public class GroupingBuilderTests : IDisposable
     // --- GroupingAgg: Percentile ---
 
     [Fact]
-    public void GroupingAgg_Percentile_ReturnsExpr()
-        => Assert.Equal("percentile(95, price)", GroupingAgg.Percentile(95, "price"));
+    public void GroupingAgg_Quantiles_ReturnsBracketedListThenExpression()
+        // Vespa grammar: quantiles([0.5, 0.9], expression), values 0–1
+        => Assert.Equal("quantiles([0.5, 0.9], price)", GroupingAgg.Quantiles([0.5, 0.9], "price"));
 
     [Fact]
-    public void GroupingAgg_Percentile_UsesInvariantCulture()
-        => Assert.Equal("percentile(99.9, latency)", GroupingAgg.Percentile(99.9, "latency"));
+    public void GroupingAgg_Quantiles_UsesInvariantCulture()
+        => Assert.Equal("quantiles([0.999], latency)", GroupingAgg.Quantiles([0.999], "latency"));
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(1.1)]
+    public void GroupingAgg_Quantiles_OutOfRangeThrows(double quantile)
+        => Assert.Throws<ArgumentOutOfRangeException>(() => GroupingAgg.Quantiles([quantile], "price"));
+
+    [Fact]
+    public void GroupingAgg_Md5_EmitsThreeArguments()
+        // Vespa grammar: md5(exp, number, number)
+        => Assert.Equal("md5(title, 1024, 64)", GroupingAgg.Md5("title", 1024, 64));
+
+    [Fact]
+    public void GroupingAgg_Uca_QuotesLocale()
+        => Assert.Equal("""uca(name, "sv")""", GroupingAgg.Uca("name", "sv"));
+
+    [Fact]
+    public void GroupingAgg_Uca_WithStrength_QuotesBoth()
+        => Assert.Equal("""uca(name, "sv", "PRIMARY")""", GroupingAgg.Uca("name", "sv", "PRIMARY"));
 
     // --- GroupingBuilder: GroupByFixedWidth ---
 
@@ -494,6 +514,16 @@ public class GroupingBuilderTests : IDisposable
             .Build();
 
         Assert.Contains("group(fixedwidth(price, 100))", expr);
+    }
+
+    [Fact]
+    public void Build_GroupByFixedWidth_MapKeyAddressing_IsAllowed()
+    {
+        var expr = GroupingBuilder.All()
+            .GroupByFixedWidth("""attributes{"price"}""", 10)
+            .Build();
+
+        Assert.Contains("""fixedwidth(attributes{"price"}, 10)""", expr);
     }
 
     [Fact]
@@ -963,8 +993,6 @@ public class GroupingBuilderTests : IDisposable
     // --- M10: Composite expressions ---
 
     [Fact] public void GroupingAgg_Cat() => Assert.Equal("cat(first, last)", GroupingAgg.Cat("first", "last"));
-    [Fact] public void GroupingAgg_Md5() => Assert.Equal("md5(title, 64)", GroupingAgg.Md5("title", 64));
-    [Fact] public void GroupingAgg_Uca() => Assert.Equal("uca(title, en_US)", GroupingAgg.Uca("title", "en_US"));
     [Fact] public void GroupingAgg_ZCurveX() => Assert.Equal("zcurve.x(position)", GroupingAgg.ZCurveX("position"));
     [Fact] public void GroupingAgg_ZCurveY() => Assert.Equal("zcurve.y(position)", GroupingAgg.ZCurveY("position"));
     [Fact] public void GroupingAgg_DocIdNsSpecific() => Assert.Equal("docidnsspecific()", GroupingAgg.DocIdNsSpecific());
@@ -1033,25 +1061,26 @@ public class GroupingBuilderTests : IDisposable
     // --- M10: summary(class) in each ---
 
     [Fact]
-    public void EachGroupingBuilder_Summary_IncludesSummaryClause()
+    public void EachGroupingBuilder_Summary_EmitsNestedHitEach()
     {
+        // Vespa grammar: hits per group come from each(max(N) each(output(summary(class))))
         var g = GroupingBuilder.All()
             .Group("genre")
-            .Each(e => e.Output(GroupingAgg.Count()).Summary("compact"))
+            .Each(e => e.Output(GroupingAgg.Count()).Summary("compact", maxHits: 3))
             .Build();
 
-        Assert.Contains("summary(compact)", g);
+        Assert.Equal("all(group(genre) each(output(count()) max(3) each(output(summary(compact)))))", g);
     }
 
     [Fact]
-    public void EachGroupingBuilder_SummaryDefault_IncludesSummaryClause()
+    public void EachGroupingBuilder_SummaryDefault_EmitsNestedHitEach()
     {
         var g = GroupingBuilder.All()
             .Group("genre")
             .Each(e => e.Summary())
             .Build();
 
-        Assert.Contains("summary()", g);
+        Assert.Equal("all(group(genre) each(each(output(summary()))))", g);
     }
 
     // --- M10: CustomParameters / param substitution ---

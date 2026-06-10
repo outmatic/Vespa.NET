@@ -64,6 +64,18 @@ public sealed class YqlBuilder
         return this;
     }
 
+    /// <summary>
+    /// Order by a raw YQL order-by expression, e.g. an annotated field like
+    /// <c>{"function":"uca","locale":"en_US"}name</c>. The expression is embedded
+    /// verbatim — do not pass unvalidated end-user input.
+    /// </summary>
+    public YqlBuilder OrderByRaw(string expression, bool descending = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+        _orderByClauses.Add((expression, descending));
+        return this;
+    }
+
     public YqlBuilder Limit(int limit)
     {
         _limit = limit;

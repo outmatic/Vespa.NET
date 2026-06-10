@@ -4,8 +4,9 @@ namespace Vespa.Query;
 /// Validation for names interpolated verbatim into YQL/grouping expressions.
 /// String <em>values</em> are escaped by the predicates; field and tensor
 /// <em>names</em> cannot be escaped, so they are restricted to the identifier
-/// grammar (<c>[A-Za-z_][A-Za-z0-9_]*</c>, dot-separated for struct paths)
-/// to keep user-supplied input from breaking out of the query.
+/// grammar — dot-separated <c>[A-Za-z_][A-Za-z0-9_]*</c> segments, each
+/// optionally followed by a map-key suffix (<c>field{"key"}</c>) — to keep
+/// user-supplied input from breaking out of the query.
 /// </summary>
 internal static class YqlIdentifier
 {
@@ -14,7 +15,7 @@ internal static class YqlIdentifier
     {
         if (!IsValid(name))
             throw new ArgumentException(
-                $"'{name}' is not a valid YQL identifier. Expected [A-Za-z_][A-Za-z0-9_]* segments, optionally dot-separated (e.g. \"price\" or \"attributes.key\").",
+                $"'{name}' is not a valid YQL identifier. Expected [A-Za-z_][A-Za-z0-9_]* segments, optionally dot-separated, with an optional map-key suffix (e.g. \"price\", \"attributes.key\" or \"my_map{{\"key\"}}\").",
                 paramName);
         return name;
     }
@@ -24,25 +25,37 @@ internal static class YqlIdentifier
         if (string.IsNullOrEmpty(name))
             return false;
 
-        var startOfSegment = true;
-        foreach (var c in name)
+        var i = 0;
+        while (true)
         {
-            if (startOfSegment)
-            {
-                if (!char.IsAsciiLetter(c) && c != '_')
-                    return false;
-                startOfSegment = false;
-            }
-            else if (c == '.')
-            {
-                startOfSegment = true;
-            }
-            else if (!char.IsAsciiLetterOrDigit(c) && c != '_')
-            {
+            // identifier segment
+            if (i >= name.Length || (!char.IsAsciiLetter(name[i]) && name[i] != '_'))
                 return false;
-            }
-        }
+            i++;
+            while (i < name.Length && (char.IsAsciiLetterOrDigit(name[i]) || name[i] == '_'))
+                i++;
 
-        return !startOfSegment; // no trailing dot / empty segment
+            // optional map-key suffix: {"key"} — key may not contain quotes/backslashes
+            if (i < name.Length && name[i] == '{')
+            {
+                if (i + 1 >= name.Length || name[i + 1] != '"')
+                    return false;
+                i += 2;
+                while (i < name.Length && name[i] is not '"' and not '\\')
+                    i++;
+                if (i >= name.Length || name[i] != '"')
+                    return false;
+                i++;
+                if (i >= name.Length || name[i] != '}')
+                    return false;
+                i++;
+            }
+
+            if (i == name.Length)
+                return true;
+            if (name[i] != '.')
+                return false;
+            i++;
+        }
     }
 }

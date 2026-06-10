@@ -162,6 +162,38 @@ public class YqlBuilderTests
     }
 
     [Fact]
+    public void OrderByRaw_AllowsAnnotatedFields()
+    {
+        // YQL order by accepts annotated fields; the raw overload is the documented escape hatch
+        var yql = YqlBuilder.Select().From("music")
+            .OrderByRaw("""{"function":"uca","locale":"en_US"}name""", descending: true)
+            .Build();
+
+        Assert.Contains("""order by {"function":"uca","locale":"en_US"}name desc""", yql);
+    }
+
+    [Fact]
+    public void Field_MapKeyAddressing_IsAllowed()
+    {
+        // Map-key addressing (field{"key"}) is legal Vespa syntax
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("""my_map{"price"}""").GreaterThan(1))
+            .Build();
+
+        Assert.Contains("""my_map{"price"} > 1""", yql);
+    }
+
+    [Theory]
+    [InlineData("""m{"unterminated""")]
+    [InlineData("""m{price}""")]
+    [InlineData("""m{"k"}extra""")]
+    public void Field_MalformedMapKey_Throws(string field)
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.Field(field).GreaterThan(1)));
+    }
+
+    [Fact]
     public void Select_InvalidFieldToken_Throws()
     {
         Assert.ThrowsAny<ArgumentException>(() =>

@@ -84,10 +84,10 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 | `Max(field)` | Maximum value |
 | `StdDev(field)` | Standard deviation |
 | `Xor(field)` | XOR of field values |
-| `Percentile(n, field)` | Nth percentile |
+| `Quantiles([0.5, 0.9], field)` | Quantile estimates (values 0–1) |
 | `Relevance()` | Document relevance score |
-| `Summary()` | Full document summary |
-| `Summary("class")` | Named document summary |
+| `Summary()` | Hits per group: `each(output(summary()))` |
+| `Summary("class", maxHits: 3)` | Hits per group with summary class and limit |
 
 ### Time Functions
 
@@ -116,8 +116,8 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 | Function | Description |
 |---|---|
 | `Cat(f1, f2)` | Concatenate |
-| `Md5(field, bits)` | MD5 hash |
-| `Uca(field, locale)` | Unicode collation |
+| `Md5(field, maxLength, bits)` | MD5 hash |
+| `Uca(field, "locale", "strength"?)` | Unicode collation |
 | `ZCurveX(field)` | Z-curve X coordinate |
 | `ZCurveY(field)` | Z-curve Y coordinate |
 | `DocIdNsSpecific()` | Namespace-specific document ID |

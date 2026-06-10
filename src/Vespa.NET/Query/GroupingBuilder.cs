@@ -211,12 +211,19 @@ public sealed class EachGroupingBuilder
     }
 
     /// <summary>
-    /// Include document summaries of a specific summary class inside each group.
-    /// Generates <c>summary(class)</c> or <c>summary()</c>.
+    /// Include document summaries for the hits inside each group.
+    /// Generates the nested hit-list form Vespa requires:
+    /// <c>max(N) each(output(summary(class)))</c>
+    /// (see docs.vespa.ai/en/grouping.html). The returned documents appear as
+    /// <c>VespaGroup.Hits</c> when parsed with <c>GroupByAsync</c>.
     /// </summary>
-    public EachGroupingBuilder Summary(string? summaryClass = null)
+    /// <param name="summaryClass">Optional document-summary class; omit for the default summary.</param>
+    /// <param name="maxHits">Optional maximum number of hits to return per group.</param>
+    public EachGroupingBuilder Summary(string? summaryClass = null, int? maxHits = null)
     {
-        _summary = summaryClass is null ? "summary()" : $"summary({summaryClass})";
+        var summary = summaryClass is null ? "summary()" : $"summary({summaryClass})";
+        var prefix = maxHits.HasValue ? $"max({maxHits.Value}) " : "";
+        _summary = $"{prefix}each(output({summary}))";
         return this;
     }
 
