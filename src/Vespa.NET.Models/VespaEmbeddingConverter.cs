@@ -25,25 +25,103 @@ public sealed class VespaEmbeddingConverter : JsonConverter<float[]?>
         float[]? result = null;
 
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
-            if (reader.TokenType == JsonTokenType.PropertyName && reader.GetString() is "values" or "cells")
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName)
+                continue;
+
+            if (reader.GetString() is "values" or "cells")
             {
                 reader.Read();
-                if (reader.TokenType == JsonTokenType.StartArray)
-                    result = ReadArray(ref reader);
+                result = reader.TokenType switch
+                {
+                    JsonTokenType.StartArray => ReadArray(ref reader),
+                    // Short form mapped cells: {"cells":{"a":1.0,"b":2.0}}
+                    JsonTokenType.StartObject => ReadMappedCells(ref reader),
+                    _ => SkipAndKeep(ref reader, result)
+                };
             }
             else
+            {
                 reader.Skip();
+            }
+        }
 
         return result;
+    }
+
+    private static float[]? SkipAndKeep(ref Utf8JsonReader reader, float[]? current)
+    {
+        reader.Skip();
+        return current;
     }
 
     private static float[] ReadArray(ref Utf8JsonReader reader)
     {
         var list = new List<float>();
+        ReadArrayInto(ref reader, list);
+        return list.ToArray();
+    }
+
+    private static void ReadArrayInto(ref Utf8JsonReader reader, List<float> output)
+    {
         while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            switch (reader.TokenType)
+            {
+                case JsonTokenType.Number:
+                    output.Add(reader.GetSingle());
+                    break;
+                // Multi-dimensional short form — flatten row-major
+                case JsonTokenType.StartArray:
+                    ReadArrayInto(ref reader, output);
+                    break;
+                // Long-form cell: {"address":{...},"value":2.0}
+                case JsonTokenType.StartObject:
+                    ReadCellObjectInto(ref reader, output);
+                    break;
+                default:
+                    reader.Skip();
+                    break;
+            }
+        }
+    }
+
+    private static void ReadCellObjectInto(ref Utf8JsonReader reader, List<float> output)
+    {
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName)
+                continue;
+
+            if (reader.GetString() == "value")
+            {
+                reader.Read();
+                if (reader.TokenType == JsonTokenType.Number)
+                    output.Add(reader.GetSingle());
+                else
+                    reader.Skip();
+            }
+            else
+            {
+                reader.Skip();
+            }
+        }
+    }
+
+    private static float[] ReadMappedCells(ref Utf8JsonReader reader)
+    {
+        var list = new List<float>();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName)
+                continue;
+
+            reader.Read();
             if (reader.TokenType == JsonTokenType.Number)
                 list.Add(reader.GetSingle());
-
+            else
+                reader.Skip();
+        }
         return list.ToArray();
     }
 
