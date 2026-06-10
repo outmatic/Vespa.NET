@@ -19,8 +19,11 @@ namespace Vespa.Testcontainers;
 /// </example>
 public sealed class VespaContainer : IAsyncDisposable
 {
-    /// <summary>The Vespa Docker image used by default.</summary>
-    public const string DefaultImage = "vespaengine/vespa:latest";
+    /// <summary>
+    /// The Vespa Docker image used by default. Pinned to the major version so test
+    /// runs are reproducible and not broken by silent <c>latest</c> upgrades.
+    /// </summary>
+    public const string DefaultImage = "vespaengine/vespa:8";
 
     /// <summary>The default HTTP port exposed by Vespa.</summary>
     public const int DefaultPort = 8080;
@@ -29,6 +32,7 @@ public sealed class VespaContainer : IAsyncDisposable
     public const int ConfigPort = 19071;
 
     private readonly string _image;
+    private readonly List<IDisposable> _ownedClients = [];
     private IContainer? _container;
 
     /// <summary>
@@ -63,7 +67,18 @@ public sealed class VespaContainer : IAsyncDisposable
         => _container?.StopAsync(cancellationToken) ?? Task.CompletedTask;
 
     /// <inheritdoc />
-    public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
+    public async ValueTask DisposeAsync()
+    {
+        lock (_ownedClients)
+        {
+            foreach (var client in _ownedClients)
+                client.Dispose();
+            _ownedClients.Clear();
+        }
+
+        if (_container is not null)
+            await _container.DisposeAsync();
+    }
 
     // ── Connection info ────────────────────────────────────────────────────────
 
@@ -119,14 +134,23 @@ public sealed class VespaContainer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Convenience overload — creates a <see cref="VespaClient"/> with a shared internal
-    /// <see cref="HttpClient"/>. The HTTP client is not exposed; use
-    /// <see cref="CreateClientWithHttp"/> when you need to dispose it explicitly.
+    /// Convenience overload — creates a <see cref="VespaClient"/> whose
+    /// <see cref="HttpClient"/> is owned by this container and disposed in
+    /// <see cref="DisposeAsync"/>. Use <see cref="CreateClientWithHttp"/> when you
+    /// need to control the HTTP client's lifetime yourself.
     /// </summary>
     public VespaClient CreateClient(
         string defaultNamespace = "default",
         ILogger<VespaClient>? logger = null)
-        => CreateClientWithHttp(defaultNamespace, logger).Client;
+    {
+        var (client, http) = CreateClientWithHttp(defaultNamespace, logger);
+        lock (_ownedClients)
+        {
+            _ownedClients.Add(client);
+            _ownedClients.Add(http);
+        }
+        return client;
+    }
 
     /// <summary>
     /// Deploys a Vespa application package (ZIP file) to this container via the config server.
@@ -153,6 +177,39 @@ public sealed class VespaContainer : IAsyncDisposable
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             throw new InvalidOperationException(
                 $"Vespa application deployment failed ({response.StatusCode}): {body}");
+        }
+
+        // prepareandactivate returns before the application port serves traffic —
+        // wait for the app health endpoint so callers don't race the activation.
+        await WaitForApplicationReadyAsync(http, cancellationToken);
+    }
+
+    private async Task WaitForApplicationReadyAsync(HttpClient http, CancellationToken cancellationToken)
+    {
+        var healthUrl = $"{Endpoint}/state/v1/health";
+        var deadline = TimeSpan.FromMinutes(2);
+        var elapsed = TimeSpan.Zero;
+        var pollInterval = TimeSpan.FromMilliseconds(500);
+
+        while (true)
+        {
+            try
+            {
+                using var health = await http.GetAsync(healthUrl, cancellationToken);
+                if (health.IsSuccessStatusCode)
+                    return;
+            }
+            catch (HttpRequestException)
+            {
+                // port not serving yet
+            }
+
+            if (elapsed >= deadline)
+                throw new InvalidOperationException(
+                    $"Vespa application did not become ready on {Endpoint} within {deadline.TotalSeconds:F0}s after deployment.");
+
+            await Task.Delay(pollInterval, cancellationToken);
+            elapsed += pollInterval;
         }
     }
 }
