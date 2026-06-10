@@ -54,6 +54,25 @@ public class VespaClientTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_DoesNotBuildAdminClient_UntilAdminIsAccessed()
+    {
+        // Building the admin HttpClient loads the mTLS certificate from disk;
+        // with a missing file that throws — so constructing the client without
+        // touching Admin proves the config-server client is created lazily.
+        var options = new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            DefaultNamespace = "test",
+            CertificatePath = "/nonexistent/data-plane-cert.pem",
+            ClientKeyPath = "/nonexistent/data-plane-key.pem"
+        };
+
+        using var client = new VespaClient(_httpClient, options);
+
+        Assert.ThrowsAny<Exception>(() => client.Admin);
+    }
+
+    [Fact]
     public void Constructor_WithNullHttpClient_ThrowsArgumentNullException()
     {
         // Act & Assert

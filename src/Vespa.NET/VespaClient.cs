@@ -21,11 +21,12 @@ public sealed partial class VespaClient : IVespaClient
     private readonly HttpClient _httpClient;
     private readonly VespaClientOptions _options;
     private readonly ILogger<VespaClient>? _logger;
+    private readonly Lazy<AdminOperations> _admin;
 
     public IDocumentOperations Documents { get; }
     public ISearchOperations Search { get; }
     public IFeedOperations Feed { get; }
-    public IAdminOperations Admin { get; }
+    public IAdminOperations Admin => _admin.Value;
 
     /// <summary>
     /// Create a new VespaClient with an HttpClient from IHttpClientFactory
@@ -68,18 +69,24 @@ public sealed partial class VespaClient : IVespaClient
         if (!httpClientPreconfigured)
             ConfigureDirectHttpClient(_httpClient, options.Endpoint, options);
 
-        // Build a dedicated HttpClient for the config server (port 19071),
-        // reusing the same SocketsHttpHandler (mTLS, compression, pooling) as the DI path.
-        var configEndpoint = options.ConfigServerEndpoint ?? DeriveConfigEndpoint(options.Endpoint);
-        var handler = VespaServiceCollectionExtensions.BuildSocketsHttpHandler(options);
-        var adminHttpClient = new HttpClient(handler, disposeHandler: true);
-        ConfigureDirectHttpClient(adminHttpClient, configEndpoint, options);
+        // The config-server client (port 19071) gets its own SocketsHttpHandler and
+        // an mTLS certificate loaded from disk — created lazily on first Admin access:
+        // most instances (the DI typed client is transient; health checks construct
+        // one per probe) never deploy schemas, and building a handler + reloading the
+        // certificate per instance would churn connection pools for nothing.
+        _admin = new Lazy<AdminOperations>(() =>
+        {
+            var configEndpoint = options.ConfigServerEndpoint ?? DeriveConfigEndpoint(options.Endpoint);
+            var handler = VespaServiceCollectionExtensions.BuildSocketsHttpHandler(options);
+            var adminHttpClient = new HttpClient(handler, disposeHandler: true);
+            ConfigureDirectHttpClient(adminHttpClient, configEndpoint, options);
+            return new AdminOperations(adminHttpClient, options, logger);
+        }, LazyThreadSafetyMode.ExecutionAndPublication);
 
         // Initialize operation handlers
         Documents = new DocumentOperations(_httpClient, options, logger);
         Search = new SearchOperations(_httpClient, options, logger);
         Feed = new FeedOperations(Documents, options, logger);
-        Admin = new AdminOperations(adminHttpClient, options, logger);
 
         if (_logger != null)
             LogInitialized(_logger, _options.Endpoint);
@@ -221,9 +228,10 @@ public sealed partial class VespaClient : IVespaClient
     public void Dispose()
     {
         // Do NOT dispose _httpClient — it's externally owned (IHttpClientFactory).
-        // Dispose the admin HttpClient we created internally via AdminOperations.
-        if (Admin is IDisposable disposable)
-            disposable.Dispose();
+        // Dispose the admin HttpClient we created internally via AdminOperations,
+        // but only if it was ever materialized.
+        if (_admin.IsValueCreated)
+            _admin.Value.Dispose();
     }
 
     public ValueTask DisposeAsync()
