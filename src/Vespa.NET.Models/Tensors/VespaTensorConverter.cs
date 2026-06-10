@@ -128,10 +128,27 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
         // Check format and parse accordingly
         if (root.TryGetProperty("blocks", out var blocksElem))
         {
-            return ParseBlocks(blocksElem, valueType, tensorType);
+            // Short form for a single mapped dimension: {"blocks":{"a":[1.0,2.0]}}
+            return blocksElem.ValueKind == JsonValueKind.Object
+                ? ParseMixedSingleSparse(blocksElem.EnumerateObject().ToList(), valueType, tensorType)
+                : ParseBlocks(blocksElem, valueType, tensorType);
         }
 
-        if (root.TryGetProperty("values", out var valuesElem) || root.TryGetProperty("cells", out valuesElem))
+        if (root.TryGetProperty("cells", out var cellsElem))
+        {
+            // Short form mapped: {"cells":{"a":2.0}}
+            if (cellsElem.ValueKind == JsonValueKind.Object)
+                return ParseMapped(cellsElem.EnumerateObject().ToList(), valueType, tensorType);
+
+            // Long form (default document/v1 rendering): {"cells":[{"address":{...},"value":...}]}
+            if (cellsElem.ValueKind == JsonValueKind.Array &&
+                cellsElem.EnumerateArray().FirstOrDefault().ValueKind == JsonValueKind.Object)
+                return ParseVerboseCells(cellsElem, valueType, tensorType);
+
+            return ParseDenseFromElement(cellsElem, valueType, tensorType);
+        }
+
+        if (root.TryGetProperty("values", out var valuesElem))
         {
             return ParseDenseFromElement(valuesElem, valueType, tensorType);
         }
@@ -145,28 +162,62 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
         if (element.ValueKind != JsonValueKind.Array)
             throw new JsonException("Expected array for tensor values");
 
+        // Multi-dimensional indexed tensors use nested arrays ({"values":[[2.0,3.0],[5.0,7.0]]});
+        // flatten row-major, which matches Vespa's standard dimension order.
+        var flat = new List<JsonElement>();
+        FlattenValues(element, flat);
+
         if (valueType == typeof(float))
-        {
-            var values = element.EnumerateArray().Select(e => e.GetSingle()).ToArray();
-            return VespaTensor.FromDenseValues(values, tensorType);
-        }
+            return VespaTensor.FromDenseValues(flat.Select(e => e.GetSingle()).ToArray(), tensorType);
 
         if (valueType == typeof(sbyte))
-        {
-            var values = element.EnumerateArray().Select(e => e.GetSByte()).ToArray();
-            return VespaTensor.FromDenseValues(values, tensorType);
-        }
+            return VespaTensor.FromDenseValues(flat.Select(e => e.GetSByte()).ToArray(), tensorType);
 
         if (valueType == typeof(Half))
+            return VespaTensor.FromDenseValues(flat.Select(e => (Half)e.GetSingle()).ToArray(), tensorType);
+
+        return VespaTensor.FromDenseValues(flat.Select(e => e.GetDouble()).ToArray(), tensorType);
+    }
+
+    private static void FlattenValues(JsonElement array, List<JsonElement> output)
+    {
+        foreach (var item in array.EnumerateArray())
         {
-            var values = element.EnumerateArray().Select(e => (Half)e.GetSingle()).ToArray();
-            return VespaTensor.FromDenseValues(values, tensorType);
+            if (item.ValueKind == JsonValueKind.Array)
+                FlattenValues(item, output);
+            else
+                output.Add(item);
         }
-        else
+    }
+
+    private static VespaTensor ParseVerboseCells(JsonElement cellsElem, Type valueType, string? tensorType)
+    {
+        var cells = new List<TensorCell>();
+
+        foreach (var cellElem in cellsElem.EnumerateArray())
         {
-            var values = element.EnumerateArray().Select(e => e.GetDouble()).ToArray();
-            return VespaTensor.FromDenseValues(values, tensorType);
+            var cell = new TensorCell();
+
+            if (cellElem.TryGetProperty("address", out var addrElem))
+                cell.Address = addrElem.EnumerateObject()
+                    .ToDictionary(p => p.Name, p => p.Value.GetString() ?? string.Empty);
+
+            if (cellElem.TryGetProperty("value", out var valElem))
+            {
+                if (valueType == typeof(float))
+                    cell.Value = valElem.GetSingle();
+                else if (valueType == typeof(sbyte))
+                    cell.Value = valElem.GetSByte();
+                else if (valueType == typeof(Half))
+                    cell.Value = (Half)valElem.GetSingle();
+                else
+                    cell.Value = valElem.GetDouble();
+            }
+
+            cells.Add(cell);
         }
+
+        return VespaTensor.FromCells(cells, tensorType);
     }
 
     private static VespaTensor ParseMappedOrMixed(JsonElement root, Type valueType, string? tensorType)

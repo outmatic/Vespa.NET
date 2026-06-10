@@ -21,6 +21,75 @@ public class VespaTensorConverterTests
         };
     }
 
+    #region Vespa documented JSON forms (docs.vespa.ai/en/reference/document-json-format.html)
+
+    [Fact]
+    public void Read_CellsArrayOfObjects_LongForm_DeserializesAsCells()
+    {
+        // Default document/v1 rendering (no format.tensors=short)
+        var json = """{"type":"tensor(x{})","cells":[{"address":{"x":"a"},"value":2.0},{"address":{"x":"b"},"value":3.0}]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.Verbose, tensor.Format);
+        Assert.NotNull(tensor.Cells);
+        Assert.Equal(2, tensor.Cells.Count);
+        Assert.Equal("a", tensor.Cells[0].Address["x"]);
+        Assert.Equal(2.0, tensor.Cells[0].Value);
+        Assert.Equal("b", tensor.Cells[1].Address["x"]);
+        Assert.Equal(3.0, tensor.Cells[1].Value);
+    }
+
+    [Fact]
+    public void Read_CellsObject_ShortFormMapped_DeserializesAsMapped()
+    {
+        // Short form for mapped tensors: {"cells":{"a":2.0,"b":3.0}}
+        var json = """{"type":"tensor(x{})","cells":{"a":2.0,"b":3.0}}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.MappedSingle, tensor.Format);
+        var values = tensor.GetMappedValues<double>();
+        Assert.NotNull(values);
+        Assert.Equal(2.0, values["a"]);
+        Assert.Equal(3.0, values["b"]);
+    }
+
+    [Fact]
+    public void Read_NestedValues_MultiDimIndexed_FlattensRowMajor()
+    {
+        // Short form for multi-dimensional indexed tensors: nested arrays
+        var json = """{"type":"tensor<float>(x[2],y[2])","values":[[2.0,3.0],[5.0,7.0]]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.IndexedDense, tensor.Format);
+        var values = tensor.GetDenseValues<float>();
+        Assert.NotNull(values);
+        Assert.Equal(new[] { 2.0f, 3.0f, 5.0f, 7.0f }, values);
+    }
+
+    [Fact]
+    public void Read_BlocksObject_ShortFormMixed_DeserializesAsMixedSingleSparse()
+    {
+        // Short form for mixed tensors with a single mapped dimension
+        var json = """{"type":"tensor(x{},y[2])","blocks":{"a":[1.0,2.0],"b":[3.0,4.0]}}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.MixedSingleSparse, tensor.Format);
+        var values = tensor.GetMixedSingleSparse<double>();
+        Assert.NotNull(values);
+        Assert.Equal(new[] { 1.0, 2.0 }, values["a"]);
+        Assert.Equal(new[] { 3.0, 4.0 }, values["b"]);
+    }
+
+    #endregion
+
     #region IndexedDense Format Tests (12 tests)
 
     [Fact]
