@@ -72,7 +72,7 @@ public static class VespaDocumentMeta
                 return field.Name;
 
             // Match JSON serialization convention: snake_case the property name
-            return VespaSchemaBuilder.ToSnakeCase(m.Name);
+            return VespaNaming.ToSnakeCase(m.Name);
         });
     }
 }

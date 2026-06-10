@@ -1,7 +1,7 @@
 namespace Vespa.Models.Schema;
 
 /// <summary>
-/// Options for generating a Vespa application package via <see cref="VespaSchemaBuilder"/>.
+/// Options for generating a Vespa application package via <c>VespaSchemaBuilder</c>.
 /// </summary>
 public sealed record ApplicationPackageOptions
 {

@@ -18,7 +18,7 @@ public class VespaOnnxModelAttribute(string name, string file) : Attribute
 
     /// <summary>
     /// Absolute or relative path to the source file on disk.
-    /// When set, <see cref="VespaSchemaBuilder"/> automatically includes this file
+    /// When set, <c>VespaSchemaBuilder</c> automatically includes this file
     /// in the application package ZIP at the path specified by <see cref="File"/>.
     /// </summary>
     public string? SourcePath { get; set; }

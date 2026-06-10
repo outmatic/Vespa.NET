@@ -555,8 +555,7 @@ public static class VespaSchemaBuilder
         return null;
     }
 
-    internal static string ToSnakeCase(string name) =>
-        System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(name);
+    internal static string ToSnakeCase(string name) => VespaNaming.ToSnakeCase(name);
 
     /// <summary>/
     /// Resolves the Vespa field name from <see cref="VespaFieldAttribute.Name"/>
