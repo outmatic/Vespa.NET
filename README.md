@@ -200,7 +200,7 @@ var request = new VespaSearchRequest
 var result = await client.Search.GroupByAsync<Product>(request);
 ```
 
-> Nested grouping, buckets, having, pagination, and full aggregation reference in **[docs/grouping.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/grouping.md)**
+> Nested grouping, buckets, per-group summaries, pagination, and full aggregation reference in **[docs/grouping.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/grouping.md)**
 
 ---
 
@@ -376,7 +376,7 @@ Set `VESPA_INTEGRATION_TESTS=1` to enable in CI.
 ## Running the Sample App
 
 ```bash
-docker run --detach --name vespa --publish 8080:8080 --publish 19071:19071 vespaengine/vespa
+docker run --detach --name vespa --publish 8080:8080 --publish 19071:19071 vespaengine/vespa:8
 dotnet run --project samples/Vespa.NET.Samples
 ```
 

@@ -76,7 +76,7 @@ var docs = products.Select(p => new FeedDocument<Product>
 | `IsSuccess` | `true` if no failures |
 | `SuccessRate` | `SuccessCount / TotalDocuments` |
 | `Duration` | Total elapsed time |
-| `Errors` | `ConcurrentQueue<FeedError>` with per-document error details |
+| `Errors` | `IReadOnlyCollection<FeedError>` with per-document error details |
 
 ## Cancellation
 

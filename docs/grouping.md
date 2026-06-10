@@ -46,10 +46,15 @@ GroupingBuilder.All().GroupByFixedWidth("price", 100);
 GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500), (500, double.MaxValue));
 ```
 
-### Having filter
+### Per-group document summaries
+
+Return the actual documents inside each group (`hitlist:*` in the response,
+surfaced as typed `SearchHit<T>` in `VespaGroup.Hits`):
 
 ```csharp
-GroupingBuilder.All().Group("category").Having("count() > 5");
+GroupingBuilder.All().Group("category")
+    .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 3));
+// all(group(category) each(output(count()) max(3) each(output(summary()))))
 ```
 
 ### Nested grouping
@@ -62,6 +67,11 @@ GroupingBuilder.All().Group("category").Each(e => e
 ```
 
 ### Paginated streaming
+
+`GroupByStreamAsync` follows `GroupingSearchResponse.ContinuationTokens`
+automatically, passing them back through the YQL `continuations` annotation
+(Vespa has no `grouping.continuation` query parameter). For manual paging use
+`GroupingContinuations.Apply(yql, tokens)`.
 
 ```csharp
 await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))

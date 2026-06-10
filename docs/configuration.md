@@ -178,7 +178,8 @@ builder.Services.AddOpenTelemetry().WithMetrics(m => m
 |---|---|
 | `VespaNotFoundException` | Document not found (HTTP 404) |
 | `VespaConditionNotMetException` | Conditional write failed (HTTP 412) |
-| `VespaTimeoutException` | Request timed out (HTTP 504) |
+| `VespaTimeoutException` | Request timed out (HTTP 408/504) |
+| `VespaTooManyRequestsException` | Backpressure/throttling (HTTP 429) — back off and retry |
 | `VespaServerException` | Server error (HTTP 5xx) |
 | `VespaException` | All other Vespa errors |
 

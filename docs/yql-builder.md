@@ -76,7 +76,7 @@ var yql = YqlBuilder
 | `w.WeightedSet("f", tokens)` | `weightedSet(f, {...})` |
 | `w.GeoLocation("pos", lat, lon, 10.0)` | `geoLocation(pos, lat, lon, "10km")` |
 | `w.GeoBoundingBox("pos", s, w, n, e)` | `{southWest:..., northEast:...}geoBoundingBox(pos)` |
-| `w.UserQuery("free text")` | `userQuery("free text")` |
+| `w.UserQuery("free text")` | `userQuery()` — the text travels in `model.queryString`, set by `ToSearchRequest()`/`WithYql()` |
 | `w.UserInput("param")` | `userInput(@param)` |
 | `w.Rank(...)` | `rank(...)` |
 | `w.NonEmpty(...)` | `nonEmpty(...)` |
@@ -107,14 +107,14 @@ Predicates added directly to the `Where` callback are **AND'd** together. Use `O
 All predicates inside the `Or` callback are **OR'd**:
 
 ```csharp
-.Where(w => w.Field(p => p.Status).EqualTo("active")
+.Where(w => w.Field(p => p.Status).Contains("active")
     .Or(or =>
     {
         or.Field(p => p.Pinned).EqualTo(1);
         or.Field(p => p.ExpiresAt).EqualTo(0);
         or.Field(p => p.ExpiresAt).GreaterThan(now);
     }))
-// status = "active" or pinned = 1 or expires_at = 0 or expires_at > 1000
+// status contains "active" or pinned = 1 or expires_at = 0 or expires_at > 1000
 ```
 
 ### AnyOf
@@ -184,5 +184,8 @@ The builder validates at build time:
 | `Rank(...)` | At least 2 operands |
 | `WeakAnd(...)` | At least 1 predicate |
 | `HybridSearch(...)` | Non-empty field, tensor, and parameter names |
+| `Field(...)`, `OrderBy(...)`, `Select(...)` | Names must match the YQL identifier grammar (dot-separated `[A-Za-z_][A-Za-z0-9_]*` segments, optional `field{"key"}` map suffix) — use `OrderByRaw(...)` for annotated order-by expressions |
+| `EqualTo(...)` | Numeric/boolean only — YQL's `=` rejects strings; use `Contains(...)` or `In(...)` |
+| Literals | `bool` → lowercase, 64-bit integers get the `L` suffix, `decimal` invariant; `DateTime` throws — convert to epoch milliseconds |
 
 The query tensor name is derived automatically: for a field named `embedding`, the query input is `query(query_embedding)`.
