@@ -23,12 +23,22 @@ public sealed class YqlWhereClause
     public YqlFieldClause Field<T>(Expression<Func<T, object?>> selector) where T : class
         => Field(VespaDocumentMeta.FieldName(selector));
 
+    /// <summary>
+    /// Creates and configures a nested clause, bubbling up state that must live on
+    /// the top-level clause (the <c>userQuery()</c> text for <c>model.queryString</c>).
+    /// </summary>
+    private YqlWhereClause BuildSubClause(Action<YqlWhereClause> configure)
+    {
+        var sub = new YqlWhereClause();
+        configure(sub);
+        UserQueryText ??= sub.UserQueryText;
+        return sub;
+    }
+
     /// <summary>Logical AND with a sub-expression</summary>
     public YqlWhereClause And(Action<YqlWhereClause> subClause)
     {
-        var sub = new YqlWhereClause();
-        subClause(sub);
-        _andPredicates.Add(sub.BuildPredicate());
+        _andPredicates.Add(BuildSubClause(subClause).BuildPredicate());
         return this;
     }
 
@@ -44,12 +54,7 @@ public sealed class YqlWhereClause
             predicates[0](this);
             return this;
         }
-        var built = predicates.Select(configure =>
-        {
-            var sub = new YqlWhereClause();
-            configure(sub);
-            return sub.BuildPredicate();
-        }).ToList();
+        var built = predicates.Select(configure => BuildSubClause(configure).BuildPredicate()).ToList();
         _andPredicates.Add(new YqlPredicate.Or(built));
         return this;
     }
@@ -60,8 +65,7 @@ public sealed class YqlWhereClause
     /// </summary>
     public YqlWhereClause Or(Action<YqlWhereClause> subClause)
     {
-        var sub = new YqlWhereClause();
-        subClause(sub);
+        var sub = BuildSubClause(subClause);
         var subPredicates = sub.GetPredicates();
         var existing = _andPredicates.ToList();
         _andPredicates.Clear();
@@ -115,8 +119,7 @@ public sealed class YqlWhereClause
     /// <param name="targetHits">Optional optimizer hint controlling how many candidates weakAnd retrieves before ranking.</param>
     public YqlWhereClause WeakAnd(Action<YqlWhereClause> configure, int? targetHits = null)
     {
-        var sub = new YqlWhereClause();
-        configure(sub);
+        var sub = BuildSubClause(configure);
         var predicates = sub.GetPredicates();
         if (predicates.Count == 0)
             throw new ArgumentException("weakAnd requires at least one predicate.", nameof(configure));
@@ -230,12 +233,7 @@ public sealed class YqlWhereClause
             clauses[0](this);
             return this;
         }
-        var predicates = clauses.Select(configure =>
-        {
-            var sub = new YqlWhereClause();
-            configure(sub);
-            return sub.BuildPredicate();
-        }).ToList();
+        var predicates = clauses.Select(configure => BuildSubClause(configure).BuildPredicate()).ToList();
         _andPredicates.Add(new YqlPredicate.Rank(predicates));
         return this;
     }
@@ -246,9 +244,7 @@ public sealed class YqlWhereClause
     /// </summary>
     public YqlWhereClause NonEmpty(Action<YqlWhereClause> configure)
     {
-        var sub = new YqlWhereClause();
-        configure(sub);
-        _andPredicates.Add(new YqlPredicate.NonEmpty(sub.BuildPredicate()));
+        _andPredicates.Add(new YqlPredicate.NonEmpty(BuildSubClause(configure).BuildPredicate()));
         return this;
     }
 

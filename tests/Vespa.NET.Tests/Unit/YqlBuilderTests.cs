@@ -725,6 +725,33 @@ public class YqlBuilderTests
     }
 
     [Fact]
+    public void ToSearchRequest_WithUserQueryInsideAnyOf_SetsModelQueryString()
+    {
+        // Sub-clauses (And/Or/AnyOf/WeakAnd/Rank) get their own YqlWhereClause —
+        // the captured text must bubble up to the top-level builder.
+        var request = YqlBuilder.Select().From("music")
+            .Where(w => w.AnyOf(
+                x => x.UserQuery("heavy metal"),
+                x => x.Field("genre").Contains("rock")))
+            .ToSearchRequest();
+
+        Assert.Contains("userQuery()", request.Yql);
+        Assert.Equal("heavy metal", request.ModelQueryString);
+    }
+
+    [Fact]
+    public void ToSearchRequest_WithUserQueryInsideNestedAnd_SetsModelQueryString()
+    {
+        var request = YqlBuilder.Select().From("music")
+            .Where(w => w
+                .Field("year").GreaterThan(2000)
+                .And(x => x.UserQuery("jazz")))
+            .ToSearchRequest();
+
+        Assert.Equal("jazz", request.ModelQueryString);
+    }
+
+    [Fact]
     public void Build_UserInput_ProducesCorrectSyntax()
     {
         var yql = YqlBuilder.Select().From("music")
