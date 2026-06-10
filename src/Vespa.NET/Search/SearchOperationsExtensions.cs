@@ -32,8 +32,11 @@ public static class SearchOperationsExtensions
         string? token = null;
         do
         {
-            request.GroupingContinuation = token;
-            var page = await ops.GroupByAsync<T>(request, cancellationToken);
+            // Clone per page — mutating the caller's request would leave a stale
+            // continuation token behind after enumeration.
+            var pageRequest = request.ShallowClone();
+            pageRequest.GroupingContinuation = token;
+            var page = await ops.GroupByAsync<T>(pageRequest, cancellationToken);
             yield return page;
             token = page.Continuation;
         }
@@ -57,9 +60,12 @@ public static class SearchOperationsExtensions
         int returned;
         do
         {
-            request.Hits = pageSize;
-            request.Offset = offset;
-            var page = await ops.SearchAsync<T>(request, cancellationToken);
+            // Clone per page — mutating the caller's request would make a second
+            // enumeration silently start past the last page.
+            var pageRequest = request.ShallowClone();
+            pageRequest.Hits = pageSize;
+            pageRequest.Offset = offset;
+            var page = await ops.SearchAsync<T>(pageRequest, cancellationToken);
             yield return page;
             returned = page.Root.Children.Count;
             offset += returned;

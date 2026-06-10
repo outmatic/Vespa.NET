@@ -121,13 +121,13 @@ public class YqlBuilderTests
     }
 
     [Fact]
-    public void Build_WhereEqualTo_String()
+    public void Build_WhereEqualTo_String_Throws()
     {
-        var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("genre").EqualTo("rock"))
-            .Build();
-
-        Assert.Equal("select * from music where genre = \"rock\"", yql);
+        // YQL's = operator is numeric/boolean only — strings need contains or in,
+        // so generating field = "x" would always be a 400 from Vespa.
+        Assert.Throws<NotSupportedException>(() =>
+            YqlBuilder.Select().From("music")
+                .Where(w => w.Field("genre").EqualTo("rock")));
     }
 
     // --- Where: literal formatting (docs.vespa.ai/en/reference/query-language-reference.html) ---
@@ -662,12 +662,12 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder.Select().From("music")
             .Where(w => w
-                .Field("genre").EqualTo("rock")
+                .Field("genre").Contains("rock")
                 .UserInput("userText"))
             .Build();
 
         Assert.Contains("userInput(@userText)", yql);
-        Assert.Contains("genre = \"rock\"", yql);
+        Assert.Contains("genre contains \"rock\"", yql);
     }
 
     [Fact]

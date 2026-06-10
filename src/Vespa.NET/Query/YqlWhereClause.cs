@@ -363,6 +363,12 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
 
     public YqlWhereClause EqualTo(object value)
     {
+        // YQL's = operator is defined for numeric and boolean values only;
+        // field = "x" is a parse error on the server.
+        if (value is string)
+            throw new NotSupportedException(
+                "YQL's = operator does not accept strings — use Contains(...) for text matching or In(...) for exact membership.");
+
         parent.AddPredicate(new YqlPredicate.Comparison(fieldName, "=", value));
         return parent;
     }

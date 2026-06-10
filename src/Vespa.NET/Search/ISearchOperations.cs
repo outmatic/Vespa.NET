@@ -31,7 +31,9 @@ public interface ISearchOperations
     ) where T : class;
 
     /// <summary>
-    /// Execute a simple YQL query
+    /// Execute a simple YQL query.
+    /// <paramref name="parameters"/> are sent as top-level request properties,
+    /// so they resolve <c>userInput(@param)</c> references in the YQL.
     /// </summary>
     Task<VespaSearchResponse<T>> QueryAsync<T>(
         string yql,

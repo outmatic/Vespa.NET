@@ -77,6 +77,20 @@ public class SearchPagedAsyncTests : IDisposable
     }
 
     [Fact]
+    public async Task SearchPagedAsync_DoesNotMutateCallerRequest()
+    {
+        EnqueuePage(["a", "b"]);   // full (pageSize=2)
+        EnqueuePage(["c"]);         // partial → stop
+
+        var request = new VespaSearchRequest { Yql = "select * from docs;", Hits = 7, Offset = 0 };
+        _ = await CollectAsync(_searchOps.SearchPagedAsync<Doc>(request, pageSize: 2));
+
+        // Re-enumerating (or reusing) the same request must start from the caller's state
+        Assert.Equal(7, request.Hits);
+        Assert.Equal(0, request.Offset);
+    }
+
+    [Fact]
     public async Task SearchPagedAsync_OffsetIncrementsCorrectly()
     {
         EnqueuePage(["a", "b"]);   // pageSize=2, full

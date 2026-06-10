@@ -359,24 +359,46 @@ public class SearchOperationsTests : IDisposable
     }
 
     [Fact]
-    public async Task QueryAsync_WithParameters_IncludesInInput()
+    public async Task QueryAsync_Parameters_AreSentAsTopLevelProperties()
     {
-        // Arrange
-        var yql = "select * from testdoc where userQuery()";
+        // userInput(@param)/userQuery() read top-level request properties; nesting them
+        // under "input" makes Vespa see input.param and the parameter never resolves.
+        var yql = "select * from testdoc where userInput(@text)";
         var parameters = new Dictionary<string, object>
         {
-            ["query"] = "test query"
+            ["text"] = "test query"
         };
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
         );
-        SetupSearchSuccessResponse(expectedResponse);
+        var responseJson = JsonSerializer.Serialize(expectedResponse, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
 
-        // Act
+        string? capturedBody = null;
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson)
+            });
+
         await _searchOps.QueryAsync<TestDocument>(yql, parameters: parameters);
 
-        // Assert
-        VerifyHttpCall(HttpMethod.Post, "/search/");
+        Assert.NotNull(capturedBody);
+        using var body = JsonDocument.Parse(capturedBody);
+        Assert.True(body.RootElement.TryGetProperty("text", out var textParam),
+            "parameter should be a top-level request property");
+        Assert.Equal("test query", textParam.GetString());
+        Assert.False(body.RootElement.TryGetProperty("input", out _),
+            "parameters must not be nested under input.*");
     }
 
     #endregion

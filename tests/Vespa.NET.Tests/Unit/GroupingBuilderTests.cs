@@ -750,6 +750,47 @@ public class GroupingBuilderTests : IDisposable
     }
 
     [Fact]
+    public async Task GroupByStreamAsync_DoesNotMutateCallerRequest()
+    {
+        var pageWithContinuation = """
+        {
+          "root": {
+            "id": "toplevel", "relevance": 1.0,
+            "fields": {"totalCount": 200},
+            "children": [
+              {
+                "id": "group:root:0",
+                "continuation": {"next": "token-page2"},
+                "children": [
+                  {"id": "grouplist:genre", "children": [
+                    {"id": "group:string:rock", "value": "rock", "fields": {"count()": 100.0}}
+                  ]}
+                ]
+              }
+            ]
+          }
+        }
+        """;
+        var lastPage = """
+        {
+          "root": {
+            "id": "toplevel", "relevance": 1.0,
+            "fields": {"totalCount": 200},
+            "children": [{"id": "group:root:0", "children": []}]
+          }
+        }
+        """;
+        _mockHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(pageWithContinuation) });
+        _mockHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(lastPage) });
+
+        var request = new VespaSearchRequest { Yql = "select * from music | all(group(genre) each(output(count())))" };
+        await foreach (var _ in _searchOps.GroupByStreamAsync<MusicDoc>(request)) { }
+
+        // A stale continuation here would poison subsequent GroupByAsync calls with the same request
+        Assert.Null(request.GroupingContinuation);
+    }
+
+    [Fact]
     public async Task GroupByStreamAsync_TwoPages_YieldsBothAndSendsCorrectTokens()
     {
         var page1 = """

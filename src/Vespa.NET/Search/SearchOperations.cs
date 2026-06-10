@@ -101,12 +101,15 @@ public sealed partial class SearchOperations(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(yql);
 
+        // Parameters must be top-level request properties: userInput(@param) and
+        // userQuery() resolve "param", not "input.param". Tensor inputs go through
+        // VespaSearchRequest.Input / WithQueryTensor instead.
         var request = new VespaSearchRequest
         {
             Yql = yql,
             Hits = hits,
             Offset = offset,
-            Input = parameters
+            CustomParameters = parameters
         };
 
         return await SearchAsync<T>(request, cancellationToken);
