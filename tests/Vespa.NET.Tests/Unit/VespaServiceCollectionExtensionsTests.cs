@@ -76,6 +76,29 @@ public class VespaServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddVespaClient_RegistersExactlyOneIVespaClient()
+    {
+        // AddHttpClient<IVespaClient, VespaClient> used to leave a second, shadowed
+        // registration built via the public ctor (re-applying defaults) —
+        // IEnumerable<IVespaClient> would resolve both.
+        var services = new ServiceCollection();
+        var options = new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            DefaultNamespace = "test",
+            DefaultRequestHeaders = new Dictionary<string, string> { ["X-Tenant-Id"] = "acme" }
+        };
+
+        services.AddVespaClient(options);
+        var provider = services.BuildServiceProvider();
+
+        var clients = provider.GetServices<IVespaClient>().ToList();
+        var single = Assert.Single(clients);
+        var values = GetUnderlyingHttpClient(single).DefaultRequestHeaders.GetValues("X-Tenant-Id");
+        Assert.Equal("acme", Assert.Single(values));
+    }
+
+    [Fact]
     public void AddVespaClient_DefaultRequestHeaders_AreNotDuplicated()
     {
         var services = new ServiceCollection();

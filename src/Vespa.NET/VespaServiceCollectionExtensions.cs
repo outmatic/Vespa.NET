@@ -15,6 +15,9 @@ public static partial class VespaServiceCollectionExtensions
 {
     private static readonly HttpRetryStrategyOptions DefaultRetryOptions = new();
 
+    /// <summary>Logical name of the default (unnamed) Vespa HttpClient registration.</summary>
+    private const string DefaultHttpClientName = "Vespa.NET";
+
     /// <summary>
     /// Adds VespaClient to the service collection with IHttpClientFactory integration and default resilience strategy
     /// </summary>
@@ -35,8 +38,11 @@ public static partial class VespaServiceCollectionExtensions
         // Register options as singleton
         services.AddSingleton(options);
 
-        // Configure HttpClient with factory
-        var builder = services.AddHttpClient<IVespaClient, VespaClient>(
+        // Configure HttpClient with factory. Registered as a NAMED client +
+        // AddTypedClient: the generic AddHttpClient<IVespaClient, VespaClient>
+        // would leave a second IVespaClient registration activated through the
+        // public constructor, which re-applies defaults over the factory config.
+        var builder = services.AddHttpClient(DefaultHttpClientName,
                 httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
             .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
             .AddHttpMessageHandler(() => new VespaMetricsHandler())
@@ -122,8 +128,8 @@ public static partial class VespaServiceCollectionExtensions
         // Register options as singleton
         services.AddSingleton(options);
 
-        // Configure HttpClient with factory
-        var builder = services.AddHttpClient<IVespaClient, VespaClient>(
+        // Configure HttpClient with factory (named + AddTypedClient — see AddVespaClient)
+        var builder = services.AddHttpClient(DefaultHttpClientName,
                 httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
             .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
             .AddHttpMessageHandler(() => new VespaMetricsHandler())
