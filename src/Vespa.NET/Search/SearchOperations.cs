@@ -154,7 +154,7 @@ public sealed partial class SearchOperations(
 
                 var hits = new List<SearchHit<T>>();
                 var groupingResults = new List<VespaGroupList>();
-                string? continuation = null;
+                IReadOnlyList<string>? continuationTokens = null;
 
                 foreach (var child in children.EnumerateArray())
                 {
@@ -164,10 +164,7 @@ public sealed partial class SearchOperations(
                     if (id.StartsWith("group:root:"))
                     {
                         groupingResults.AddRange(ParseGroupLists<T>(child));
-                        if (continuation is null &&
-                            child.TryGetProperty("continuation", out var contEl) &&
-                            contEl.TryGetProperty("next", out var nextEl))
-                            continuation = nextEl.GetString();
+                        continuationTokens ??= ExtractContinuationTokens(child);
                     }
                     else
                     {
@@ -180,7 +177,7 @@ public sealed partial class SearchOperations(
                     }
                 }
 
-                return new GroupingSearchResponse<T>(hits, groupingResults, totalCount, timing, continuation);
+                return new GroupingSearchResponse<T>(hits, groupingResults, totalCount, timing, continuationTokens);
             },
             cancellationToken);
     }
@@ -296,6 +293,42 @@ public sealed partial class SearchOperations(
 
             offset += hits.Count;
         }
+    }
+
+    /// <summary>
+    /// Collects grouping continuation tokens from a <c>group:root</c> node:
+    /// the root's <c>continuation.this</c> first, then every group list's
+    /// <c>continuation.next</c> (recursively). Returns <see langword="null"/> when
+    /// no list has a next page.
+    /// </summary>
+    private static IReadOnlyList<string>? ExtractContinuationTokens(JsonElement groupRootNode)
+    {
+        var nextTokens = new List<string>();
+        CollectNextTokens(groupRootNode, nextTokens);
+        if (nextTokens.Count == 0)
+            return null;
+
+        var tokens = new List<string>();
+        if (groupRootNode.TryGetProperty("continuation", out var contEl) &&
+            contEl.TryGetProperty("this", out var thisEl) &&
+            thisEl.GetString() is { } thisToken)
+            tokens.Add(thisToken);
+        tokens.AddRange(nextTokens);
+        return tokens;
+    }
+
+    private static void CollectNextTokens(JsonElement node, List<string> output)
+    {
+        if (node.TryGetProperty("id", out var idEl) &&
+            (idEl.GetString() ?? "").StartsWith("grouplist:") &&
+            node.TryGetProperty("continuation", out var contEl) &&
+            contEl.TryGetProperty("next", out var nextEl) &&
+            nextEl.GetString() is { } token)
+            output.Add(token);
+
+        if (node.TryGetProperty("children", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectNextTokens(child, output);
     }
 
     private static IReadOnlyList<VespaGroupList> ParseGroupLists<T>(JsonElement groupRootNode) where T : class

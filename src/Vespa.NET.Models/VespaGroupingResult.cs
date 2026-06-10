@@ -27,13 +27,16 @@ public sealed record VespaGroup(
 
 /// <summary>
 /// Combined response from a grouping search: regular hits + grouping aggregations.
-/// When <see cref="Continuation"/> is non-null, pass it as
-/// <c>VespaSearchRequest.GroupingContinuation</c> to retrieve the next page of groups.
+/// When <see cref="ContinuationTokens"/> is non-null there are more pages: pass the
+/// tokens back via the YQL <c>continuations</c> annotation
+/// (<c>| {{ 'continuations':[…] }}all(…)</c>) — <c>GroupByStreamAsync</c> does this
+/// automatically. The list contains the root <c>this</c> token followed by the
+/// group lists' <c>next</c> tokens.
 /// </summary>
 public sealed record GroupingSearchResponse<T>(
     IReadOnlyList<SearchHit<T>> Hits,
     IReadOnlyList<VespaGroupList> GroupingResults,
     long TotalCount,
     TimingInfo? Timing = null,
-    string? Continuation = null
+    IReadOnlyList<string>? ContinuationTokens = null
 ) where T : class;

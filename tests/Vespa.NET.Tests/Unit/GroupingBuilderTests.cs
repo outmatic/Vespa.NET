@@ -48,24 +48,25 @@ public class GroupingBuilderTests : IDisposable
     [Fact] public void GroupingAgg_Summary_NoArgs_ReturnsDefaultSummary() => Assert.Equal("summary()", GroupingAgg.Summary());
     [Fact] public void GroupingAgg_Summary_WithClass_ReturnsSummaryWithClass() => Assert.Equal("summary(compact)", GroupingAgg.Summary("compact"));
 
-    // --- Grouping continuation token ---
+    // --- Grouping continuation tokens (YQL annotation) ---
 
     [Fact]
-    public void GroupingContinuation_SetOnSearchRequest_IncludedInSerialization()
+    public void ApplyContinuations_InsertsAnnotationBeforeGroupingExpression()
     {
-        var request = new VespaSearchRequest
-        {
-            Yql = "select * from music;",
-            GroupingContinuation = "BCBCBCBEBGBCBKCBACBKCCK"
-        };
+        var yql = "select * from music where true | all(group(genre) each(output(count())))";
 
-        var json = JsonSerializer.Serialize(request, new JsonSerializerOptions
-        {
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-        });
+        var result = GroupingContinuations.Apply(yql, ["token-this", "token-next"]);
 
-        Assert.Contains("\"grouping.continuation\"", json);
-        Assert.Contains("BCBCBCBEBGBCBKCBACBKCCK", json);
+        Assert.Equal(
+            "select * from music where true | { 'continuations':['token-this', 'token-next'] }all(group(genre) each(output(count())))",
+            result);
+    }
+
+    [Fact]
+    public void ApplyContinuations_WithoutPipe_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            GroupingContinuations.Apply("select * from music where true", ["t"]));
     }
 
     // --- GroupingBuilder: basic all() ---
@@ -758,8 +759,10 @@ public class GroupingBuilderTests : IDisposable
     }
 
     [Fact]
-    public async Task GroupByAsync_WithContinuationInResponse_ReturnsContinuationToken()
+    public async Task GroupByAsync_WithContinuationInResponse_ReturnsThisAndNextTokens()
     {
+        // Real response shape: the root group carries continuation.this,
+        // group lists carry continuation.next (docs.vespa.ai/en/grouping.html)
         var json = """
         {
           "root": {
@@ -769,10 +772,11 @@ public class GroupingBuilderTests : IDisposable
             "children": [
               {
                 "id": "group:root:0",
-                "continuation": {"next": "BGAAABEBEBC"},
+                "continuation": {"this": "BGAAABEBCA"},
                 "children": [
                   {
                     "id": "grouplist:genre",
+                    "continuation": {"next": "BGAAABEBEBC"},
                     "children": [
                       {"id": "group:string:rock", "value": "rock", "fields": {"count()": 100.0}}
                     ]
@@ -792,7 +796,7 @@ public class GroupingBuilderTests : IDisposable
         var response = await _searchOps.GroupByAsync<MusicDoc>(
             new VespaSearchRequest { Yql = "select * from music | all(group(genre) each(output(count())))" });
 
-        Assert.Equal("BGAAABEBEBC", response.Continuation);
+        Assert.Equal(["BGAAABEBCA", "BGAAABEBEBC"], response.ContinuationTokens);
     }
 
     [Fact]
@@ -829,7 +833,7 @@ public class GroupingBuilderTests : IDisposable
         var response = await _searchOps.GroupByAsync<MusicDoc>(
             new VespaSearchRequest { Yql = "select * from music | all(group(genre) each(output(count())))" });
 
-        Assert.Null(response.Continuation);
+        Assert.Null(response.ContinuationTokens);
     }
 
     [Fact]
@@ -843,9 +847,9 @@ public class GroupingBuilderTests : IDisposable
             "children": [
               {
                 "id": "group:root:0",
-                "continuation": {"next": "token-page2"},
+                "continuation": {"this": "token-this"},
                 "children": [
-                  {"id": "grouplist:genre", "children": [
+                  {"id": "grouplist:genre", "continuation": {"next": "token-page2"}, "children": [
                     {"id": "group:string:rock", "value": "rock", "fields": {"count()": 100.0}}
                   ]}
                 ]
@@ -869,8 +873,8 @@ public class GroupingBuilderTests : IDisposable
         var request = new VespaSearchRequest { Yql = "select * from music | all(group(genre) each(output(count())))" };
         await foreach (var _ in _searchOps.GroupByStreamAsync<MusicDoc>(request)) { }
 
-        // A stale continuation here would poison subsequent GroupByAsync calls with the same request
-        Assert.Null(request.GroupingContinuation);
+        // A stale continuation annotation here would poison reuse of the same request
+        Assert.Equal("select * from music | all(group(genre) each(output(count())))", request.Yql);
     }
 
     [Fact]
@@ -884,9 +888,9 @@ public class GroupingBuilderTests : IDisposable
             "children": [
               {
                 "id": "group:root:0",
-                "continuation": {"next": "token-page2"},
+                "continuation": {"this": "token-this"},
                 "children": [
-                  {"id": "grouplist:genre", "children": [
+                  {"id": "grouplist:genre", "continuation": {"next": "token-page2"}, "children": [
                     {"id": "group:string:rock", "value": "rock", "fields": {"count()": 100.0}}
                   ]}
                 ]
@@ -927,6 +931,12 @@ public class GroupingBuilderTests : IDisposable
         Assert.Equal(2, _mockHandler.Requests.Count);
         Assert.Equal("rock", pages[0].GroupingResults[0].Groups[0].Value);
         Assert.Equal("jazz", pages[1].GroupingResults[0].Groups[0].Value);
+
+        // Page 2 must carry the tokens via the YQL continuations annotation
+        // (grouping.continuation is not a Vespa query parameter)
+        var secondBody = await _mockHandler.Requests[1].Content!.ReadAsStringAsync();
+        Assert.Contains("""{ 'continuations':['token-this', 'token-page2'] }all(""", secondBody.Replace("\\u0027", "'"));
+        Assert.DoesNotContain("grouping.continuation", secondBody);
     }
 
     [Fact]

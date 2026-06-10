@@ -117,17 +117,6 @@ public sealed class VespaSearchRequest
     [JsonPropertyName("presentation.summary")]
     public string? PresentationSummary { get; set; }
 
-    // ── Grouping pagination ────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Continuation token for paginating grouped results.
-    /// Pass the token received in the previous <c>grouping:root</c> response node
-    /// to retrieve the next page of grouped output.
-    /// Equivalent to Vespa's <c>grouping.continuation</c> parameter.
-    /// </summary>
-    [JsonPropertyName("grouping.continuation")]
-    public string? GroupingContinuation { get; set; }
-
     // ── Query Profile ──────────────────────────────────────────────────────────
 
     /// <summary>

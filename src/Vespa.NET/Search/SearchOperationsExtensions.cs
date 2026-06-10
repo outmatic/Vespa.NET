@@ -13,8 +13,9 @@ namespace Vespa.Search;
 public static class SearchOperationsExtensions
 {
     /// <summary>
-    /// Streams all pages of a grouping search, automatically following
-    /// <see cref="GroupingSearchResponse{T}.Continuation"/> tokens until no more pages remain.
+    /// Streams all pages of a grouping search, automatically passing
+    /// <see cref="GroupingSearchResponse{T}.ContinuationTokens"/> back through the YQL
+    /// <c>continuations</c> annotation until no more pages remain.
     /// Each yielded value is one page of grouped results.
     /// </summary>
     /// <example>
@@ -29,18 +30,24 @@ public static class SearchOperationsExtensions
         VespaSearchRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
     {
-        string? token = null;
-        do
+        IReadOnlyList<string>? tokens = null;
+        while (true)
         {
-            // Clone per page — mutating the caller's request would leave a stale
-            // continuation token behind after enumeration.
+            // Clone per page — mutating the caller's request (or its YQL) would leave
+            // a stale continuation annotation behind after enumeration.
             var pageRequest = request.ShallowClone();
-            pageRequest.GroupingContinuation = token;
+            if (tokens is not null)
+                pageRequest.Yql = GroupingContinuations.Apply(request.Yql!, tokens);
+
             var page = await ops.GroupByAsync<T>(pageRequest, cancellationToken);
             yield return page;
-            token = page.Continuation;
+
+            var next = page.ContinuationTokens;
+            // Identical tokens would re-fetch the same page forever — treat as done.
+            if (next is null || (tokens is not null && next.SequenceEqual(tokens)))
+                yield break;
+            tokens = next;
         }
-        while (token is not null);
     }
 
     /// <summary>
