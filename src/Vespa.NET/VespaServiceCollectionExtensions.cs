@@ -39,13 +39,21 @@ public static partial class VespaServiceCollectionExtensions
         var builder = services.AddHttpClient<IVespaClient, VespaClient>(
                 httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
             .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
-            .AddHttpMessageHandler(() => new VespaMetricsHandler());
+            .AddHttpMessageHandler(() => new VespaMetricsHandler())
+            .AddTypedClient<IVespaClient>(CreatePreconfiguredVespaClient);
 
         // Add default resilience strategy based on options
         ConfigureDefaultResilience(builder, options);
 
         return builder;
     }
+
+    private static IVespaClient CreatePreconfiguredVespaClient(HttpClient httpClient, IServiceProvider sp) =>
+        new VespaClient(
+            httpClient,
+            sp.GetRequiredService<VespaClientOptions>(),
+            sp.GetService<ILogger<VespaClient>>(),
+            httpClientPreconfigured: true);
 
     /// <summary>
     /// Adds named VespaClient to the service collection with IHttpClientFactory integration
@@ -85,7 +93,7 @@ public static partial class VespaServiceCollectionExtensions
             var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient(name);
             var namedOptions = sp.GetRequiredKeyedService<VespaClientOptions>(name);
             var logger = sp.GetService<ILogger<VespaClient>>();
-            return new VespaClient(httpClient, namedOptions, logger);
+            return new VespaClient(httpClient, namedOptions, logger, httpClientPreconfigured: true);
         });
 
         return builder;
@@ -118,7 +126,8 @@ public static partial class VespaServiceCollectionExtensions
         var builder = services.AddHttpClient<IVespaClient, VespaClient>(
                 httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
             .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
-            .AddHttpMessageHandler(() => new VespaMetricsHandler());
+            .AddHttpMessageHandler(() => new VespaMetricsHandler())
+            .AddTypedClient<IVespaClient>(CreatePreconfiguredVespaClient);
 
         // Apply custom resilience strategy
         builder.AddResilienceHandler("vespa-custom-resilience", configureResilience);

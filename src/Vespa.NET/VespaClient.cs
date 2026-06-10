@@ -41,15 +41,32 @@ public sealed partial class VespaClient : IVespaClient
         HttpClient httpClient,
         VespaClientOptions options,
         ILogger<VespaClient>? logger = null)
+        : this(httpClient, options, logger, httpClientPreconfigured: false)
+    {
+    }
+
+    /// <summary>
+    /// Internal constructor used by the DI registrations, which configure the
+    /// <see cref="HttpClient"/> in the factory (defaults + user callback) before
+    /// the client is activated.
+    /// </summary>
+    internal VespaClient(
+        HttpClient httpClient,
+        VespaClientOptions options,
+        ILogger<VespaClient>? logger,
+        bool httpClientPreconfigured)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _options.Validate();
         _logger = logger;
 
-        // Apply common defaults for the non-DI path. The DI path already receives
-        // the same configuration from VespaServiceCollectionExtensions.
-        ConfigureDirectHttpClient(_httpClient, options.Endpoint, options);
+        // Apply common defaults for the non-DI path only. The DI path already ran
+        // ConfigureHttpClientDefaults plus the user's configureHttpClient callback —
+        // re-applying defaults here would clobber user customizations (Timeout,
+        // headers, …) and duplicate options.DefaultRequestHeaders.
+        if (!httpClientPreconfigured)
+            ConfigureDirectHttpClient(_httpClient, options.Endpoint, options);
 
         // Build a dedicated HttpClient for the config server (port 19071),
         // reusing the same SocketsHttpHandler (mTLS, compression, pooling) as the DI path.

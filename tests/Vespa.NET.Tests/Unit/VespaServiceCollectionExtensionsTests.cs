@@ -57,6 +57,49 @@ public class VespaServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddVespaClient_UserHttpClientCustomization_IsNotOverwritten()
+    {
+        // The documented configureHttpClient extension point runs in the factory;
+        // the VespaClient constructor must not re-apply defaults over it.
+        var services = new ServiceCollection();
+        var options = new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            DefaultNamespace = "test"
+        };
+
+        services.AddVespaClient(options, httpClient => httpClient.Timeout = TimeSpan.FromSeconds(99));
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<IVespaClient>();
+
+        Assert.Equal(TimeSpan.FromSeconds(99), GetUnderlyingHttpClient(client).Timeout);
+    }
+
+    [Fact]
+    public void AddVespaClient_DefaultRequestHeaders_AreNotDuplicated()
+    {
+        var services = new ServiceCollection();
+        var options = new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            DefaultNamespace = "test",
+            DefaultRequestHeaders = new Dictionary<string, string> { ["X-Tenant-Id"] = "acme" }
+        };
+
+        services.AddVespaClient(options);
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<IVespaClient>();
+
+        var values = GetUnderlyingHttpClient(client).DefaultRequestHeaders.GetValues("X-Tenant-Id");
+        Assert.Equal("acme", Assert.Single(values));
+    }
+
+    private static HttpClient GetUnderlyingHttpClient(IVespaClient client) =>
+        (HttpClient)typeof(VespaClient)
+            .GetField("_httpClient", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)!;
+
+    [Fact]
     public void AddVespaClient_WithApiKey_SetsAuthorizationHeader()
     {
         // Arrange

@@ -103,7 +103,22 @@ public sealed class VespaClientOptions
 
         // PEM cert + separate PEM key (Vespa Cloud style)
         if (ClientKeyPath is not null)
-            return X509Certificate2.CreateFromPemFile(CertificatePath, ClientKeyPath);
+        {
+            var pemCert = X509Certificate2.CreateFromPemFile(CertificatePath, ClientKeyPath);
+            if (!OperatingSystem.IsWindows())
+                return pemCert;
+
+            // Windows SChannel cannot use the ephemeral private key produced by
+            // CreateFromPemFile for TLS client authentication — round-trip through PKCS#12.
+            using (pemCert)
+#if NET9_0_OR_GREATER
+                return X509CertificateLoader.LoadPkcs12(pemCert.Export(X509ContentType.Pkcs12), null);
+#else
+#pragma warning disable SYSLIB0057
+                return new X509Certificate2(pemCert.Export(X509ContentType.Pkcs12));
+#pragma warning restore SYSLIB0057
+#endif
+        }
 
         // PEM cert only (public cert, no private key — unusual but allowed)
 #if NET9_0_OR_GREATER
@@ -148,7 +163,9 @@ public sealed class VespaClientOptions
     public bool EnableCircuitBreaker { get; init; } = true;
 
     /// <summary>
-    /// Number of failures before circuit breaker opens
+    /// Minimum number of requests in the sampling window before the circuit breaker
+    /// can open; it opens when at least half of them fail. Must be at least 2
+    /// (Polly's <c>MinimumThroughput</c> lower bound).
     /// </summary>
     public int CircuitBreakerFailureThreshold { get; init; } = 5;
 
@@ -204,6 +221,10 @@ public sealed class VespaClientOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConnectionsPerServer);
         ArgumentOutOfRangeException.ThrowIfNegative(MaxRetryAttempts);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CircuitBreakerFailureThreshold);
+        // Polly's HttpCircuitBreakerStrategyOptions requires MinimumThroughput >= 2;
+        // validating here surfaces the error at registration instead of on the first request.
+        if (EnableCircuitBreaker)
+            ArgumentOutOfRangeException.ThrowIfLessThan(CircuitBreakerFailureThreshold, 2);
         ThrowIfTimeSpanZeroOrNegative(CircuitBreakerDuration, nameof(CircuitBreakerDuration));
         ThrowIfTimeSpanZeroOrNegative(Timeout, nameof(Timeout));
         ThrowIfTimeSpanZeroOrNegative(PooledConnectionLifetime, nameof(PooledConnectionLifetime));

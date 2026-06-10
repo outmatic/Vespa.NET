@@ -58,6 +58,33 @@ public class VespaClientOptionsTests
     }
 
     [Fact]
+    public void Validate_ThrowsException_WhenCircuitBreakerThresholdBelowPollyMinimum()
+    {
+        // Polly's HttpCircuitBreakerStrategyOptions requires MinimumThroughput >= 2;
+        // a threshold of 1 passed registration and blew up on the first request.
+        var options = new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            CircuitBreakerFailureThreshold = 1
+        };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => options.Validate());
+    }
+
+    [Fact]
+    public void Validate_AllowsThresholdOfOne_WhenCircuitBreakerDisabled()
+    {
+        var options = new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            EnableCircuitBreaker = false,
+            CircuitBreakerFailureThreshold = 1
+        };
+
+        options.Validate();
+    }
+
+    [Fact]
     public void DefaultValues_AreSetCorrectly()
     {
         // Arrange & Act
