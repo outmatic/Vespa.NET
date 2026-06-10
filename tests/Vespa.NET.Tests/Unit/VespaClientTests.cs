@@ -141,7 +141,47 @@ public class VespaClientTests : IDisposable
     }
 
     [Fact]
-    public async Task HealthCheckAsync_OnCancellation_ThrowsOperationCanceledException()
+    public async Task HealthCheckAsync_OnCallerCancellation_ThrowsOperationCanceledException()
+    {
+        // Same exception type as an HttpClient timeout — the caller's token state
+        // is what decides between rethrowing and reporting unhealthy.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>()
+            )
+            .ThrowsAsync(new TaskCanceledException());
+
+        var client = new VespaClient(_httpClient, _options);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.HealthCheckAsync(cts.Token));
+    }
+
+    [Fact]
+    public async Task HealthCheckAsync_OnHttpClientTimeout_ReturnsFalse()
+    {
+        // HttpClient timeouts surface as TaskCanceledException even when the
+        // caller's token was never cancelled — the probe must report unhealthy, not throw.
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>()
+            )
+            .ThrowsAsync(new TaskCanceledException("timeout", new TimeoutException()));
+
+        var client = new VespaClient(_httpClient, _options);
+
+        Assert.False(await client.HealthCheckAsync());
+    }
+
+    [Fact]
+    public async Task IsReadyAsync_OnHttpClientTimeout_ReturnsFalse()
     {
         _mockHandler
             .Protected()
@@ -150,11 +190,28 @@ public class VespaClientTests : IDisposable
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>()
             )
-            .ThrowsAsync(new OperationCanceledException());
+            .ThrowsAsync(new TaskCanceledException("timeout", new TimeoutException()));
 
         var client = new VespaClient(_httpClient, _options);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => client.HealthCheckAsync());
+        Assert.False(await client.IsReadyAsync());
+    }
+
+    [Fact]
+    public async Task GetVersionAsync_OnHttpClientTimeout_ReturnsNull()
+    {
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>()
+            )
+            .ThrowsAsync(new TaskCanceledException("timeout", new TimeoutException()));
+
+        var client = new VespaClient(_httpClient, _options);
+
+        Assert.Null(await client.GetVersionAsync());
     }
 
     #endregion
@@ -254,6 +311,8 @@ public class VespaClientTests : IDisposable
     [Fact]
     public async Task GetMetricsAsync_OnCancellation_ThrowsOperationCanceledException()
     {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
         _mockHandler
             .Protected()
             .Setup<Task<HttpResponseMessage>>(
@@ -265,7 +324,7 @@ public class VespaClientTests : IDisposable
 
         var client = new VespaClient(_httpClient, _options);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => client.GetMetricsAsync());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetMetricsAsync(cts.Token));
     }
 
     #endregion
@@ -365,6 +424,8 @@ public class VespaClientTests : IDisposable
     [Fact]
     public async Task IsReadyAsync_OnCancellation_ThrowsOperationCanceledException()
     {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
         _mockHandler
             .Protected()
             .Setup<Task<HttpResponseMessage>>(
@@ -376,7 +437,7 @@ public class VespaClientTests : IDisposable
 
         var client = new VespaClient(_httpClient, _options);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => client.IsReadyAsync());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.IsReadyAsync(cts.Token));
     }
 
     #endregion
@@ -534,6 +595,8 @@ public class VespaClientTests : IDisposable
     [Fact]
     public async Task GetVersionAsync_OnCancellation_ThrowsOperationCanceledException()
     {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
         _mockHandler
             .Protected()
             .Setup<Task<HttpResponseMessage>>(
@@ -545,7 +608,7 @@ public class VespaClientTests : IDisposable
 
         var client = new VespaClient(_httpClient, _options);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => client.GetVersionAsync());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetVersionAsync(cts.Token));
     }
 
     #endregion
@@ -628,6 +691,8 @@ public class VespaClientTests : IDisposable
     [Fact]
     public async Task GetHistogramsAsync_OnCancellation_ThrowsOperationCanceledException()
     {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
         _mockHandler
             .Protected()
             .Setup<Task<HttpResponseMessage>>(
@@ -639,7 +704,7 @@ public class VespaClientTests : IDisposable
 
         var client = new VespaClient(_httpClient, _options);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => client.GetHistogramsAsync());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetHistogramsAsync(cts.Token));
     }
 
     #endregion

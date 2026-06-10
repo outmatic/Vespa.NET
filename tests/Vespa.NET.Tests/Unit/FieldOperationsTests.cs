@@ -606,6 +606,40 @@ public class FieldOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateBySelectionAsync_WhenCancelledMidLoop_ThrowsInsteadOfReportingSuccess()
+    {
+        using var cts = new CancellationTokenSource();
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"documentCount": 100, "continuation": "abc"}""")
+            },
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"documentCount": 50}""")
+            }
+        ]);
+
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((_, _) => cts.Cancel())
+            .ReturnsAsync(responses.Dequeue);
+
+        // A partially-applied bulk update must surface the cancellation,
+        // not report "completed successfully".
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            _documentOps.UpdateBySelectionAsync(
+                "music.year < 2000",
+                new Dictionary<string, FieldOperation> { ["status"] = FieldOp.Assign("archived") },
+                "music", cluster: "content", cancellationToken: cts.Token));
+    }
+
+    [Fact]
     public async Task UpdateBySelectionAsync_PassesContinuationTokenOnSubsequentCalls()
     {
         var capturedUrls = new List<string>();

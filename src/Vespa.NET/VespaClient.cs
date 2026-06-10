@@ -125,7 +125,9 @@ public sealed partial class VespaClient : IVespaClient
         {
             return await operation(cancellationToken);
         }
-        catch (OperationCanceledException)
+        // Rethrow only the caller's cancellation: HttpClient timeouts surface as
+        // TaskCanceledException too, and those must count as a failed probe.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
@@ -166,7 +168,7 @@ public sealed partial class VespaClient : IVespaClient
             if (!response.IsSuccessStatusCode) return default;
             return await parseResponse(response);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
