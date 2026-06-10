@@ -277,9 +277,6 @@ public interface IDocumentOperations
     );
 
     /// <summary>
-    /// Iterate over all documents matching an optional selection, using continuation tokens
-    /// </summary>
-    /// <summary>
     /// Iterate over all documents using JSONL streaming (<c>Accept: application/jsonl</c>).
     /// More efficient than <see cref="VisitAsync{T}"/> for large result sets as it streams
     /// one document per line without accumulating full pages in memory.
@@ -303,6 +300,10 @@ public interface IDocumentOperations
         CancellationToken cancellationToken = default
     ) where T : class;
 
+    /// <summary>
+    /// Iterate over all documents matching an optional selection, following
+    /// continuation tokens page by page.
+    /// </summary>
     IAsyncEnumerable<VespaDocument<T>> VisitAsync<T>(
         string documentType,
         string? selection = null,

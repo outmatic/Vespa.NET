@@ -16,9 +16,9 @@ public sealed class TensorBlock
     public Dictionary<string, string> Address { get; set; } = new();
 
     /// <summary>
-    /// Dense values for this block (can be float[], double[], sbyte[], or Half[])
+    /// Dense values for this block (can be float[], double[], sbyte[], or Half[]).
+    /// Serialized by <c>VespaTensorConverter</c>, not by the serializer directly.
     /// </summary>
-    [JsonPropertyName("values")]
     [JsonIgnore]
     internal Array InternalValues { get; set; } = Array.Empty<double>();
 

@@ -1,7 +1,7 @@
 using Vespa;
 using Xunit;
 
-namespace Vespa.Tests;
+namespace Vespa.Tests.Unit;
 
 public class VespaClientOptionsTests
 {

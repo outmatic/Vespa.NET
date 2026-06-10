@@ -98,6 +98,16 @@ internal static class VespaIdInjector
             if (prop is null || !prop.CanWrite || prop.PropertyType != typeof(string))
                 return null;
 
-            return (obj, id) => prop.SetValue(obj, id);
+            // Compile the setter once per type — PropertyInfo.SetValue would pay the
+            // reflection cost per document on the visit/search hot path.
+            var objParam = System.Linq.Expressions.Expression.Parameter(typeof(object));
+            var valueParam = System.Linq.Expressions.Expression.Parameter(typeof(string));
+            var body = System.Linq.Expressions.Expression.Assign(
+                System.Linq.Expressions.Expression.Property(
+                    System.Linq.Expressions.Expression.Convert(objParam, t), prop),
+                valueParam);
+            return System.Linq.Expressions.Expression
+                .Lambda<Action<object, string>>(body, objParam, valueParam)
+                .Compile();
         });
 }

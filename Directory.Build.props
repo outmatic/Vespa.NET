@@ -1,6 +1,9 @@
 <Project>
 
   <PropertyGroup>
+    <!-- Shared language/compiler settings -->
+    <LangVersion>latest</LangVersion>
+
     <!-- Shared version across all packages -->
     <VersionPrefix>2.0.0</VersionPrefix>
     <Authors>outmatic</Authors>
@@ -26,9 +29,9 @@
     <IncludeSymbols>false</IncludeSymbols>
   </PropertyGroup>
 
-  <!-- SourceLink — GitHub -->
+  <!-- SourceLink (GitHub) + shared package assets -->
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 

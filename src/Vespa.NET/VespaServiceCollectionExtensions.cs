@@ -25,6 +25,12 @@ public static partial class VespaServiceCollectionExtensions
     /// <param name="options">VespaClient configuration options</param>
     /// <param name="configureHttpClient">Optional additional HttpClient configuration</param>
     /// <returns>An IHttpClientBuilder for further configuration</returns>
+    /// <remarks>
+    /// Call this overload once per container: it registers a single unnamed
+    /// <see cref="IVespaClient"/>. To talk to multiple Vespa endpoints, use the
+    /// named overload (<see cref="AddVespaClient(IServiceCollection, string, VespaClientOptions, Action{HttpClient})"/>)
+    /// and resolve clients with <c>GetRequiredKeyedService&lt;IVespaClient&gt;(name)</c>.
+    /// </remarks>
     public static IHttpClientBuilder AddVespaClient(
         this IServiceCollection services,
         VespaClientOptions options,
@@ -243,11 +249,8 @@ public static partial class VespaServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Builds a <see cref="SocketsHttpHandler"/> configured for the given options,
-    /// including mTLS client certificate when <see cref="VespaClientOptions.CreateClientCertificate"/> returns a value.
-    /// </summary>
-    /// <summary>
-    /// Builds the <see cref="SocketsHttpHandler"/> configured from <paramref name="options"/>.
+    /// Builds the <see cref="SocketsHttpHandler"/> configured from <paramref name="options"/>,
+    /// including the mTLS client certificate when configured.
     /// Exposed for callers that construct <see cref="VespaClient"/> directly (e.g. tests
     /// and Testcontainers integrations) so they get the same connection pooling,
     /// compression, and mTLS behaviour as the DI path.

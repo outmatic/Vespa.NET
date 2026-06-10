@@ -75,7 +75,7 @@ public sealed class TensorTypeSpec
             TensorValueType.Double => "double",
             TensorValueType.Int8 => "int8",
             TensorValueType.BFloat16 => "bfloat16",
-            _ => throw new ArgumentOutOfRangeException()
+            _ => throw new ArgumentOutOfRangeException(nameof(_valueType), _valueType, "Unknown tensor value type.")
         };
 
         var dimensionsStr = string.Join(",", _dimensions.Select(d => d.ToString()));
@@ -90,6 +90,8 @@ public sealed class TensorTypeSpec
         ArgumentException.ThrowIfNullOrWhiteSpace(tensorType);
 
         // Example: "tensor<float>(x[384])" or "tensor<float>(x{},y[2])"
+        if (!tensorType.StartsWith("tensor", StringComparison.Ordinal))
+            throw new FormatException($"Invalid tensor type format: {tensorType} (expected to start with \"tensor\").");
 
         // Extract value type
         var valueTypeStart = tensorType.IndexOf('<') + 1;

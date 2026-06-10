@@ -217,11 +217,16 @@ public static class VespaSchemaBuilder
 
         var docInfos = new List<(string DocType, bool Global, DocumentMode Mode)>();
         var includedPaths = new HashSet<string>(StringComparer.Ordinal);
+        var seenDocTypes = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var type in documentTypes)
         {
             var schema = GenerateSchema(type);
             var docAttr = type.GetCustomAttribute<VespaDocumentAttribute>()!;
+            // ZipArchive happily writes duplicate entries, producing an ambiguous package
+            if (!seenDocTypes.Add(docAttr.DocumentType))
+                throw new InvalidOperationException(
+                    $"Duplicate document type '{docAttr.DocumentType}': two of the supplied types map to the same schema file.");
             docInfos.Add((docAttr.DocumentType, docAttr.Global, docAttr.Mode));
 
             var entry = zip.CreateEntry($"schemas/{docAttr.DocumentType}.sd");

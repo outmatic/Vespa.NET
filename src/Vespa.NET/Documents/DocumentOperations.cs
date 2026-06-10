@@ -481,13 +481,7 @@ public sealed partial class DocumentOperations(
             return null!; // unreachable
         }
 
-        IReadOnlyList<string>? ignoredFields = null;
-        if (response.Headers.TryGetValues("X-Vespa-Ignored-Fields", out var headerValues))
-        {
-            ignoredFields = headerValues
-                .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                .ToList();
-        }
+        var ignoredFields = ParseIgnoredFields(response);
 
         if (streaming)
         {
@@ -697,7 +691,7 @@ public sealed partial class DocumentOperations(
             (QueryParamSelection, selection),
             (QueryParamFieldSet, fieldSet),
             (QueryParamWantedDocumentCount, wantedDocumentCount?.ToString()),
-            ("timeout", timeout.HasValue ? $"{(int)timeout.Value.TotalMilliseconds}ms" : null),
+            ("timeout", timeout.HasValue ? $"{(long)timeout.Value.TotalMilliseconds}ms" : null),
             ("slices", slices?.ToString()),
             ("sliceId", sliceId?.ToString()),
             ("concurrency", concurrency?.ToString()),
@@ -810,7 +804,7 @@ public sealed partial class DocumentOperations(
                 (QueryParamSelection, selection),
                 (QueryParamFieldSet, fieldSet),
                 (QueryParamWantedDocumentCount, wantedDocumentCount?.ToString()),
-                ("timeout", timeout.HasValue ? $"{(int)timeout.Value.TotalMilliseconds}ms" : null),
+                ("timeout", timeout.HasValue ? $"{(long)timeout.Value.TotalMilliseconds}ms" : null),
                 ("slices", slices?.ToString()),
                 ("sliceId", sliceId?.ToString()),
                 ("concurrency", concurrency?.ToString()),
@@ -900,7 +894,13 @@ public sealed partial class DocumentOperations(
 
         if (requestOptions is not null)
             foreach (var p in requestOptions.ToQueryParams())
+            {
+                // Explicit method parameters win over request options — emitting the
+                // same key twice (e.g. timeout) is undefined behaviour server-side.
+                if (Array.Exists(queryParams, q => q.Value is not null && q.Key == p.Key))
+                    continue;
                 Append(p);
+            }
 
         foreach (var p in queryParams)
             Append(p);
@@ -908,41 +908,30 @@ public sealed partial class DocumentOperations(
         return sb.ToString();
     }
 
+    private static IReadOnlyList<string>? ParseIgnoredFields(HttpResponseMessage response) =>
+        response.Headers.TryGetValues("X-Vespa-Ignored-Fields", out var headerValues)
+            ? headerValues
+                .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .ToList()
+            : null;
+
     private static async Task<VespaResponse> ParseResponseAsync(
         HttpResponseMessage response,
         CancellationToken cancellationToken = default)
     {
         if (response.IsSuccessStatusCode)
         {
-            IReadOnlyList<string>? ignoredFields = null;
-            if (response.Headers.TryGetValues("X-Vespa-Ignored-Fields", out var headerValues))
-            {
-                ignoredFields = headerValues
-                    .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                    .ToList();
-            }
-
             return new VespaResponse
             {
                 IsSuccess = true,
                 StatusCode = (int)response.StatusCode,
                 Message = "Operation completed successfully",
-                IgnoredFields = ignoredFields
+                IgnoredFields = ParseIgnoredFields(response)
             };
         }
 
-        VespaError? error = null;
-        try
-        {
-            error = await response.Content.ReadFromJsonAsync<VespaError>(VespaJsonOptions.Default, cancellationToken);
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            // fall through to raw content
-        }
-
-        var message = error?.Message ?? $"HTTP {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}";
-        throw VespaException.FromStatusCode((int)response.StatusCode, message, error);
+        await ThrowFromErrorResponseAsync(response, cancellationToken);
+        return null!; // unreachable
     }
 
     private async Task<VespaDocument<T>?> GetDocumentOrNullAsync<T>(
