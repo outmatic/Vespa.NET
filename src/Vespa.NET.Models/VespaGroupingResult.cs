@@ -14,7 +14,16 @@ public sealed record VespaGroupList(
 public sealed record VespaGroup(
     string Value,
     IReadOnlyDictionary<string, double> Aggregations,
-    IReadOnlyList<VespaGroupList> SubGroups);
+    IReadOnlyList<VespaGroupList> SubGroups)
+{
+    /// <summary>
+    /// Document summaries returned inside this group when the grouping expression
+    /// requests them via <c>each(output(summary()))</c> (<c>hitlist:*</c> children).
+    /// Each element is a <c>SearchHit&lt;T&gt;</c> for the <c>T</c> used in the
+    /// <c>GroupByAsync&lt;T&gt;</c> call — cast accordingly.
+    /// </summary>
+    public IReadOnlyList<object> Hits { get; init; } = [];
+}
 
 /// <summary>
 /// Combined response from a grouping search: regular hits + grouping aggregations.

@@ -163,7 +163,7 @@ public sealed partial class SearchOperations(
 
                     if (id.StartsWith("group:root:"))
                     {
-                        groupingResults.AddRange(ParseGroupLists(child));
+                        groupingResults.AddRange(ParseGroupLists<T>(child));
                         if (continuation is null &&
                             child.TryGetProperty("continuation", out var contEl) &&
                             contEl.TryGetProperty("next", out var nextEl))
@@ -298,7 +298,7 @@ public sealed partial class SearchOperations(
         }
     }
 
-    private static IReadOnlyList<VespaGroupList> ParseGroupLists(JsonElement groupRootNode)
+    private static IReadOnlyList<VespaGroupList> ParseGroupLists<T>(JsonElement groupRootNode) where T : class
     {
         var result = new List<VespaGroupList>();
         if (!groupRootNode.TryGetProperty("children", out var children)) return result;
@@ -308,12 +308,12 @@ public sealed partial class SearchOperations(
             if (!child.TryGetProperty("id", out var idEl)) continue;
             var id = idEl.GetString() ?? "";
             if (id.StartsWith("grouplist:"))
-                result.Add(ParseSingleGroupList(child, id["grouplist:".Length..]));
+                result.Add(ParseSingleGroupList<T>(child, id["grouplist:".Length..]));
         }
         return result;
     }
 
-    private static VespaGroupList ParseSingleGroupList(JsonElement groupListNode, string label)
+    private static VespaGroupList ParseSingleGroupList<T>(JsonElement groupListNode, string label) where T : class
     {
         var groups = new List<VespaGroup>();
 
@@ -338,28 +338,50 @@ public sealed partial class SearchOperations(
                         if (field.Value.TryGetDouble(out var d))
                             aggregations[field.Name] = d;
 
-                var subGroups = groupNode.TryGetProperty("children", out var subChildren)
-                    ? ParseSubGroupLists(subChildren)
-                    : (IReadOnlyList<VespaGroupList>)[];
+                var subGroups = (IReadOnlyList<VespaGroupList>)[];
+                var hits = (IReadOnlyList<object>)[];
+                if (groupNode.TryGetProperty("children", out var subChildren))
+                    (subGroups, hits) = ParseGroupChildren<T>(subChildren);
 
-                groups.Add(new VespaGroup(value, aggregations, subGroups));
+                groups.Add(new VespaGroup(value, aggregations, subGroups) { Hits = hits });
             }
         }
 
         return new VespaGroupList(label, groups);
     }
 
-    private static IReadOnlyList<VespaGroupList> ParseSubGroupLists(JsonElement childrenEl)
+    /// <summary>
+    /// A group node's children mix nested groupings (<c>grouplist:*</c>) with
+    /// per-group document summaries (<c>hitlist:*</c>, from <c>each(output(summary()))</c>).
+    /// </summary>
+    private static (IReadOnlyList<VespaGroupList> SubGroups, IReadOnlyList<object> Hits) ParseGroupChildren<T>(
+        JsonElement childrenEl) where T : class
     {
-        var result = new List<VespaGroupList>();
+        var subGroups = new List<VespaGroupList>();
+        var hits = new List<object>();
+
         foreach (var child in childrenEl.EnumerateArray())
         {
             if (!child.TryGetProperty("id", out var idEl)) continue;
             var id = idEl.GetString() ?? "";
+
             if (id.StartsWith("grouplist:"))
-                result.Add(ParseSingleGroupList(child, id["grouplist:".Length..]));
+            {
+                subGroups.Add(ParseSingleGroupList<T>(child, id["grouplist:".Length..]));
+            }
+            else if (id.StartsWith("hitlist:") && child.TryGetProperty("children", out var hitChildren))
+            {
+                foreach (var hitNode in hitChildren.EnumerateArray())
+                {
+                    var hit = hitNode.Deserialize<SearchHit<T>>(VespaJsonOptions.Default);
+                    if (hit is null) continue;
+                    VespaIdInjector.Inject(hit);
+                    hits.Add(hit);
+                }
+            }
         }
-        return result;
+
+        return (subGroups, hits);
     }
 
     /// <summary>

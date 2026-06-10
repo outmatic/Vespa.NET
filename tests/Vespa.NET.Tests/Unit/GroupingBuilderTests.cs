@@ -675,6 +675,59 @@ public class GroupingBuilderTests : IDisposable
     // --- Grouping continuation / pagination ---
 
     [Fact]
+    public async Task GroupByAsync_WithSummaryHits_ParsesHitlistChildren()
+    {
+        // each(output(summary())) returns documents per group as hitlist:* children
+        var json = """
+        {
+          "root": {
+            "id": "toplevel", "relevance": 1.0,
+            "fields": {"totalCount": 100},
+            "children": [
+              {
+                "id": "group:root:0",
+                "children": [
+                  {
+                    "id": "grouplist:genre",
+                    "children": [
+                      {
+                        "id": "group:string:rock", "value": "rock",
+                        "fields": {"count()": 100.0},
+                        "children": [
+                          {
+                            "id": "hitlist:hits",
+                            "children": [
+                              {"id": "id:test:music::1", "relevance": 0.9, "fields": {"title": "Song A"}},
+                              {"id": "id:test:music::2", "relevance": 0.8, "fields": {"title": "Song B"}}
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """;
+
+        _mockHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json)
+        });
+
+        var response = await _searchOps.GroupByAsync<MusicDoc>(
+            new VespaSearchRequest { Yql = "select * from music | all(group(genre) each(max(2) each(output(summary()))))" });
+
+        var group = response.GroupingResults[0].Groups[0];
+        Assert.Equal(2, group.Hits.Count);
+        var hit = Assert.IsType<SearchHit<MusicDoc>>(group.Hits[0]);
+        Assert.Equal("Song A", hit.Fields!.Title);
+        Assert.Equal("1", hit.Id);
+    }
+
+    [Fact]
     public async Task GroupByAsync_WithContinuationInResponse_ReturnsContinuationToken()
     {
         var json = """
