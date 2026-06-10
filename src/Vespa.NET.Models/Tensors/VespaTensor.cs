@@ -5,7 +5,7 @@ namespace Vespa.Models.Tensors;
 
 /// <summary>
 /// Universal representation of a Vespa tensor that supports all formats and value types
-/// Supports: float, double, int8 (sbyte), bfloat16 (Half)
+/// Supports: float, double, int8 (sbyte), bfloat16 (stored as float — lossless)
 /// </summary>
 public sealed class VespaTensor
 {
@@ -119,8 +119,10 @@ public sealed class VespaTensor
             return typeof(double);
         if (typeSpec.Contains("<int8>", StringComparison.Ordinal))
             return typeof(sbyte);
+        // bfloat16 has float32 range (±3.4e38); System.Half (binary16) saturates at
+        // 65504, so float is the lossless in-memory representation.
         if (typeSpec.Contains("<bfloat16>", StringComparison.Ordinal))
-            return typeof(Half);
+            return typeof(float);
 
         return typeof(double); // Default fallback
     }

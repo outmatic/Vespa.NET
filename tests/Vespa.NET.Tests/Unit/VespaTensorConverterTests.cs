@@ -737,16 +737,51 @@ public class VespaTensorConverterTests
     }
 
     [Fact]
-    public void DetectValueType_WithTypeSpec_BFloat16_ReturnsHalfType()
+    public void DetectValueType_WithTypeSpec_BFloat16_ReturnsFloatType()
     {
-        // Arrange
+        // bfloat16 has float32 range (±3.4e38); System.Half saturates at 65504,
+        // so float is the lossless in-memory representation.
         var typeSpec = "tensor<bfloat16>(x[512])";
 
-        // Act
         var result = VespaTensor.DetectValueType(typeSpec);
 
-        // Assert
-        Assert.Equal(typeof(Half), result);
+        Assert.Equal(typeof(float), result);
+    }
+
+    [Fact]
+    public void Read_Int8Values_RenderedWithDecimals_Parses()
+    {
+        // Vespa renders tensor cell values as doubles (1.0), which GetSByte() rejects
+        var json = """{"type":"tensor<int8>(x[3])","values":[1.0,2.0,3.0]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(new sbyte[] { 1, 2, 3 }, tensor.GetDenseValues<sbyte>());
+    }
+
+    [Fact]
+    public void Read_Int8Cells_RenderedWithDecimals_Parses()
+    {
+        var json = """{"type":"tensor<int8>(x{})","cells":[{"address":{"x":"a"},"value":1.0}]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal((sbyte)1, tensor.Cells![0].Value);
+    }
+
+    [Fact]
+    public void Read_BFloat16_LargeMagnitude_DoesNotSaturate()
+    {
+        var json = """{"type":"tensor<bfloat16>(x[2])","values":[100000.0,1.0]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        var values = tensor.GetDenseValues<float>();
+        Assert.NotNull(values);
+        Assert.Equal(100000f, values[0]);
     }
 
     [Fact]

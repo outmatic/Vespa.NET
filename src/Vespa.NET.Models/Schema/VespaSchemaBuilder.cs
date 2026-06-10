@@ -110,22 +110,27 @@ public static class VespaSchemaBuilder
             sb.AppendLine("    }");
         }
 
-        // Rank profiles — first the auto-generated "default" with tensor inputs
-        if (tensorInputs.Count > 0)
+        // Rank profiles — auto-generate a "default" with tensor inputs, unless the
+        // user declared their own "default" (two same-name profiles fail deployment;
+        // the inputs are merged into the user's profile below instead).
+        var rankProfiles = type.GetCustomAttributes<VespaRankProfileAttribute>().ToList();
+        var hasUserDefault = rankProfiles.Any(rp => rp.Name == "default");
+
+        if (tensorInputs.Count > 0 && !hasUserDefault)
         {
             sb.AppendLine("    rank-profile default {");
-            sb.AppendLine("        inputs {");
-            foreach (var (queryName, tensorType) in tensorInputs)
-                sb.AppendLine($"            {queryName} {tensorType}");
-            sb.AppendLine("        }");
+            AppendRankProfileInputs(sb, tensorInputs);
             sb.AppendLine("    }");
         }
 
         // User-defined rank profiles
-        foreach (var rpAttr in type.GetCustomAttributes<VespaRankProfileAttribute>())
+        foreach (var rpAttr in rankProfiles)
         {
             var inherits = rpAttr.Inherits is not null ? $" inherits {rpAttr.Inherits}" : "";
             sb.AppendLine($"    rank-profile {rpAttr.Name}{inherits} {{");
+
+            if (rpAttr.Name == "default" && tensorInputs.Count > 0)
+                AppendRankProfileInputs(sb, tensorInputs);
 
             if (rpAttr.FirstPhase is not null)
                 sb.AppendLine($"        first-phase {{\n            expression: {rpAttr.FirstPhase}\n        }}");
@@ -350,13 +355,32 @@ public static class VespaSchemaBuilder
         if (fieldAttr.Normalizing is not null)
             sb.AppendLine($"            normalizing: {fieldAttr.Normalizing}");
 
-        if (fieldAttr.RankType != RankType.None)
+        // Field-level rank: accepts only filter/normal; identity and tags belong
+        // to the separate rank-type element.
+        switch (fieldAttr.RankType)
         {
-            var rank = ToVespaRankTypeName(fieldAttr.RankType);
-            if (rank is not null)
-                sb.AppendLine($"            rank: {rank}");
+            case RankType.Filter:
+                sb.AppendLine("            rank: filter");
+                break;
+            case RankType.Default:
+                sb.AppendLine("            rank: normal");
+                break;
+            case RankType.Identity:
+                sb.AppendLine("            rank-type: identity");
+                break;
+            case RankType.Tags:
+                sb.AppendLine("            rank-type: tags");
+                break;
         }
 
+        sb.AppendLine("        }");
+    }
+
+    private static void AppendRankProfileInputs(StringBuilder sb, List<(string QueryName, string TensorType)> tensorInputs)
+    {
+        sb.AppendLine("        inputs {");
+        foreach (var (queryName, tensorType) in tensorInputs)
+            sb.AppendLine($"            {queryName} {tensorType}");
         sb.AppendLine("        }");
     }
 
@@ -449,7 +473,7 @@ public static class VespaSchemaBuilder
         DistanceMetric.Angular => "angular",
         DistanceMetric.DotProduct => "dotproduct",
         DistanceMetric.Hamming => "hamming",
-        DistanceMetric.Geodesic => "geodesic",
+        DistanceMetric.Geodesic => "geodegrees",
         DistanceMetric.InnerProduct => "innerproduct",
         DistanceMetric.PrenormalizedAngular => "prenormalized-angular",
         _ => null
@@ -476,16 +500,6 @@ public static class VespaSchemaBuilder
         MatchMode.Cased => "cased",
         MatchMode.Uncased => "uncased",
         MatchMode.Gram => "gram",
-        _ => null
-    };
-
-    private static string? ToVespaRankTypeName(RankType r) => r switch
-    {
-        RankType.None => null,
-        RankType.Identity => "identity",
-        RankType.Filter => "filter",
-        RankType.Tags => "tags",
-        RankType.Default => "normal",
         _ => null
     };
 

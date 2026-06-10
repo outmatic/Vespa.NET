@@ -350,6 +350,43 @@ public class VespaSchemaBuilderTests
         Assert.Contains("rank: normal", schema);
     }
 
+    [Fact]
+    public void GenerateSchema_RankIdentityAndTags_EmitRankTypeElement()
+    {
+        // Field-level rank: accepts only filter/normal — identity and tags belong
+        // to the separate rank-type element, otherwise deployment fails.
+        var schema = VespaSchemaBuilder.GenerateSchema<RankTypeElementDoc>();
+        Assert.Contains("rank-type: identity", schema);
+        Assert.Contains("rank-type: tags", schema);
+        Assert.DoesNotContain("rank: identity", schema);
+        Assert.DoesNotContain("rank: tags", schema);
+    }
+
+    // --- Distance metric names ---
+
+    [Fact]
+    public void GenerateSchema_GeodesicMetric_EmitsGeodegrees()
+    {
+        // Vespa's metric for lat/long is named "geodegrees"; "geodesic" fails deployment
+        var schema = VespaSchemaBuilder.GenerateSchema<GeoMetricDoc>();
+        Assert.Contains("distance-metric: geodegrees", schema);
+        Assert.DoesNotContain("geodesic", schema);
+    }
+
+    // --- Auto default rank-profile vs user-declared default ---
+
+    [Fact]
+    public void GenerateSchema_UserDefaultProfile_WithTensorField_EmitsSingleDefaultProfile()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<DefaultProfileWithTensorDoc>();
+
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(schema, @"rank-profile default\s*\{").Count;
+        Assert.Equal(1, occurrences);
+        // The single profile must carry both the tensor inputs and the user's first-phase
+        Assert.Contains("inputs {", schema);
+        Assert.Contains("expression: nativeRank(name)", schema);
+    }
+
     // --- M14: Schema inherits ---
 
     [Fact]
@@ -778,6 +815,34 @@ file record RankNormalDoc
 {
     [VespaField(Name = "title", RankType = RankType.Default, IndexingMode = IndexingMode.IndexAttributeSummary)]
     public string Title { get; init; } = string.Empty;
+}
+
+[VespaDocument("ranktype_doc")]
+file record RankTypeElementDoc
+{
+    [VespaField(Name = "popularity", RankType = RankType.Identity, IndexingMode = IndexingMode.AttributeSummary)]
+    public int Popularity { get; init; }
+
+    [VespaField(Name = "labels", RankType = RankType.Tags, IndexingMode = IndexingMode.IndexAttributeSummary)]
+    public string Labels { get; init; } = string.Empty;
+}
+
+[VespaDocument("geo_doc")]
+file record GeoMetricDoc
+{
+    [VespaTensor("tensor<float>(x[2])", EnableIndex = true, DistanceMetric = DistanceMetric.Geodesic)]
+    public float[]? Location { get; init; }
+}
+
+[VespaDocument("default_profile_doc")]
+[VespaRankProfile("default", FirstPhase = "nativeRank(name)")]
+file record DefaultProfileWithTensorDoc
+{
+    [VespaField(Name = "name", IndexingMode = IndexingMode.IndexAttributeSummary)]
+    public string Name { get; init; } = string.Empty;
+
+    [VespaTensor("tensor<float>(x[8])", EnableIndex = true, DistanceMetric = DistanceMetric.Angular)]
+    public float[]? Embedding { get; init; }
 }
 
 [VespaDocument("child_doc", Inherits = "base_doc")]

@@ -5,7 +5,7 @@ namespace Vespa.Models.Tensors;
 
 /// <summary>
 /// Universal JSON converter for Vespa tensors that supports all formats and value types
-/// Efficiently handles float, double, int8 (sbyte), and bfloat16 (Half)
+/// Efficiently handles float, double, int8 (sbyte), and bfloat16 (stored as float)
 /// </summary>
 public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
 {
@@ -69,11 +69,11 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
 
         if (valueType == typeof(sbyte))
         {
-            var list = new List<sbyte> { reader.GetSByte() };
+            var list = new List<sbyte> { (sbyte)reader.GetDouble() };
             while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
             {
                 if (reader.TokenType == JsonTokenType.Number)
-                    list.Add(reader.GetSByte());
+                    list.Add((sbyte)reader.GetDouble());
             }
             return VespaTensor.FromDenseValues(list.ToArray(), tensorType);
         }
@@ -171,7 +171,7 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
             return VespaTensor.FromDenseValues(flat.Select(e => e.GetSingle()).ToArray(), tensorType);
 
         if (valueType == typeof(sbyte))
-            return VespaTensor.FromDenseValues(flat.Select(e => e.GetSByte()).ToArray(), tensorType);
+            return VespaTensor.FromDenseValues(flat.Select(e => (sbyte)e.GetDouble()).ToArray(), tensorType);
 
         if (valueType == typeof(Half))
             return VespaTensor.FromDenseValues(flat.Select(e => (Half)e.GetSingle()).ToArray(), tensorType);
@@ -207,7 +207,7 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
                 if (valueType == typeof(float))
                     cell.Value = valElem.GetSingle();
                 else if (valueType == typeof(sbyte))
-                    cell.Value = valElem.GetSByte();
+                    cell.Value = (sbyte)valElem.GetDouble();
                 else if (valueType == typeof(Half))
                     cell.Value = (Half)valElem.GetSingle();
                 else
@@ -255,7 +255,7 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
 
         if (valueType == typeof(sbyte))
         {
-            var dict = properties.ToDictionary(p => p.Name, p => p.Value.GetSByte());
+            var dict = properties.ToDictionary(p => p.Name, p => (sbyte)p.Value.GetDouble());
             return VespaTensor.FromMappedValues(dict, tensorType);
         }
 
@@ -286,7 +286,7 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
         {
             var dict = properties.ToDictionary(
                 p => p.Name,
-                p => p.Value.EnumerateArray().Select(e => e.GetSByte()).ToArray()
+                p => p.Value.EnumerateArray().Select(e => (sbyte)e.GetDouble()).ToArray()
             );
             return VespaTensor.FromMixedSingleSparse(dict, tensorType);
         }
@@ -328,7 +328,7 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
                 if (valueType == typeof(float))
                     block.SetValues(valuesElem.EnumerateArray().Select(e => e.GetSingle()).ToArray());
                 else if (valueType == typeof(sbyte))
-                    block.SetValues(valuesElem.EnumerateArray().Select(e => e.GetSByte()).ToArray());
+                    block.SetValues(valuesElem.EnumerateArray().Select(e => (sbyte)e.GetDouble()).ToArray());
                 else if (valueType == typeof(Half))
                     block.SetValues(valuesElem.EnumerateArray().Select(e => (Half)e.GetSingle()).ToArray());
                 else
@@ -366,7 +366,7 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
                         if (valueType == typeof(float))
                             cell.Value = reader.GetSingle();
                         else if (valueType == typeof(sbyte))
-                            cell.Value = reader.GetSByte();
+                            cell.Value = (sbyte)reader.GetDouble();
                         else if (valueType == typeof(Half))
                             cell.Value = (Half)reader.GetSingle();
                         else
