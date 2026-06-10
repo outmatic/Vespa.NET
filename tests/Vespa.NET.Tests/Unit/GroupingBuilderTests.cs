@@ -483,22 +483,6 @@ public class GroupingBuilderTests : IDisposable
     public void GroupingAgg_Percentile_UsesInvariantCulture()
         => Assert.Equal("percentile(99.9, latency)", GroupingAgg.Percentile(99.9, "latency"));
 
-    // --- GroupingBuilder: Having ---
-
-    [Fact]
-    public void Build_Having_ProducesHavingClause()
-    {
-        var expr = GroupingBuilder.All()
-            .Group("category")
-            .Max(10)
-            .Having($"{GroupingAgg.Count()} > 5")
-            .Each(e => e.Output(GroupingAgg.Count()))
-            .Build();
-
-        Assert.Contains("having(count() > 5)", expr);
-        Assert.Contains("group(category)", expr);
-    }
-
     // --- GroupingBuilder: GroupByFixedWidth ---
 
     [Fact]
@@ -533,7 +517,8 @@ public class GroupingBuilderTests : IDisposable
             .Each(e => e.Output(GroupingAgg.Count()))
             .Build();
 
-        Assert.Contains("group(predefined(price, bucket[0,100) bucket[100,200) bucket[200,500)))", expr);
+        // Buckets are comma-separated (docs.vespa.ai/en/reference/grouping-syntax.html)
+        Assert.Contains("group(predefined(price, bucket[0,100), bucket[100,200), bucket[200,500)))", expr);
     }
 
     [Fact]
@@ -553,7 +538,17 @@ public class GroupingBuilderTests : IDisposable
             .Each(e => e.Output(GroupingAgg.Count()))
             .Build();
 
-        Assert.Equal("""all(group(predefined(category, bucket["a","m") bucket["m","z"))) each(output(count())))""", expr);
+        Assert.Equal("""all(group(predefined(category, bucket["a","m"), bucket["m","z"))) each(output(count())))""", expr);
+    }
+
+    [Fact]
+    public void Build_GroupByStringBuckets_EscapesQuotesAndBackslashes()
+    {
+        var expr = GroupingBuilder.All()
+            .GroupByBuckets("category", ("a\"b", "z\\"))
+            .Build();
+
+        Assert.Contains("""bucket["a\"b","z\\")""", expr);
     }
 
     [Fact]

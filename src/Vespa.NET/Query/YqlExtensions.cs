@@ -18,6 +18,8 @@ public static class YqlExtensions
             request.Hits = limit;
         if (builder.GetOffset() is { } offset)
             request.Offset = offset;
+        if (builder.GetUserQueryText() is { } userQuery)
+            request.ModelQueryString = userQuery;
         return request;
     }
 
@@ -29,6 +31,8 @@ public static class YqlExtensions
             request.Hits = limit;
         if (builder.GetOffset() is { } offset)
             request.Offset = offset;
+        if (builder.GetUserQueryText() is { } userQuery)
+            request.ModelQueryString = userQuery;
         return request;
     }
 
@@ -38,6 +42,8 @@ public static class YqlExtensions
     public static VespaSearchRequest WithYql(this VespaSearchRequest request, YqlBuilder builder)
     {
         request.Yql = builder.Build();
+        if (builder.GetUserQueryText() is { } userQuery)
+            request.ModelQueryString = userQuery;
         return request;
     }
 
@@ -45,6 +51,8 @@ public static class YqlExtensions
     public static VespaSearchRequest WithYql<T>(this VespaSearchRequest request, YqlBuilder<T> builder) where T : class
     {
         request.Yql = builder.Build();
+        if (builder.GetUserQueryText() is { } userQuery)
+            request.ModelQueryString = userQuery;
         return request;
     }
 

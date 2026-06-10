@@ -1,3 +1,4 @@
+using System.Globalization;
 using Vespa.Models;
 using Vespa.Models.Attributes;
 using Vespa.Query;
@@ -127,6 +128,57 @@ public class YqlBuilderTests
             .Build();
 
         Assert.Equal("select * from music where genre = \"rock\"", yql);
+    }
+
+    // --- Where: literal formatting (docs.vespa.ai/en/reference/query-language-reference.html) ---
+
+    [Fact]
+    public void Build_WhereEqualTo_Bool_UsesLowercaseLiteral()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("alive").EqualTo(true))
+            .Build();
+
+        Assert.Equal("select * from music where alive = true", yql);
+    }
+
+    [Fact]
+    public void Build_WhereEqualTo_Decimal_UsesInvariantCulture()
+    {
+        var original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+            var yql = YqlBuilder.Select().From("music")
+                .Where(w => w.Field("price").EqualTo(1.5m))
+                .Build();
+
+            Assert.Equal("select * from music where price = 1.5", yql);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
+    }
+
+    [Fact]
+    public void Build_WhereGreaterThan_Long_AppendsLSuffix()
+    {
+        // YQL: "Input 64-bit signed numbers using L as suffix"
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("timestamp").GreaterThan(5_000_000_000L))
+            .Build();
+
+        Assert.Equal("select * from music where timestamp > 5000000000L", yql);
+    }
+
+    [Fact]
+    public void Build_WhereEqualTo_DateTime_Throws()
+    {
+        var builder = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("created").EqualTo(new DateTime(2026, 1, 1)));
+
+        Assert.Throws<NotSupportedException>(() => builder.Build());
     }
 
     // --- Where: Range ---
@@ -574,23 +626,25 @@ public class YqlBuilderTests
     // --- UserQuery / UserInput ---
 
     [Fact]
-    public void Build_UserQuery_ProducesCorrectSyntax()
+    public void Build_UserQuery_ProducesNullaryFunction()
     {
+        // YQL: userQuery() takes no arguments — the text travels in model.queryString
         var yql = YqlBuilder.Select().From("music")
             .Where(w => w.UserQuery("heavy metal"))
             .Build();
 
-        Assert.Equal(""""select * from music where userQuery("heavy metal")"""", yql);
+        Assert.Equal("select * from music where userQuery()", yql);
     }
 
     [Fact]
-    public void Build_UserQuery_EscapesQuotes()
+    public void ToSearchRequest_WithUserQuery_SetsModelQueryString()
     {
-        var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.UserQuery("say \"hello\""))
-            .Build();
+        var request = YqlBuilder.Select().From("music")
+            .Where(w => w.UserQuery("heavy metal"))
+            .ToSearchRequest();
 
-        Assert.Contains(@"userQuery(""say \""hello\"""")", yql);
+        Assert.Equal("select * from music where userQuery()", request.Yql);
+        Assert.Equal("heavy metal", request.ModelQueryString);
     }
 
     [Fact]
@@ -619,11 +673,11 @@ public class YqlBuilderTests
     [Fact]
     public void Build_TypedUserQuery_Works()
     {
-        var yql = YqlBuilder<MusicModel>.Select()
-            .Where(w => w.UserQuery("jazz classics"))
-            .Build();
+        var builder = YqlBuilder<MusicModel>.Select()
+            .Where(w => w.UserQuery("jazz classics"));
 
-        Assert.Contains("""userQuery("jazz classics")""", yql);
+        Assert.Contains("userQuery()", builder.Build());
+        Assert.Equal("jazz classics", builder.ToSearchRequest().ModelQueryString);
     }
 
     [Fact]

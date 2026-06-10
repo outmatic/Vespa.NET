@@ -114,12 +114,13 @@ internal abstract class YqlPredicate
     }
 
     /// <summary>
-    /// <c>userQuery("text")</c> — parses free-text user input using Vespa's default query language.
-    /// Safe to use directly with end-user input (no injection risk).
+    /// <c>userQuery()</c> — parses free-text user input using Vespa's simple query language.
+    /// The function takes no arguments: the text travels in the <c>model.queryString</c>
+    /// request parameter (set automatically by <c>ToSearchRequest()</c>/<c>WithYql()</c>).
     /// </summary>
-    internal sealed class UserQuery(string query) : YqlPredicate
+    internal sealed class UserQuery : YqlPredicate
     {
-        public override string Build() => $"userQuery(\"{Escape(query)}\")";
+        public override string Build() => "userQuery()";
     }
 
     /// <summary>
@@ -340,8 +341,16 @@ internal abstract class YqlPredicate
     private static string FormatValue(object value) => value switch
     {
         string s => $"\"{Escape(s)}\"",
+        bool b => b ? "true" : "false",
         float f => f.ToString(System.Globalization.CultureInfo.InvariantCulture),
         double d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        decimal m => m.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        // YQL requires the L suffix for 64-bit signed numbers
+        long l => l.ToString(System.Globalization.CultureInfo.InvariantCulture) + "L",
+        ulong ul => ul.ToString(System.Globalization.CultureInfo.InvariantCulture) + "L",
+        DateTime or DateTimeOffset => throw new NotSupportedException(
+            "DateTime values cannot be expressed in YQL — convert to epoch milliseconds (long) to match the field's stored representation."),
+        IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
         _ => value.ToString()!
     };
 

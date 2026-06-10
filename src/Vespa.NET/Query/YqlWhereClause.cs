@@ -153,14 +153,22 @@ public sealed class YqlWhereClause
     }
 
     /// <summary>
-    /// <c>userQuery("text")</c> — interprets free-text user input using Vespa's default
-    /// query language. Safe to use directly with end-user input.
+    /// <c>userQuery()</c> — interprets free-text user input using Vespa's simple query
+    /// language. Safe to use directly with end-user input: the text is not embedded in
+    /// the YQL but sent via the <c>model.queryString</c> request parameter, set
+    /// automatically when the builder is converted with <c>ToSearchRequest()</c> or
+    /// <c>WithYql()</c>. When building the YQL string manually, set
+    /// <c>VespaSearchRequest.ModelQueryString</c> yourself.
     /// </summary>
     public YqlWhereClause UserQuery(string query)
     {
-        _andPredicates.Add(new YqlPredicate.UserQuery(query));
+        UserQueryText = query;
+        _andPredicates.Add(new YqlPredicate.UserQuery());
         return this;
     }
+
+    /// <summary>Free text captured by <see cref="UserQuery"/>, sent as <c>model.queryString</c>.</summary>
+    internal string? UserQueryText { get; private set; }
 
     /// <summary>
     /// <c>userInput(@param)</c> — references a query parameter containing user input.

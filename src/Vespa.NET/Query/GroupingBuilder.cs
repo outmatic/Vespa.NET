@@ -22,7 +22,6 @@ public sealed class GroupingBuilder
     private int? _max;
     private int? _precision;
     private string? _order;
-    private string? _having;
     private bool _whereTrue;
     private readonly List<(string Name, string Expr)> _aliases = [];
     private EachGroupingBuilder? _each;
@@ -67,7 +66,7 @@ public sealed class GroupingBuilder
     /// <example>
     /// <code>
     /// .GroupByBuckets("price", (0, 100), (100, 200), (200, 500))
-    /// // → group(predefined(price, bucket[0,100) bucket[100,200) bucket[200,500)))
+    /// // → group(predefined(price, bucket[0,100), bucket[100,200), bucket[200,500)))
     /// </code>
     /// </example>
     public GroupingBuilder GroupByBuckets(string field, params (double From, double To)[] buckets)
@@ -77,7 +76,7 @@ public sealed class GroupingBuilder
             throw new ArgumentException("At least one bucket is required.", nameof(buckets));
 
         var inv = System.Globalization.CultureInfo.InvariantCulture;
-        var parts = string.Join(" ", buckets.Select(b => $"bucket[{b.From.ToString(inv)},{b.To.ToString(inv)})"));
+        var parts = string.Join(", ", buckets.Select(b => $"bucket[{b.From.ToString(inv)},{b.To.ToString(inv)})"));
         _groupField = $"predefined({field}, {parts})";
         return this;
     }
@@ -89,7 +88,7 @@ public sealed class GroupingBuilder
     /// <example>
     /// <code>
     /// .GroupByBuckets("category", ("a", "m"), ("m", "z"))
-    /// // → group(predefined(category, bucket["a","m") bucket["m","z")))
+    /// // → group(predefined(category, bucket["a","m"), bucket["m","z")))
     /// </code>
     /// </example>
     public GroupingBuilder GroupByBuckets(string field, params (string From, string To)[] buckets)
@@ -98,10 +97,12 @@ public sealed class GroupingBuilder
         if (buckets.Length == 0)
             throw new ArgumentException("At least one bucket is required.", nameof(buckets));
 
-        var parts = string.Join(" ", buckets.Select(b => $"""bucket["{b.From}","{b.To}")"""));
+        var parts = string.Join(", ", buckets.Select(b => $"""bucket["{Escape(b.From)}","{Escape(b.To)}")"""));
         _groupField = $"predefined({field}, {parts})";
         return this;
     }
+
+    private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     /// <summary>Maximum number of groups to return</summary>
     public GroupingBuilder Max(int n)
@@ -128,22 +129,6 @@ public sealed class GroupingBuilder
     public GroupingBuilder OrderByAscending(string expr)
     {
         _order = $"order(+{expr})";
-        return this;
-    }
-
-    /// <summary>
-    /// Filter groups by an aggregation predicate.
-    /// Generates <c>having(expr)</c>, e.g. <c>having(count() > 5)</c>.
-    /// </summary>
-    /// <example>
-    /// <code>
-    /// .Having($"{GroupingAgg.Count()} > 5")
-    /// // → having(count() > 5)
-    /// </code>
-    /// </example>
-    public GroupingBuilder Having(string expression)
-    {
-        _having = expression;
         return this;
     }
 
@@ -189,8 +174,6 @@ public sealed class GroupingBuilder
             sb.Append("where(true) ");
         if (_order is not null)
             sb.Append(_order).Append(' ');
-        if (_having is not null)
-            sb.Append("having(").Append(_having).Append(") ");
         foreach (var (name, expr) in _aliases)
             sb.Append("alias(").Append(name).Append(", ").Append(expr).Append(") ");
         if (_each is not null)

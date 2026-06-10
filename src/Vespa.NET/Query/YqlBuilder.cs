@@ -126,6 +126,7 @@ public sealed class YqlBuilder
 
     internal int? GetLimit() => _limit;
     internal int? GetOffset() => _offset;
+    internal string? GetUserQueryText() => _where?.UserQueryText;
 
     public override string ToString() => Build();
 }
@@ -201,6 +202,7 @@ public sealed class YqlBuilder<T> where T : class
 
     internal int? GetLimit() => _inner.GetLimit();
     internal int? GetOffset() => _inner.GetOffset();
+    internal string? GetUserQueryText() => _inner.GetUserQueryText();
     internal string Build(bool includeLimitOffset) => _inner.Build(includeLimitOffset);
 
     public string Build() => _inner.Build();
