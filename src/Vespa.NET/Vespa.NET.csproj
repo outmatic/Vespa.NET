@@ -26,4 +26,8 @@
     <ProjectReference Include="..\Vespa.NET.Models\Vespa.NET.Models.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Vespa.NET.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -153,15 +153,20 @@ public sealed partial class FeedOperations(
         var result = new FeedResult();
         var stopwatch = Stopwatch.StartNew();
 
+        // A consumer dying (e.g. a throwing onProgress callback) must unblock the
+        // producer's WriteAsync on the bounded channel, or the pipeline deadlocks.
+        using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var pipelineToken = pipelineCts.Token;
+
         // Producer: reads from IAsyncEnumerable, writes to bounded channel
         async Task ProduceAsync()
         {
             var count = 0;
             try
             {
-                await foreach (var doc in documents.WithCancellation(cancellationToken))
+                await foreach (var doc in documents.WithCancellation(pipelineToken))
                 {
-                    await channel.Writer.WriteAsync(doc, cancellationToken);
+                    await channel.Writer.WriteAsync(doc, pipelineToken);
                     count++;
                 }
             }
@@ -175,38 +180,63 @@ public sealed partial class FeedOperations(
         // Consumer: reads from channel and executes operation
         async Task ConsumeAsync()
         {
-            await foreach (var doc in channel.Reader.ReadAllAsync(cancellationToken))
+            try
             {
-                try
+                await foreach (var doc in channel.Reader.ReadAllAsync(pipelineToken))
                 {
-                    await operation(doc, cancellationToken);
-                    result.IncrementSuccess();
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
-                {
-                    result.IncrementFailure();
-                    result.Errors.Enqueue(new FeedError
+                    try
                     {
-                        DocumentId = doc.Id,
-                        Message = ex.Message,
-                        StatusCode = (ex as VespaException)?.StatusCode
-                    });
-                    onError(doc.Id, ex);
-                }
+                        await operation(doc, pipelineToken);
+                        result.IncrementSuccess();
+                    }
+                    catch (OperationCanceledException) when (pipelineToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+                    {
+                        result.IncrementFailure();
+                        result.AddError(new FeedError
+                        {
+                            DocumentId = doc.Id,
+                            Message = ex.Message,
+                            StatusCode = (ex as VespaException)?.StatusCode
+                        });
+                        onError(doc.Id, ex);
+                    }
 
-                onProgress?.Invoke(new FeedProgress(result.SuccessCount, result.FailureCount, doc.Id));
+                    onProgress?.Invoke(new FeedProgress(result.SuccessCount, result.FailureCount, doc.Id));
+                }
+            }
+            catch
+            {
+                pipelineCts.Cancel();
+                throw;
             }
         }
 
         var producerTask = ProduceAsync();
-        var consumers = Enumerable.Range(0, maxConcurrency).Select(_ => ConsumeAsync()).ToArray();
+        var allTasks = new List<Task>(maxConcurrency + 1) { producerTask };
+        allTasks.AddRange(Enumerable.Range(0, maxConcurrency).Select(_ => ConsumeAsync()));
 
-        await producerTask;
-        await Task.WhenAll(consumers);
+        try
+        {
+            // Await everything together: a producer failure must not abandon
+            // consumers with HTTP operations still in flight (and vice versa).
+            await Task.WhenAll(allTasks);
+        }
+        catch
+        {
+            // WhenAll surfaces the first task's exception; after a consumer fault the
+            // producer typically fails with the linked cancellation — prefer the real cause.
+            var realFault = allTasks
+                .Where(t => t.IsFaulted)
+                .SelectMany(t => t.Exception!.InnerExceptions)
+                .FirstOrDefault(e => e is not OperationCanceledException);
+            if (realFault is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(realFault).Throw();
+            throw;
+        }
 
         stopwatch.Stop();
         result.Duration = stopwatch.Elapsed;

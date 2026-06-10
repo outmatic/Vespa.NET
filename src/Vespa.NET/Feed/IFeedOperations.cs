@@ -103,31 +103,29 @@ public sealed record BulkFieldUpdate
 }
 
 /// <summary>
-/// Result of a bulk feed operation
+/// Result of a bulk feed operation. Populated by the feed pipeline;
+/// read-only for consumers.
 /// </summary>
 public sealed class FeedResult
 {
+    private readonly ConcurrentQueue<FeedError> _errors = new();
     private int _successCount;
     private int _failureCount;
 
-    public int TotalDocuments { get; set; }
+    public int TotalDocuments { get; internal set; }
     public int SuccessCount => _successCount;
     public int FailureCount => _failureCount;
-    public ConcurrentQueue<FeedError> Errors { get; set; } = new();
-    public TimeSpan Duration { get; set; }
+    public IReadOnlyCollection<FeedError> Errors => _errors;
+    public TimeSpan Duration { get; internal set; }
 
     public bool IsSuccess => FailureCount == 0;
     public double SuccessRate => TotalDocuments > 0 ? (double)SuccessCount / TotalDocuments : 0;
 
-    /// <summary>
-    /// Thread-safe increment of success count
-    /// </summary>
-    public void IncrementSuccess() => Interlocked.Increment(ref _successCount);
+    internal void IncrementSuccess() => Interlocked.Increment(ref _successCount);
 
-    /// <summary>
-    /// Thread-safe increment of failure count
-    /// </summary>
-    public void IncrementFailure() => Interlocked.Increment(ref _failureCount);
+    internal void IncrementFailure() => Interlocked.Increment(ref _failureCount);
+
+    internal void AddError(FeedError error) => _errors.Enqueue(error);
 }
 
 /// <summary>

@@ -731,6 +731,65 @@ public class FeedOperationsTests
         }
     }
 
+    [Fact]
+    public async Task FeedAsync_OnProgressCallbackThrows_PropagatesWithoutHanging()
+    {
+        // A throwing user callback used to kill the consumer without completing the
+        // channel: with the bounded channel full, the producer blocked forever.
+        _mockDocOps
+            .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
+
+        var feedTask = _feedOps.FeedAsync(
+            GenerateDocuments(50), "testdoc",
+            maxConcurrency: 1, boundedCapacity: 2,
+            onProgress: _ => throw new InvalidOperationException("boom"));
+
+        var completed = await Task.WhenAny(feedTask, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(feedTask, completed);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => feedTask);
+    }
+
+    [Fact]
+    public async Task FeedAsync_ProducerThrows_DoesNotAbandonRunningConsumers()
+    {
+        // The producer used to be awaited before the consumers: a source enumeration
+        // error made the method throw while HTTP operations were still in flight.
+        var opStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var opCompleted = false;
+
+        _mockDocOps
+            .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, object, string, string?, string?, DocumentRequestOptions?, CancellationToken>(async (_, _, _, _, _, _, _) =>
+            {
+                opStarted.TrySetResult();
+                await releaseOp.Task;
+                opCompleted = true;
+                return new VespaResponse { IsSuccess = true, StatusCode = 200 };
+            });
+
+        async IAsyncEnumerable<FeedDocument<object>> ThrowingSource()
+        {
+            yield return new FeedDocument<object> { Id = "doc-0", Fields = new { } };
+            await opStarted.Task;
+            throw new InvalidOperationException("source failed");
+        }
+
+        var feedTask = _feedOps.FeedAsync(ThrowingSource(), "testdoc", maxConcurrency: 1);
+        await opStarted.Task;
+
+        // The pipeline must not complete while the consumer's operation is in flight
+        var earlyWinner = await Task.WhenAny(feedTask, Task.Delay(300));
+        Assert.NotSame(feedTask, earlyWinner);
+
+        releaseOp.SetResult();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => feedTask);
+        Assert.True(opCompleted);
+    }
+
     #endregion
 
     #region BulkUpdateAsync Tests (7 tests)
