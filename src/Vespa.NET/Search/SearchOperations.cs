@@ -309,9 +309,10 @@ public sealed partial class SearchOperations(
             return null;
 
         var tokens = new List<string>();
+        // Vespa renders "this" as an empty string on the first page — skip it
         if (groupRootNode.TryGetProperty("continuation", out var contEl) &&
             contEl.TryGetProperty("this", out var thisEl) &&
-            thisEl.GetString() is { } thisToken)
+            thisEl.GetString() is { Length: > 0 } thisToken)
             tokens.Add(thisToken);
         tokens.AddRange(nextTokens);
         return tokens;
@@ -323,7 +324,7 @@ public sealed partial class SearchOperations(
             (idEl.GetString() ?? "").StartsWith("grouplist:") &&
             node.TryGetProperty("continuation", out var contEl) &&
             contEl.TryGetProperty("next", out var nextEl) &&
-            nextEl.GetString() is { } token)
+            nextEl.GetString() is { Length: > 0 } token)
             output.Add(token);
 
         if (node.TryGetProperty("children", out var children) && children.ValueKind == JsonValueKind.Array)
