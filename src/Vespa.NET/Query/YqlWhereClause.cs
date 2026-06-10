@@ -13,7 +13,8 @@ public sealed class YqlWhereClause
     internal YqlWhereClause() { }
 
     /// <summary>Start building a predicate on the named field</summary>
-    public YqlFieldClause Field(string fieldName) => new(fieldName, this);
+    public YqlFieldClause Field(string fieldName) =>
+        new(YqlIdentifier.Validate(fieldName, nameof(fieldName)), this);
 
     /// <summary>
     /// Start building a predicate on the field whose name is resolved from
@@ -88,6 +89,8 @@ public sealed class YqlWhereClause
         string? label = null, bool? approximate = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null)
     {
+        YqlIdentifier.Validate(field, nameof(field));
+        YqlIdentifier.Validate(queryTensor, nameof(queryTensor));
         _andPredicates.Add(new YqlPredicate.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits));
         return this;
     }

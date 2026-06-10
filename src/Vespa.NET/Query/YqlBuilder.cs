@@ -24,6 +24,12 @@ public sealed class YqlBuilder
 
     public static YqlBuilder Select(string fields = "*")
     {
+        foreach (var token in fields.Split(','))
+        {
+            var trimmed = token.Trim();
+            if (trimmed != "*")
+                YqlIdentifier.Validate(trimmed, nameof(fields));
+        }
         var builder = new YqlBuilder { _select = fields };
         return builder;
     }
@@ -54,7 +60,7 @@ public sealed class YqlBuilder
 
     public YqlBuilder OrderBy(string field, bool descending = false)
     {
-        _orderByClauses.Add((field, descending));
+        _orderByClauses.Add((YqlIdentifier.Validate(field, nameof(field)), descending));
         return this;
     }
 

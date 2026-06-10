@@ -130,6 +130,51 @@ public class YqlBuilderTests
                 .Where(w => w.Field("genre").EqualTo("rock")));
     }
 
+    // --- Identifier validation (injection surface) ---
+
+    [Theory]
+    [InlineData("price; select * from secrets")]
+    [InlineData("name\" or true or \"\" contains \"")]
+    [InlineData("year)")]
+    [InlineData("")]
+    [InlineData("1starts_with_digit")]
+    public void Field_InvalidIdentifier_Throws(string field)
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.Field(field).GreaterThan(1)));
+    }
+
+    [Fact]
+    public void Field_DottedStructPath_IsAllowed()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("attributes.key").GreaterThan(1))
+            .Build();
+
+        Assert.Contains("attributes.key > 1", yql);
+    }
+
+    [Fact]
+    public void OrderBy_InvalidIdentifier_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").OrderBy("price; drop"));
+    }
+
+    [Fact]
+    public void Select_InvalidFieldToken_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select("price, name; drop").From("music").Build());
+    }
+
+    [Fact]
+    public void Select_StarAndFieldList_AreAllowed()
+    {
+        Assert.Contains("select * from", YqlBuilder.Select().From("music").Build());
+        Assert.Contains("select price, name from", YqlBuilder.Select("price, name").From("music").Build());
+    }
+
     // --- Where: literal formatting (docs.vespa.ai/en/reference/query-language-reference.html) ---
 
     [Fact]

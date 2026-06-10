@@ -75,8 +75,8 @@ public sealed partial class SearchOperations(
         if (values.Length == 0)
             throw new ArgumentException("Query embedding values cannot be empty", nameof(queryEmbedding));
 
-        ArgumentException.ThrowIfNullOrWhiteSpace(embeddingField);
-        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        Query.YqlIdentifier.Validate(embeddingField, nameof(embeddingField));
+        Query.YqlIdentifier.Validate(documentType, nameof(documentType));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(topK);
 
         if (logger != null)

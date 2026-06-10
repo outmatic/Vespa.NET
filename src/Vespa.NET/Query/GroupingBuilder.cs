@@ -35,7 +35,11 @@ public sealed class GroupingBuilder
     /// <summary>Creates a top-level <c>each(...)</c> grouping block (rarely needed at top level)</summary>
     public static GroupingBuilder Each() => new(false);
 
-    /// <summary>Group by the specified field or expression</summary>
+    /// <summary>
+    /// Group by the specified field or grouping expression.
+    /// The value is embedded verbatim in the grouping clause — do not pass
+    /// unvalidated end-user input here; use the bucket/fixed-width helpers for that.
+    /// </summary>
     public GroupingBuilder Group(string field)
     {
         _groupField = field;
@@ -54,6 +58,7 @@ public sealed class GroupingBuilder
     /// </example>
     public GroupingBuilder GroupByFixedWidth(string field, double width)
     {
+        YqlIdentifier.Validate(field, nameof(field));
         _groupField = $"fixedwidth({field}, {width.ToString(System.Globalization.CultureInfo.InvariantCulture)})";
         return this;
     }
@@ -71,7 +76,7 @@ public sealed class GroupingBuilder
     /// </example>
     public GroupingBuilder GroupByBuckets(string field, params (double From, double To)[] buckets)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(field);
+        YqlIdentifier.Validate(field, nameof(field));
         if (buckets.Length == 0)
             throw new ArgumentException("At least one bucket is required.", nameof(buckets));
 
@@ -93,7 +98,7 @@ public sealed class GroupingBuilder
     /// </example>
     public GroupingBuilder GroupByBuckets(string field, params (string From, string To)[] buckets)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(field);
+        YqlIdentifier.Validate(field, nameof(field));
         if (buckets.Length == 0)
             throw new ArgumentException("At least one bucket is required.", nameof(buckets));
 
