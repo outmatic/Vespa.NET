@@ -258,7 +258,8 @@ public sealed class VespaSearchRequest
     /// </summary>
     public VespaSearchRequest WithTimeout(TimeSpan timeout)
     {
-        Timeout = $"{(long)timeout.TotalMilliseconds}ms";
+        // Round (not truncate) and never emit "0ms", which Vespa rejects
+        Timeout = $"{Math.Max(1, (long)Math.Round(timeout.TotalMilliseconds))}ms";
         return this;
     }
 

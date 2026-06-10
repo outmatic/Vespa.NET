@@ -771,6 +771,16 @@ public class VespaTensorConverterTests
         Assert.Equal((sbyte)1, tensor.Cells![0].Value);
     }
 
+    [Theory]
+    [InlineData("""{"type":"tensor<int8>(x[1])","values":[200.0]}""")]
+    [InlineData("""{"type":"tensor<int8>(x[1])","values":[-300.0]}""")]
+    [InlineData("""{"type":"tensor<int8>(x[1])","values":[2.7]}""")]
+    public void Read_Int8OutOfRangeOrFractional_Throws(string json)
+    {
+        // Saturating/truncating silently would corrupt data — fail loudly
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions));
+    }
+
     [Fact]
     public void Read_BFloat16_LargeMagnitude_DoesNotSaturate()
     {

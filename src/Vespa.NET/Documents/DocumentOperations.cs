@@ -738,7 +738,19 @@ public sealed partial class DocumentOperations(
     /// </summary>
     private static VespaDocument<T>? ParseJsonlLine<T>(string line) where T : class
     {
-        using var json = JsonDocument.Parse(line);
+        JsonDocument json;
+        try
+        {
+            json = JsonDocument.Parse(line);
+        }
+        catch (JsonException)
+        {
+            // Malformed/truncated line (e.g. connection drop mid-line) — skip,
+            // consistent with the selection-stream reader.
+            return null;
+        }
+
+        using var _ = json;
         var root = json.RootElement;
 
         if (root.TryGetProperty("remove", out var removeElem))

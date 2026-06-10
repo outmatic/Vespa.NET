@@ -73,6 +73,17 @@ public class VespaClientTests : IDisposable
     }
 
     [Fact]
+    public void Admin_AfterDispose_ThrowsObjectDisposedException()
+    {
+        // Materializing the lazy admin client after Dispose would resurrect an
+        // HttpClient + handler nobody disposes
+        var client = new VespaClient(_httpClient, _options);
+        client.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => client.Admin);
+    }
+
+    [Fact]
     public void Constructor_WithNullHttpClient_ThrowsArgumentNullException()
     {
         // Act & Assert

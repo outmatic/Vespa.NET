@@ -22,11 +22,22 @@ public sealed partial class VespaClient : IVespaClient
     private readonly VespaClientOptions _options;
     private readonly ILogger<VespaClient>? _logger;
     private readonly Lazy<AdminOperations> _admin;
+    private volatile bool _disposed;
 
     public IDocumentOperations Documents { get; }
     public ISearchOperations Search { get; }
     public IFeedOperations Feed { get; }
-    public IAdminOperations Admin => _admin.Value;
+
+    public IAdminOperations Admin
+    {
+        get
+        {
+            // Guard: materializing the lazy admin client after Dispose would
+            // resurrect an HttpClient + handler nobody disposes.
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _admin.Value;
+        }
+    }
 
     /// <summary>
     /// Create a new VespaClient with an HttpClient from IHttpClientFactory
@@ -80,7 +91,7 @@ public sealed partial class VespaClient : IVespaClient
             var handler = VespaServiceCollectionExtensions.BuildSocketsHttpHandler(options);
             var adminHttpClient = new HttpClient(handler, disposeHandler: true);
             ConfigureDirectHttpClient(adminHttpClient, configEndpoint, options);
-            return new AdminOperations(adminHttpClient, options, logger);
+            return new AdminOperations(adminHttpClient, options, logger, ownsHttpClient: true);
         }, LazyThreadSafetyMode.ExecutionAndPublication);
 
         // Initialize operation handlers
@@ -230,6 +241,7 @@ public sealed partial class VespaClient : IVespaClient
         // Do NOT dispose _httpClient — it's externally owned (IHttpClientFactory).
         // Dispose the admin HttpClient we created internally via AdminOperations,
         // but only if it was ever materialized.
+        _disposed = true;
         if (_admin.IsValueCreated)
             _admin.Value.Dispose();
     }

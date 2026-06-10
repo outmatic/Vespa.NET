@@ -41,6 +41,7 @@ public class VespaException : Exception
                     : message,
                 error),
             408 or 504 => new VespaTimeoutException(message, error, statusCode),
+            429 => new VespaTooManyRequestsException(message, error),
             >= 500 => new VespaServerException(message, error, statusCode),
             _ => new VespaException(message, error, statusCode)
         };

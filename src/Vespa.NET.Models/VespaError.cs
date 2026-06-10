@@ -16,6 +16,10 @@ public sealed record VespaError
     [JsonPropertyName("summary")]
     public string? Summary { get; init; }
 
+    /// <summary>Which searcher/source produced the error (search responses).</summary>
+    [JsonPropertyName("source")]
+    public string? Source { get; init; }
+
     [JsonPropertyName("details")]
     public string? Details { get; init; }
 

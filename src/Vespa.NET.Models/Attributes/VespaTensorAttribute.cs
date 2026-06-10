@@ -55,17 +55,9 @@ public class VespaTensorAttribute : Attribute
     public int NeighborsToExploreAtInsert { get; set; } = 200;
 
     /// <summary>
-    /// Create a VespaTensor attribute with a type-safe tensor type specification
-    /// </summary>
-    /// <param name="tensorTypeSpec">Tensor type specification builder</param>
-    public VespaTensorAttribute(TensorTypeSpec tensorTypeSpec)
-    {
-        ArgumentNullException.ThrowIfNull(tensorTypeSpec);
-        TensorTypeSpec = tensorTypeSpec;
-    }
-
-    /// <summary>
-    /// Create a VespaTensor attribute from a string tensor type specification
+    /// Create a VespaTensor attribute from a string tensor type specification.
+    /// (Attribute arguments must be compile-time constants, so the string form
+    /// is the only usable constructor.)
     /// </summary>
     /// <param name="tensorType">Vespa tensor type string (e.g., "tensor&lt;float&gt;(x[384])")</param>
     public VespaTensorAttribute(string tensorType)

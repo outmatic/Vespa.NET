@@ -265,6 +265,35 @@ public class DocumentRequestOptionsTests
     }
 
     [Fact]
+    public async Task VisitJsonlAsync_MalformedLine_IsSkipped()
+    {
+        // A truncated line (connection drop mid-line) must not abort the whole stream
+        var jsonl = """
+        {"put":"id:test:music::1","fields":{"title":"Song A"}}
+        {"put":"id:test:music::2","fie
+        {"put":"id:test:music::3","fields":{"title":"Song C"}}
+        """;
+
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(jsonl.Trim())
+            });
+
+        using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
+        var ops = new DocumentOperations(http, _options);
+
+        var docs = new List<VespaDocument<Dictionary<string, object>>>();
+        await foreach (var doc in ops.VisitJsonlAsync<Dictionary<string, object>>("music"))
+            docs.Add(doc);
+
+        Assert.Equal(2, docs.Count);
+        Assert.Equal(["1", "3"], docs.Select(d => d.Id));
+    }
+
+    [Fact]
     public async Task VisitJsonlAsync_UrlIncludesStreamParam()
     {
         string? capturedUrl = null;

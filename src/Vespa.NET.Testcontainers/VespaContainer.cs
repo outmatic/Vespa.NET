@@ -188,8 +188,8 @@ public sealed class VespaContainer : IAsyncDisposable
     {
         var healthUrl = $"{Endpoint}/state/v1/health";
         var deadline = TimeSpan.FromMinutes(2);
-        var elapsed = TimeSpan.Zero;
         var pollInterval = TimeSpan.FromMilliseconds(500);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         while (true)
         {
@@ -203,13 +203,17 @@ public sealed class VespaContainer : IAsyncDisposable
             {
                 // port not serving yet
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // HttpClient timeout (not the caller's token) — still not ready
+            }
 
-            if (elapsed >= deadline)
+            // Wall-clock deadline: the GETs themselves can take up to the client timeout
+            if (stopwatch.Elapsed >= deadline)
                 throw new InvalidOperationException(
                     $"Vespa application did not become ready on {Endpoint} within {deadline.TotalSeconds:F0}s after deployment.");
 
             await Task.Delay(pollInterval, cancellationToken);
-            elapsed += pollInterval;
         }
     }
 }

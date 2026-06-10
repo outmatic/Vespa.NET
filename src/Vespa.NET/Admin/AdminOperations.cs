@@ -8,10 +8,19 @@ namespace Vespa.Admin;
 /// <summary>
 /// Implementation of Vespa config-server administrative operations.
 /// </summary>
+/// <param name="httpClient">HTTP client pointed at the config server.</param>
+/// <param name="options">Client options.</param>
+/// <param name="logger">Optional logger.</param>
+/// <param name="ownsHttpClient">
+/// When <see langword="true"/>, <see cref="Dispose"/> disposes <paramref name="httpClient"/>.
+/// Defaults to <see langword="false"/> so externally-managed (e.g. factory) clients
+/// are never killed by this instance.
+/// </param>
 public sealed partial class AdminOperations(
     HttpClient httpClient,
     VespaClientOptions options,
-    ILogger? logger = null) : IAdminOperations, IDisposable
+    ILogger? logger = null,
+    bool ownsHttpClient = false) : IAdminOperations, IDisposable
 {
     private readonly HttpClient _httpClient =
         httpClient ?? throw new ArgumentNullException(nameof(httpClient));
@@ -73,8 +82,9 @@ public sealed partial class AdminOperations(
         }
         finally
         {
+            // Best-effort cleanup — a failure here must never mask the deploy exception
             try { File.Delete(tempPath); }
-            catch (IOException) { /* best-effort cleanup */ }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { }
         }
     }
 
@@ -93,6 +103,10 @@ public sealed partial class AdminOperations(
             return await response.Content.ReadFromJsonAsync<VespaApplicationStatus>(
                 VespaJsonOptions.Default, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             if (logger is not null)
@@ -101,7 +115,11 @@ public sealed partial class AdminOperations(
         }
     }
 
-    public void Dispose() => _httpClient.Dispose();
+    public void Dispose()
+    {
+        if (ownsHttpClient)
+            _httpClient.Dispose();
+    }
 
     [LoggerMessage(EventId = 401, Level = LogLevel.Information,
         Message = "Deploying application package ({Bytes} bytes)")]

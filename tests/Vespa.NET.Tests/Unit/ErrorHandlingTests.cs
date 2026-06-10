@@ -284,6 +284,15 @@ public class ErrorHandlingTests
         Assert.Equal(statusCode, ex.StatusCode);
     }
 
+    [Fact]
+    public void FromStatusCode_429_ReturnsVespaTooManyRequestsException()
+    {
+        // 429 is Vespa's standard backpressure signal — callers need a typed catch
+        var ex = VespaException.FromStatusCode(429, "throttled");
+        Assert.IsType<VespaTooManyRequestsException>(ex);
+        Assert.Equal(429, ex.StatusCode);
+    }
+
     [Theory]
     [InlineData(500)]
     [InlineData(502)]
@@ -299,7 +308,7 @@ public class ErrorHandlingTests
     [InlineData(400)]
     [InlineData(401)]
     [InlineData(403)]
-    [InlineData(429)]
+    [InlineData(409)]
     public void FromStatusCode_Other4xx_ReturnsBaseVespaException(int statusCode)
     {
         var ex = VespaException.FromStatusCode(statusCode, "client error");

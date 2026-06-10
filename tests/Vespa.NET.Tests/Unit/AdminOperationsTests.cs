@@ -33,6 +33,49 @@ public class AdminOperationsTests : IDisposable
 
     public void Dispose() => _httpClient.Dispose();
 
+    [Fact]
+    public async Task GetApplicationStatusAsync_OnCallerCancellation_Throws()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new TaskCanceledException());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            _adminOps.GetApplicationStatusAsync(cancellationToken: cts.Token));
+    }
+
+    [Fact]
+    public void Dispose_DoesNotDisposeInjectedHttpClient()
+    {
+        // AdminOperations is public - disposing a factory-managed client would kill it
+        var handler = new Mock<HttpMessageHandler>();
+        var http = new HttpClient(handler.Object) { BaseAddress = new Uri("http://localhost:19071") };
+        var ops = new AdminOperations(http, new VespaClientOptions { Endpoint = "http://localhost:8080" });
+
+        ops.Dispose();
+
+        // Still usable after dispose because the client is externally owned
+        http.CancelPendingRequests();
+    }
+
+    [Fact]
+    public void Dispose_DisposesOwnedHttpClient()
+    {
+        var handler = new Mock<HttpMessageHandler>();
+        var http = new HttpClient(handler.Object) { BaseAddress = new Uri("http://localhost:19071") };
+        var ops = new AdminOperations(http, new VespaClientOptions { Endpoint = "http://localhost:8080" }, ownsHttpClient: true);
+
+        ops.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => http.CancelPendingRequests());
+    }
+
     // ── DeployAsync ───────────────────────────────────────────────────────────
 
     [Fact]
