@@ -62,13 +62,37 @@ public class VespaIdConverterTests
     [InlineData("id:ns:type::doc1", "doc1")]
     [InlineData("id:ns:type::", "")]
     [InlineData("no-colon", "no-colon")]
-    [InlineData(":trailing-colon", "trailing-colon")]
-    [InlineData("leading-colon:", "")]
+    // Strings that are not full Vespa document IDs must pass through untouched
+    [InlineData(":trailing-colon", ":trailing-colon")]
+    [InlineData("leading-colon:", "leading-colon:")]
     public void GetShortId_HandlesVariousFormats(string input, string expected)
     {
         // Since GetShortId is private, we test it through deserialization
         var json = $"\"{input}\"";
         var result = JsonSerializer.Deserialize<string>(json, _options);
         Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    // User-specified part may itself contain "::" (id grammar: id:<ns>:<type>:<k/v>:<user>)
+    [InlineData("id:ns:music::album::dark-side", "album::dark-side")]
+    // Location selectors (g=/n=) occupy the key/value slot; user part keeps its colons
+    [InlineData("id:ns:music:g=group1:doc:1", "doc:1")]
+    [InlineData("id:ns:music:n=123:42", "42")]
+    public void Read_LegalIdsWithSelectorsOrColons_ReturnsFullUserPart(string input, string expected)
+    {
+        var result = JsonSerializer.Deserialize<string>($"\"{input}\"", _options);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    // Non-document hit IDs (e.g. grouping results) must never be shortened
+    [InlineData("group:root:0")]
+    [InlineData("a::b")]
+    [InlineData("index:content/0/abc123")]
+    public void Read_NonDocumentIds_PassThroughUnchanged(string input)
+    {
+        var result = JsonSerializer.Deserialize<string>($"\"{input}\"", _options);
+        Assert.Equal(input, result);
     }
 }

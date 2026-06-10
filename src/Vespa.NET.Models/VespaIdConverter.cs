@@ -19,22 +19,5 @@ public sealed class VespaIdConverter : JsonConverter<string>
         writer.WriteStringValue(value);
     }
 
-    private static string GetShortId(string fullId)
-    {
-        if (string.IsNullOrEmpty(fullId)) return fullId;
-
-        var doubleColonIndex = fullId.LastIndexOf("::", StringComparison.Ordinal);
-        if (doubleColonIndex >= 0)
-        {
-            return fullId[(doubleColonIndex + 2)..];
-        }
-
-        var lastColonIndex = fullId.LastIndexOf(':');
-        if (lastColonIndex >= 0)
-        {
-            return fullId[(lastColonIndex + 1)..];
-        }
-
-        return fullId;
-    }
+    private static string GetShortId(string fullId) => VespaDocumentId.GetUserSpecified(fullId);
 }

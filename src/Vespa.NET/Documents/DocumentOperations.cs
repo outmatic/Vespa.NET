@@ -416,13 +416,15 @@ public sealed partial class DocumentOperations(
 
         do
         {
+            // Cancellation propagates from the HTTP call/body read — exiting the loop
+            // early would falsely report a partially-applied operation as successful.
             page = await ExecuteSelectionChunkAsync(
                 method, selection, documentType, @namespace, cluster,
                 extraParams, requestOptions, continuation, contentFactory, cancellationToken);
             totalDocumentCount += page.DocumentCount;
             continuation = page.Continuation;
         }
-        while (continuation is not null && !cancellationToken.IsCancellationRequested);
+        while (continuation is not null);
 
         return new VespaResponse
         {
@@ -794,14 +796,11 @@ public sealed partial class DocumentOperations(
         @namespace ?? _options.DefaultNamespace;
 
     /// <summary>
-    /// Strips the Vespa ID prefix (<c>id:{namespace}:{doctype}::</c>) when present,
+    /// Strips the Vespa ID prefix (<c>id:{namespace}:{doctype}:{k/v}:</c>) when present,
     /// so callers can pass either the bare user ID or the full Vespa document ID.
+    /// Bare IDs — including ones that happen to contain <c>::</c> — pass through unchanged.
     /// </summary>
-    private static string NormalizeId(string id)
-    {
-        var idx = id.LastIndexOf("::", StringComparison.Ordinal);
-        return idx >= 0 ? id[(idx + 2)..] : id;
-    }
+    private static string NormalizeId(string id) => VespaDocumentId.GetUserSpecified(id);
 
     private string DocBasePath(string documentType, string? @namespace) =>
         $"{VespaPaths.DocV1}/{ResolveNamespace(@namespace)}/{documentType}/docid/";

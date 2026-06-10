@@ -216,6 +216,27 @@ public class DocumentOperationsTests : IDisposable
         VerifyHttpCall(HttpMethod.Get, expectedUrl);
     }
 
+    [Theory]
+    // Full Vespa IDs are stripped to the user-specified part — which may contain "::"
+    [InlineData("id:test:testdoc::album::dark-side", "album%3A%3Adark-side")]
+    // g=/n= selectors occupy the key/value slot; the user part keeps its colons
+    [InlineData("id:test:testdoc:g=group1:doc:1", "doc%3A1")]
+    // Bare IDs that merely contain "::" are not full Vespa IDs and must not be truncated
+    [InlineData("a::b", "a%3A%3Ab")]
+    public async Task GetAsync_NormalizesId_WithoutCorruptingUserPart(string docId, string expectedEscaped)
+    {
+        var expectedUrl = $"/document/v1/test/testdoc/docid/{expectedEscaped}";
+        SetupGetSuccessResponse(new VespaDocument<TestDocument>
+        {
+            Id = "test",
+            Fields = new TestDocument { Name = "Test" }
+        });
+
+        await _documentOps.GetAsync<TestDocument>(docId, "testdoc");
+
+        VerifyHttpCall(HttpMethod.Get, expectedUrl);
+    }
+
     [Fact]
     public async Task GetAsync_WithCustomNamespace_UsesCustomNamespace()
     {
