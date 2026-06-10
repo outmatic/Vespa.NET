@@ -133,6 +133,23 @@ public class FieldOperationsTests : IDisposable
         Assert.Equal("""{"assign":"hello"}""", json);
     }
 
+    [Fact]
+    public void FieldOperation_Match_SerializesElementInsideMatch()
+    {
+        // Vespa document JSON format: {"match":{"element":"...","increment":1}}
+        var op = FieldOp.Match("Lay Lady Lay", FieldOp.Increment(1));
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        Assert.Equal("""{"match":{"element":"Lay Lady Lay","increment":1}}""", json);
+    }
+
+    [Fact]
+    public void FieldOperation_Match_WithIntegerElement_SerializesArrayIndex()
+    {
+        var op = FieldOp.Match(2, FieldOp.Assign("new value"));
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        Assert.Equal("""{"match":{"element":2,"assign":"new value"}}""", json);
+    }
+
     // --- UpdateFieldsAsync HTTP tests ---
 
     [Fact]
@@ -545,6 +562,47 @@ public class FieldOperationsTests : IDisposable
             "SendAsync", Times.Exactly(3),
             ItExpr.IsAny<HttpRequestMessage>(),
             ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task UpdateBySelectionAsync_WithContinuation_SendsReadableBodyOnEveryChunk()
+    {
+        // A real HTTP handler reads the request body on every chunk — a content
+        // instance reused across chunks is disposed with the first request.
+        var handler = new BodyReadingHandler(new Queue<HttpResponseMessage>(
+        [
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"documentCount": 100, "continuation": "abc"}""")
+            },
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"documentCount": 50}""")
+            }
+        ]));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        var documentOps = new DocumentOperations(httpClient, _options);
+
+        var result = await documentOps.UpdateBySelectionAsync(
+            "music.year < 2000",
+            new Dictionary<string, FieldOperation> { ["status"] = FieldOp.Assign("archived") },
+            "music", cluster: "content");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(150, result.DocumentCount);
+        Assert.Equal(2, handler.Bodies.Count);
+        Assert.All(handler.Bodies, b => Assert.Contains(""""assign":"archived"""", b));
+    }
+
+    private sealed class BodyReadingHandler(Queue<HttpResponseMessage> responses) : HttpMessageHandler
+    {
+        public List<string> Bodies { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+            return responses.Dequeue();
+        }
     }
 
     [Fact]

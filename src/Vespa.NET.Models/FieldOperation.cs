@@ -93,12 +93,21 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
     public override void Write(Utf8JsonWriter writer, FieldOperation value, JsonSerializerOptions options)
     {
         writer.WriteStartObject();
+        WriteOperation(writer, value, options);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteOperation(Utf8JsonWriter writer, FieldOperation value, JsonSerializerOptions options)
+    {
         if (value.Value is MatchPayload match)
         {
+            // Vespa format: {"match":{"element":<key>,"<innerOp>":<value>}}
+            writer.WritePropertyName(value.Type);
+            writer.WriteStartObject();
             writer.WritePropertyName("element");
             JsonSerializer.Serialize(writer, match.Key, options);
-            writer.WritePropertyName(value.Type);
-            JsonSerializer.Serialize(writer, match.InnerOp, options);
+            WriteOperation(writer, match.InnerOp, options);
+            writer.WriteEndObject();
         }
         else if (value.Value is ClearFieldSentinel)
         {
@@ -131,6 +140,5 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
             writer.WritePropertyName(value.Type);
             JsonSerializer.Serialize(writer, value.Value, options);
         }
-        writer.WriteEndObject();
     }
 }

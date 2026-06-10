@@ -339,12 +339,13 @@ public sealed partial class DocumentOperations(
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
         ArgumentNullException.ThrowIfNull(fieldOperations);
 
-        var payload = JsonContent.Create(new { fields = fieldOperations }, options: VespaJsonOptions.Default);
+        // The factory must build a fresh content per chunk: each HttpRequestMessage
+        // disposes its content, and the continuation loop sends one request per chunk.
         return ExecuteSelectionOperationAsync(
             HttpMethod.Put, selection, documentType, @namespace, cluster,
             extraParams: [],
             requestOptions: requestOptions,
-            contentFactory: () => payload,
+            contentFactory: () => JsonContent.Create(new { fields = fieldOperations }, options: VespaJsonOptions.Default),
             cancellationToken);
     }
 
@@ -574,13 +575,12 @@ public sealed partial class DocumentOperations(
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
         ArgumentNullException.ThrowIfNull(fieldOperations);
 
-        var payload = JsonContent.Create(new { fields = fieldOperations }, options: VespaJsonOptions.Default);
         return ExecuteSelectionChunkAsync(
             HttpMethod.Put, selection, documentType, @namespace, cluster,
             extraParams: [],
             requestOptions: requestOptions,
             continuation: continuation,
-            contentFactory: () => payload,
+            contentFactory: () => JsonContent.Create(new { fields = fieldOperations }, options: VespaJsonOptions.Default),
             cancellationToken);
     }
 
