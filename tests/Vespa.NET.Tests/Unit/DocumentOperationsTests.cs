@@ -152,7 +152,7 @@ public class DocumentOperationsTests : IDisposable
         // Arrange
         var expectedDoc = new VespaDocument<TestDocument>
         {
-            Id = "id:test:testdoc::doc-1",
+            FullId = "id:test:testdoc::doc-1",
             Fields = new TestDocument { Name = "Test", Value = 123 }
         };
         SetupGetSuccessResponse(expectedDoc);
@@ -205,7 +205,7 @@ public class DocumentOperationsTests : IDisposable
         var expectedUrl = $"/document/v1/test/testdoc/docid/{expectedEscaped}";
         SetupGetSuccessResponse(new VespaDocument<TestDocument>
         {
-            Id = "test",
+            FullId = "test",
             Fields = new TestDocument { Name = "Test" }
         });
 
@@ -229,7 +229,7 @@ public class DocumentOperationsTests : IDisposable
     {
         SetupGetSuccessResponse(new VespaDocument<TestDocument>
         {
-            Id = "test",
+            FullId = "test",
             Fields = new TestDocument { Name = "Test" }
         });
 
@@ -267,7 +267,7 @@ public class DocumentOperationsTests : IDisposable
         // Arrange
         SetupGetSuccessResponse(new VespaDocument<TestDocument>
         {
-            Id = "test",
+            FullId = "test",
             Fields = new TestDocument { Name = "Test" }
         });
 
@@ -444,7 +444,7 @@ public class DocumentOperationsTests : IDisposable
     [InlineData("doc-1", "/document/v1/test/testdoc/docid/doc-1")]
     public async Task GetAsync_NormalizesFullVespaId(string inputId, string expectedPath)
     {
-        SetupGetSuccessResponse(new VespaDocument<TestDocument> { Id = "doc-1" });
+        SetupGetSuccessResponse(new VespaDocument<TestDocument> { FullId = "doc-1" });
 
         await _documentOps.GetAsync<TestDocument>(inputId, "testdoc");
 
@@ -542,7 +542,7 @@ public class DocumentOperationsTests : IDisposable
     [Fact]
     public async Task GetByGroupAsync_BuildsCorrectUrl()
     {
-        SetupGetSuccessResponse(new VespaDocument<TestDocument> { Id = "doc-1" });
+        SetupGetSuccessResponse(new VespaDocument<TestDocument> { FullId = "doc-1" });
 
         await _documentOps.GetByGroupAsync<TestDocument>("mygroup", "lid-1", "testdoc");
 
@@ -552,7 +552,7 @@ public class DocumentOperationsTests : IDisposable
     [Fact]
     public async Task GetByGroupAsync_EscapesGroupName()
     {
-        SetupGetSuccessResponse(new VespaDocument<TestDocument> { Id = "doc-1" });
+        SetupGetSuccessResponse(new VespaDocument<TestDocument> { FullId = "doc-1" });
 
         await _documentOps.GetByGroupAsync<TestDocument>("my group", "lid-1", "testdoc");
 
@@ -572,7 +572,7 @@ public class DocumentOperationsTests : IDisposable
     [Fact]
     public async Task GetByNumberAsync_BuildsCorrectUrl()
     {
-        SetupGetSuccessResponse(new VespaDocument<TestDocument> { Id = "doc-1" });
+        SetupGetSuccessResponse(new VespaDocument<TestDocument> { FullId = "doc-1" });
 
         await _documentOps.GetByNumberAsync<TestDocument>(42L, "lid-1", "testdoc");
 
@@ -741,7 +741,7 @@ public class DocumentOperationsTests : IDisposable
     {
         SetupGetSuccessResponse(new VespaDocument<TestDocument>
         {
-            Id = "id:test:testdoc::doc-1",
+            FullId = "id:test:testdoc::doc-1",
             Fields = new TestDocument { Name = "Test", Value = 1 }
         });
 
@@ -767,7 +767,7 @@ public class DocumentOperationsTests : IDisposable
                 var idx = Interlocked.Increment(ref callCount);
                 var doc = new VespaDocument<TestDocument>
                 {
-                    Id = $"id:test:testdoc::doc-{idx}",
+                    FullId = $"id:test:testdoc::doc-{idx}",
                     Fields = new TestDocument { Name = $"Doc{idx}", Value = idx }
                 };
                 var json = JsonSerializer.Serialize(doc, new JsonSerializerOptions
@@ -804,7 +804,7 @@ public class DocumentOperationsTests : IDisposable
                     return new HttpResponseMessage(HttpStatusCode.NotFound);
                 var doc = new VespaDocument<TestDocument>
                 {
-                    Id = $"id:test:testdoc::doc-{idx}",
+                    FullId = $"id:test:testdoc::doc-{idx}",
                     Fields = new TestDocument { Name = $"Doc{idx}", Value = idx }
                 };
                 var json = JsonSerializer.Serialize(doc, new JsonSerializerOptions

@@ -73,6 +73,39 @@ public sealed record Coverage
 
     [JsonPropertyName("resultsFull")]
     public int? ResultsFull { get; init; }
+
+    /// <summary>
+    /// Present when coverage is degraded; describes which mechanism caused the
+    /// degradation. <see langword="null"/> when coverage is full.
+    /// </summary>
+    [JsonPropertyName("degraded")]
+    public CoverageDegraded? Degraded { get; init; }
+}
+
+/// <summary>
+/// Reasons for degraded search coverage (the <c>coverage.degraded</c> response object).
+/// </summary>
+public sealed record CoverageDegraded
+{
+    /// <summary>Coverage was reduced by match-phase degradation (schema <c>match-phase</c>).</summary>
+    [JsonPropertyName("match-phase")]
+    public bool MatchPhase { get; init; }
+
+    /// <summary>The query timed out before completing.</summary>
+    [JsonPropertyName("timeout")]
+    public bool Timeout { get; init; }
+
+    /// <summary>The query was stopped by adaptive timeout (soft timeout).</summary>
+    [JsonPropertyName("adaptive-timeout")]
+    public bool AdaptiveTimeout { get; init; }
+
+    /// <summary>The approximate-nearest-neighbor phase timed out.</summary>
+    [JsonPropertyName("anntimeout")]
+    public bool AnnTimeout { get; init; }
+
+    /// <summary>At least one content node was in a non-ideal state.</summary>
+    [JsonPropertyName("non-ideal-state")]
+    public bool NonIdealState { get; init; }
 }
 
 /// <summary>
@@ -80,9 +113,28 @@ public sealed record Coverage
 /// </summary>
 public sealed record SearchHit<T> where T : class
 {
+    private readonly string? _id;
+
+    /// <summary>
+    /// Full hit ID exactly as returned by Vespa — a full document ID
+    /// (<c>id:ns:type::doc1</c>) for document hits, or a synthetic ID
+    /// (e.g. <c>group:root:0</c>, <c>index:content/0/…</c>) for other hit types.
+    /// Set during deserialization.
+    /// </summary>
     [JsonPropertyName("id")]
-    [JsonConverter(typeof(VespaIdConverter))]
-    public string Id { get; init; } = string.Empty;
+    public string FullId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// User-specified (short) part of the document ID (e.g. <c>doc1</c>).
+    /// Derived from <see cref="FullId"/> unless set explicitly; non-document hit IDs
+    /// pass through unchanged.
+    /// </summary>
+    [JsonIgnore]
+    public string Id
+    {
+        get => _id ?? VespaDocumentId.GetUserSpecified(FullId);
+        init => _id = value;
+    }
 
     [JsonPropertyName("relevance")]
     public double Relevance { get; init; }
@@ -101,12 +153,28 @@ public sealed record SearchHit<T> where T : class
     public Dictionary<string, JsonElement>? MatchFeatures { get; init; }
 
     /// <summary>
+    /// Summary features computed for this hit (schema <c>summary-features</c>).
+    /// Values can be numbers or tensors (rendered as JSON objects); use
+    /// <see cref="GetSummaryFeature"/> for scalars.
+    /// </summary>
+    [JsonPropertyName("summaryfeatures")]
+    public Dictionary<string, JsonElement>? SummaryFeatures { get; init; }
+
+    /// <summary>
     /// Returns the named match feature as a double, or <see langword="null"/> when
     /// the feature is missing or not a scalar (e.g. a tensor).
     /// </summary>
-    public double? GetMatchFeature(string name) =>
-        MatchFeatures is not null &&
-        MatchFeatures.TryGetValue(name, out var value) &&
+    public double? GetMatchFeature(string name) => GetScalarFeature(MatchFeatures, name);
+
+    /// <summary>
+    /// Returns the named summary feature as a double, or <see langword="null"/> when
+    /// the feature is missing or not a scalar (e.g. a tensor).
+    /// </summary>
+    public double? GetSummaryFeature(string name) => GetScalarFeature(SummaryFeatures, name);
+
+    private static double? GetScalarFeature(Dictionary<string, JsonElement>? features, string name) =>
+        features is not null &&
+        features.TryGetValue(name, out var value) &&
         value.ValueKind == JsonValueKind.Number
             ? value.GetDouble()
             : null;

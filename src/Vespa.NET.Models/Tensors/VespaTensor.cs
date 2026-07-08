@@ -54,11 +54,13 @@ public sealed class VespaTensor
     public List<TensorCell>? Cells { get; set; }
 
     /// <summary>
-    /// Get dense values as typed array (zero-copy)
+    /// Get dense values as a typed array. Zero-copy when the stored element type matches
+    /// <typeparamref name="T"/>; otherwise the values are converted numerically
+    /// (checked — out-of-range values throw <see cref="OverflowException"/>).
     /// </summary>
     public T[]? GetDenseValues<T>() where T : struct, INumber<T>
     {
-        return InternalDenseValues as T[];
+        return TensorValueConversion.ToArray<T>(InternalDenseValues);
     }
 
     /// <summary>
@@ -71,11 +73,13 @@ public sealed class VespaTensor
     }
 
     /// <summary>
-    /// Get mapped values as typed dictionary (zero-copy)
+    /// Get mapped values as a typed dictionary. Zero-copy when the stored element type
+    /// matches <typeparamref name="T"/>; otherwise the values are converted numerically
+    /// (checked — out-of-range values throw <see cref="OverflowException"/>).
     /// </summary>
     public Dictionary<string, T>? GetMappedValues<T>() where T : struct, INumber<T>
     {
-        return InternalMappedValues as Dictionary<string, T>;
+        return TensorValueConversion.ToValueDictionary<T>(InternalMappedValues);
     }
 
     /// <summary>
@@ -88,11 +92,13 @@ public sealed class VespaTensor
     }
 
     /// <summary>
-    /// Get mixed single sparse values as typed dictionary (zero-copy)
+    /// Get mixed single sparse values as a typed dictionary. Zero-copy when the stored
+    /// element type matches <typeparamref name="T"/>; otherwise the values are converted
+    /// numerically (checked — out-of-range values throw <see cref="OverflowException"/>).
     /// </summary>
     public Dictionary<string, T[]>? GetMixedSingleSparse<T>() where T : struct, INumber<T>
     {
-        return InternalMixedSingleSparse as Dictionary<string, T[]>;
+        return TensorValueConversion.ToArrayDictionary<T>(InternalMixedSingleSparse);
     }
 
     /// <summary>

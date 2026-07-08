@@ -36,7 +36,10 @@ public class VespaTensorAttribute : Attribute
     public TensorIndexType IndexType { get; set; } = TensorIndexType.Hnsw;
 
     /// <summary>
-    /// Distance metric for nearest neighbor search
+    /// Distance metric for nearest neighbor search.
+    /// Defaults to <see cref="DistanceMetric.Angular"/> — the common choice for text
+    /// embeddings — which deliberately diverges from Vespa's schema default
+    /// (<c>euclidean</c>). Set explicitly when generating schemas for other kinds of data.
     /// </summary>
     public DistanceMetric DistanceMetric { get; set; } = DistanceMetric.Angular;
 

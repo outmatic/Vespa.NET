@@ -144,4 +144,85 @@ public class VespaTensorTests
     }
 
     #endregion
+
+    #region Numeric conversion on element-type mismatch
+
+    [Fact]
+    public void GetDenseValues_ElementTypeMismatch_ConvertsNumerically()
+    {
+        // Previously returned null (`as T[]`) — now converts
+        var tensor = VespaTensor.FromDenseValues([1.5, 2.5]);
+
+        var asFloat = tensor.GetDenseValues<float>();
+
+        Assert.NotNull(asFloat);
+        Assert.Equal(new[] { 1.5f, 2.5f }, asFloat);
+    }
+
+    [Fact]
+    public void GetDenseValues_SByteToDouble_Converts()
+    {
+        var tensor = VespaTensor.FromDenseValues<sbyte>([1, -2, 3]);
+
+        Assert.Equal(new[] { 1.0, -2.0, 3.0 }, tensor.GetDenseValues<double>());
+    }
+
+    [Fact]
+    public void GetDenseValues_OutOfRange_ThrowsOverflow()
+    {
+        var tensor = VespaTensor.FromDenseValues([1000.0]);
+
+        Assert.Throws<OverflowException>(() => tensor.GetDenseValues<sbyte>());
+    }
+
+    [Fact]
+    public void GetDenseValues_Null_ReturnsNull()
+    {
+        var tensor = new VespaTensor();
+
+        Assert.Null(tensor.GetDenseValues<double>());
+    }
+
+    [Fact]
+    public void GetMappedValues_ElementTypeMismatch_ConvertsNumerically()
+    {
+        var tensor = VespaTensor.FromMappedValues(new Dictionary<string, float> { ["a"] = 1.0f });
+
+        var asDouble = tensor.GetMappedValues<double>();
+
+        Assert.NotNull(asDouble);
+        Assert.Equal(1.0, asDouble["a"]);
+    }
+
+    [Fact]
+    public void GetMixedSingleSparse_ElementTypeMismatch_ConvertsNumerically()
+    {
+        var tensor = VespaTensor.FromMixedSingleSparse(new Dictionary<string, float[]> { ["x1"] = [1.0f, 2.0f] });
+
+        var asDouble = tensor.GetMixedSingleSparse<double>();
+
+        Assert.NotNull(asDouble);
+        Assert.Equal(new[] { 1.0, 2.0 }, asDouble["x1"]);
+    }
+
+    [Fact]
+    public void TensorBlock_GetValues_ElementTypeMismatch_ConvertsNumerically()
+    {
+        var block = new TensorBlock();
+        block.SetValues([1.0f, 2.0f]);
+
+        Assert.Equal(new[] { 1.0, 2.0 }, block.GetValues<double>());
+    }
+
+    [Fact]
+    public void GetMappedValues_UnknownStorageType_ThrowsInvalidCast()
+    {
+        var tensor = new VespaTensor();
+        tensor.SetMappedValues(new Dictionary<string, int> { ["a"] = 1 });
+
+        var ex = Assert.Throws<InvalidCastException>(() => tensor.GetMappedValues<double>());
+        Assert.Contains("cannot be converted", ex.Message);
+    }
+
+    #endregion
 }

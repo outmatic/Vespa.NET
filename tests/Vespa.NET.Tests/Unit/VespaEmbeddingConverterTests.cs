@@ -28,7 +28,7 @@ public class VespaEmbeddingConverterTests
     public void Read_FlatArray_Parses()
     {
         var result = Deserialize("""{"embedding":[1.0,2.0,3.0],"name":"x"}""");
-        Assert.Equal([1f, 2f, 3f], result!.Embedding);
+        Assert.Equal([1f, 2f, 3f], result!.Embedding!);
         Assert.Equal("x", result.Name);
     }
 
@@ -38,7 +38,7 @@ public class VespaEmbeddingConverterTests
         // Multi-dimensional short form — the old reader stopped at the first
         // inner EndArray and left the reader mid-value
         var result = Deserialize("""{"embedding":[[1.0,2.0],[3.0,4.0]],"name":"x"}""");
-        Assert.Equal([1f, 2f, 3f, 4f], result!.Embedding);
+        Assert.Equal([1f, 2f, 3f, 4f], result!.Embedding!);
         Assert.Equal("x", result.Name);
     }
 
@@ -46,7 +46,7 @@ public class VespaEmbeddingConverterTests
     public void Read_ValuesProperty_Parses()
     {
         var result = Deserialize("""{"embedding":{"type":"tensor<float>(x[2])","values":[1.0,2.0]},"name":"x"}""");
-        Assert.Equal([1f, 2f], result!.Embedding);
+        Assert.Equal([1f, 2f], result!.Embedding!);
         Assert.Equal("x", result.Name);
     }
 
@@ -54,7 +54,7 @@ public class VespaEmbeddingConverterTests
     public void Read_NestedValues_FlattensWithoutDesync()
     {
         var result = Deserialize("""{"embedding":{"values":[[1.0,2.0],[3.0,4.0]],"type":"t"},"name":"x"}""");
-        Assert.Equal([1f, 2f, 3f, 4f], result!.Embedding);
+        Assert.Equal([1f, 2f, 3f, 4f], result!.Embedding!);
         Assert.Equal("x", result.Name);
     }
 
@@ -64,7 +64,7 @@ public class VespaEmbeddingConverterTests
         // Short form mapped cells: {"cells":{"a":1.0}} — the old reader walked into
         // the inner object and terminated on its EndObject
         var result = Deserialize("""{"embedding":{"type":"tensor(x{})","cells":{"a":1.0,"b":2.0}},"name":"x"}""");
-        Assert.Equal([1f, 2f], result!.Embedding);
+        Assert.Equal([1f, 2f], result!.Embedding!);
         Assert.Equal("x", result.Name);
     }
 
@@ -72,7 +72,7 @@ public class VespaEmbeddingConverterTests
     public void Read_LongFormCells_ExtractsValues()
     {
         var result = Deserialize("""{"embedding":{"cells":[{"address":{"x":"0"},"value":2.0},{"address":{"x":"1"},"value":3.0}]},"name":"x"}""");
-        Assert.Equal([2f, 3f], result!.Embedding);
+        Assert.Equal([2f, 3f], result!.Embedding!);
         Assert.Equal("x", result.Name);
     }
 
@@ -89,5 +89,37 @@ public class VespaEmbeddingConverterTests
     {
         var json = JsonSerializer.Serialize(new Wrapper { Embedding = [1f, 2f] });
         Assert.Contains("[1,2]", json);
+    }
+
+    // ── Hex-encoded dense values (presentation.format.tensors=hex|hex-value) ──
+
+    [Fact]
+    public void Read_HexString_InValuesProperty_DecodesAsFloat32()
+    {
+        // 1.0f = 0x3F800000, 2.0f = 0x40000000
+        var result = Deserialize("""{"embedding":{"values":"3F80000040000000"},"name":"x"}""");
+        Assert.Equal([1f, 2f], result!.Embedding!);
+        Assert.Equal("x", result.Name);
+    }
+
+    [Fact]
+    public void Read_BareHexString_DecodesAsFloat32()
+    {
+        // hex-value renders the tensor content directly as a hex string
+        var result = Deserialize("""{"embedding":"3F80000040000000","name":"x"}""");
+        Assert.Equal([1f, 2f], result!.Embedding!);
+        Assert.Equal("x", result.Name);
+    }
+
+    [Fact]
+    public void Read_HexString_WrongLength_Throws()
+    {
+        Assert.Throws<JsonException>(() => Deserialize("""{"embedding":"3F8000","name":"x"}"""));
+    }
+
+    [Fact]
+    public void Read_HexString_InvalidDigits_Throws()
+    {
+        Assert.Throws<JsonException>(() => Deserialize("""{"embedding":"NOTHEXX0","name":"x"}"""));
     }
 }

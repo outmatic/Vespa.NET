@@ -56,7 +56,8 @@ public sealed partial class AdminOperations(
             var error = await response.Content.ReadAsStringAsync(cancellationToken);
             throw VespaException.FromStatusCode(
                 (int)response.StatusCode,
-                $"Deploy failed with status {response.StatusCode}: {error}");
+                $"Deploy failed with status {response.StatusCode}: {error}",
+                retryAfter: VespaResponseHeaders.GetRetryAfter(response));
         }
 
         if (logger is not null)

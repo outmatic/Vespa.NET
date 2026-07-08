@@ -7,7 +7,9 @@ namespace Vespa.Models;
 /// Custom JSON converter for Vespa embedding fields (float[] only)
 /// For full tensor support with all formats, use VespaTensorConverter with VespaTensor type.
 /// This converter provides backward compatibility and convenience for simple float[] embeddings.
-/// Supports: array format [1.0, 2.0] and object format {"values": [1.0, 2.0]} or {"cells": [1.0, 2.0]}
+/// Supports: array format [1.0, 2.0], object format {"values": [1.0, 2.0]} or {"cells": [1.0, 2.0]},
+/// and hex-encoded dense values (<c>presentation.format.tensors=hex|hex-value</c>), which are
+/// always decoded as float32 — 8 hex digits per value.
 /// </summary>
 public sealed class VespaEmbeddingConverter : JsonConverter<float[]?>
 {
@@ -17,6 +19,8 @@ public sealed class VespaEmbeddingConverter : JsonConverter<float[]?>
             JsonTokenType.Null => null,
             JsonTokenType.StartArray => ReadArray(ref reader),
             JsonTokenType.StartObject => ReadObject(ref reader),
+            // presentation.format.tensors=hex-value renders dense tensors as a bare hex string
+            JsonTokenType.String => ParseHexFloats(ref reader),
             _ => throw new JsonException($"Unexpected token type: {reader.TokenType}")
         };
 
@@ -37,6 +41,8 @@ public sealed class VespaEmbeddingConverter : JsonConverter<float[]?>
                     JsonTokenType.StartArray => ReadArray(ref reader),
                     // Short form mapped cells: {"cells":{"a":1.0,"b":2.0}}
                     JsonTokenType.StartObject => ReadMappedCells(ref reader),
+                    // Hex-encoded dense values: {"values":"3F8000004000000..."}
+                    JsonTokenType.String => ParseHexFloats(ref reader),
                     _ => SkipAndKeep(ref reader, result)
                 };
             }
@@ -108,6 +114,38 @@ public sealed class VespaEmbeddingConverter : JsonConverter<float[]?>
         }
     }
 
+    /// <summary>
+    /// Decodes the documented hex string form for dense tensor values. Since this
+    /// converter has no access to the tensor type, values are always decoded as
+    /// float32 (8 hex digits per value, big-endian bit pattern) — the only cell
+    /// type this converter supports. Use <c>VespaTensor</c> for other cell types.
+    /// </summary>
+    private static float[] ParseHexFloats(ref Utf8JsonReader reader)
+    {
+        var hex = reader.GetString()!;
+        if (hex.Length % 8 != 0)
+            throw new JsonException(
+                $"Hex embedding value length {hex.Length} is not a multiple of 8 hex digits per float32 value");
+
+        var result = new float[hex.Length / 8];
+        for (var i = 0; i < result.Length; i++)
+        {
+            if (!uint.TryParse(hex.AsSpan(i * 8, 8),
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out var bits))
+                throw new JsonException($"Invalid hex digits in embedding value: '{hex.Substring(i * 8, 8)}'");
+            result[i] = BitConverter.UInt32BitsToSingle(bits);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Reads short-form mapped cells ({"cells":{"a":1.0,"b":2.0}}).
+    /// Note: the mapped dimension labels are discarded — values are returned
+    /// positionally in JSON document order, which is only meaningful when the
+    /// caller does not depend on specific labels. Use <c>VespaTensor</c> to
+    /// preserve the address of each cell.
+    /// </summary>
     private static float[] ReadMappedCells(ref Utf8JsonReader reader)
     {
         var list = new List<float>();

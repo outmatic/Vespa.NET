@@ -182,7 +182,7 @@ public static class TestDataFactory
     {
         return new VespaDocument<T>
         {
-            Id = id,
+            FullId = id,
             Fields = fields
         };
     }
@@ -236,7 +236,7 @@ public static class TestDataFactory
     {
         return new SearchHit<T>
         {
-            Id = id,
+            FullId = id,
             Relevance = relevance,
             Fields = fields
         };

@@ -108,6 +108,32 @@ public class SearchOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task SearchAsync_On429_PopulatesRetryAfterFromHeader()
+    {
+        // Arrange
+        var request = new VespaSearchRequest { Yql = "select * from testdoc", Hits = 10 };
+        var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Content = new StringContent("throttled")
+        };
+        response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(3));
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(response);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<VespaTooManyRequestsException>(() =>
+            _searchOps.SearchAsync<TestDocument>(request));
+
+        Assert.Equal(429, ex.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(3), ex.RetryAfter);
+    }
+
+    [Fact]
     public async Task SearchAsync_WithRankingProfile_IncludesInRequest()
     {
         // Arrange

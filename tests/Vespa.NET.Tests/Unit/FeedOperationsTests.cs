@@ -92,7 +92,7 @@ public class FeedOperationsTests
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id == "doc-2"), It.IsAny<object>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new VespaException("Test error", 500));
+            .ThrowsAsync(new VespaException("Test error", statusCode: 500));
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id != "doc-2"), It.IsAny<object>(),
@@ -126,7 +126,7 @@ public class FeedOperationsTests
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new VespaException("Test error", 500));
+            .ThrowsAsync(new VespaException("Test error", statusCode: 500));
 
         // Act
         var result = await _feedOps.BulkPutAsync(documents, "testdoc");
@@ -280,7 +280,7 @@ public class FeedOperationsTests
             .Returns(async () =>
             {
                 await Task.Delay(1);
-                throw new VespaException("Test error", 500);
+                throw new VespaException("Test error", statusCode: 500);
             });
 
         // Act
@@ -401,7 +401,7 @@ public class FeedOperationsTests
         _mockDocOps
             .Setup(d => d.DeleteAsync(It.Is<string>(id => id == "doc-2"), It.IsAny<string>(),
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new VespaException("Test error", 404));
+            .ThrowsAsync(new VespaException("Test error", statusCode: 404));
 
         _mockDocOps
             .Setup(d => d.DeleteAsync(It.Is<string>(id => id != "doc-2"), It.IsAny<string>(),
@@ -621,7 +621,7 @@ public class FeedOperationsTests
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id == "doc-2"), It.IsAny<object>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new VespaException("Test error", 500));
+            .ThrowsAsync(new VespaException("Test error", statusCode: 500));
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id != "doc-2"), It.IsAny<object>(),
@@ -873,7 +873,7 @@ public class FeedOperationsTests
             .Setup(d => d.UpdateFieldsAsync("doc-2", It.IsAny<Dictionary<string, FieldOperation>>(),
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(),
                 It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new VespaException("Not found", 404));
+            .ThrowsAsync(new VespaException("Not found", statusCode: 404));
 
         var result = await _feedOps.BulkUpdateAsync(updates, "music");
 

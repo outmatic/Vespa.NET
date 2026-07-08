@@ -197,22 +197,13 @@ public class AdminOperationsTests : IDisposable
     [Fact]
     public async Task GetApplicationStatusAsync_ReturnsDeserializedStatus()
     {
-        var json = JsonSerializer.Serialize(new
-        {
-            tenant = "default",
-            application = "default",
-            environment = "prod",
-            active = true
-        });
-        SetupResponse(HttpStatusCode.OK, json);
+        // The endpoint returns the active application's config generation
+        SetupResponse(HttpStatusCode.OK, """{"generation":42}""");
 
         var status = await _adminOps.GetApplicationStatusAsync();
 
         Assert.NotNull(status);
-        Assert.Equal("default", status.Tenant);
-        Assert.Equal("default", status.Application);
-        Assert.Equal("prod", status.Environment);
-        Assert.True(status.IsActive);
+        Assert.Equal(42, status.Generation);
     }
 
     [Fact]
@@ -228,7 +219,7 @@ public class AdminOperationsTests : IDisposable
     [Fact]
     public async Task GetApplicationStatusAsync_WithTenantOverride_UsesOverriddenTenant()
     {
-        SetupResponse(HttpStatusCode.OK, """{"tenant":"acme","application":"default","environment":"prod","active":true}""");
+        SetupResponse(HttpStatusCode.OK, """{"generation":1}""");
 
         var status = await _adminOps.GetApplicationStatusAsync(tenant: "acme");
 

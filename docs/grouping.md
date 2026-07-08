@@ -49,12 +49,18 @@ GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500), (500, double
 ### Per-group document summaries
 
 Return the actual documents inside each group (`hitlist:*` in the response,
-surfaced as typed `SearchHit<T>` in `VespaGroup.Hits`):
+surfaced in `VespaGroup.Hits`; use `group.GetHits<T>()` for typed
+`SearchHit<T>` access):
 
 ```csharp
 GroupingBuilder.All().Group("category")
     .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 3));
 // all(group(category) each(output(count()) max(3) each(output(summary()))))
+
+var response = await client.Search.GroupByAsync<Product>(request);
+foreach (var group in response.GroupingResults[0].Groups)
+    foreach (var hit in group.GetHits<Product>())
+        Console.WriteLine($"{group.Value}: {hit.Id} ({hit.Relevance})");
 ```
 
 ### Nested grouping

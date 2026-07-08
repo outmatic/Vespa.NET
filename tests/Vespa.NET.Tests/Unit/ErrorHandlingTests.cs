@@ -34,7 +34,7 @@ public class ErrorHandlingTests
         var statusCode = 500;
 
         // Act
-        var exception = new VespaException(message, statusCode);
+        var exception = new VespaException(message, statusCode: statusCode);
 
         // Assert
         Assert.Equal(message, exception.Message);
@@ -90,7 +90,7 @@ public class ErrorHandlingTests
     public void VespaException_CanBeThrown()
     {
         // Arrange & Act
-        void ThrowException() => throw new VespaException("Test error", 500);
+        void ThrowException() => throw new VespaException("Test error", statusCode: 500);
 
         // Assert
         var ex = Assert.Throws<VespaException>(ThrowException);
@@ -105,7 +105,7 @@ public class ErrorHandlingTests
         var ex = await Assert.ThrowsAsync<VespaException>(async () =>
         {
             await Task.Yield();
-            throw new VespaException("Async error", 503);
+            throw new VespaException("Async error", statusCode: 503);
         });
 
         Assert.Equal("Async error", ex.Message);
@@ -322,6 +322,55 @@ public class ErrorHandlingTests
         var error = new VespaError { Code = 404, Message = "Not found" };
         var ex = VespaException.FromStatusCode(404, "msg", error);
         Assert.Same(error, ex.Error);
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(408)]
+    [InlineData(412)]
+    [InlineData(429)]
+    [InlineData(500)]
+    [InlineData(504)]
+    [InlineData(400)]
+    public void FromStatusCode_EmptyMessage_SynthesizesStatusSpecificFallback(int statusCode)
+    {
+        var ex = VespaException.FromStatusCode(statusCode, "");
+
+        Assert.False(string.IsNullOrWhiteSpace(ex.Message));
+        Assert.Contains(statusCode.ToString(), ex.Message);
+    }
+
+    // ── Retry-After propagation (429) ─────────────────────────────────────────
+
+    [Fact]
+    public void FromStatusCode_429_CarriesRetryAfter()
+    {
+        var ex = VespaException.FromStatusCode(429, "throttled", retryAfter: TimeSpan.FromSeconds(2));
+
+        var tooMany = Assert.IsType<VespaTooManyRequestsException>(ex);
+        Assert.Equal(TimeSpan.FromSeconds(2), tooMany.RetryAfter);
+    }
+
+    [Fact]
+    public void VespaTooManyRequestsException_RetryAfter_DefaultsToNull()
+    {
+        var ex = new VespaTooManyRequestsException("throttled");
+        Assert.Null(ex.RetryAfter);
+        Assert.Equal(429, ex.StatusCode);
+    }
+
+    // ── VespaError.Transient ──────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("""{"code":8,"message":"overloaded","transient":true}""", true)]
+    [InlineData("""{"code":3,"message":"illegal query","transient":false}""", false)]
+    [InlineData("""{"code":3,"message":"no flag"}""", null)]
+    public void VespaError_Transient_Deserializes(string json, bool? expected)
+    {
+        var error = System.Text.Json.JsonSerializer.Deserialize<VespaError>(json);
+
+        Assert.NotNull(error);
+        Assert.Equal(expected, error.Transient);
     }
 
     // ── Subtype properties ────────────────────────────────────────────────────

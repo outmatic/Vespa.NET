@@ -23,11 +23,13 @@ public sealed class TensorBlock
     internal Array InternalValues { get; set; } = Array.Empty<double>();
 
     /// <summary>
-    /// Get values as typed array (zero-copy)
+    /// Get values as a typed array. Zero-copy when the stored element type matches
+    /// <typeparamref name="T"/>; otherwise the values are converted numerically
+    /// (checked — out-of-range values throw <see cref="OverflowException"/>).
     /// </summary>
     public T[]? GetValues<T>() where T : struct, INumber<T>
     {
-        return InternalValues as T[];
+        return TensorValueConversion.ToArray<T>(InternalValues);
     }
 
     /// <summary>

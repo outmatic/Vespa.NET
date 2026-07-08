@@ -577,7 +577,8 @@ public sealed partial class DocumentOperations(
             }
 
         var message = error?.Message ?? $"HTTP {(int)response.StatusCode}: {body}";
-        return VespaException.FromStatusCode((int)response.StatusCode, message, error);
+        return VespaException.FromStatusCode(
+            (int)response.StatusCode, message, error, VespaResponseHeaders.GetRetryAfter(response));
     }
 
     private sealed record SelectionResponseBody(

@@ -213,7 +213,8 @@ public sealed partial class SearchOperations(
         activity?.SetStatus(ActivityStatusCode.Error, errorContent);
         throw VespaException.FromStatusCode(
             (int)response.StatusCode,
-            $"Search failed with status {response.StatusCode}: {errorContent}");
+            $"Search failed with status {response.StatusCode}: {errorContent}",
+            retryAfter: VespaResponseHeaders.GetRetryAfter(response));
     }
 
     private static double[] ExtractDenseValues(VespaTensor queryEmbedding)

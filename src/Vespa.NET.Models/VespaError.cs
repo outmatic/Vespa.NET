@@ -20,6 +20,14 @@ public sealed record VespaError
     [JsonPropertyName("source")]
     public string? Source { get; init; }
 
+    /// <summary>
+    /// Whether the error is transient — <see langword="true"/> means a retry of the
+    /// same request may succeed (e.g. overload/timeout), <see langword="false"/> means
+    /// it will keep failing. <see langword="null"/> when the server did not say.
+    /// </summary>
+    [JsonPropertyName("transient")]
+    public bool? Transient { get; init; }
+
     [JsonPropertyName("details")]
     public string? Details { get; init; }
 

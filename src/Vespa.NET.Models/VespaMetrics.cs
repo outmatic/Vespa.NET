@@ -45,10 +45,16 @@ public sealed record MetricValue(
 
 /// <summary>
 /// Aggregated numeric values for a metric within the snapshot window.
+/// Which aggregations are present depends on the metric type.
 /// </summary>
 public sealed record MetricValues(
     [property: JsonPropertyName("last")] double? Last,
     [property: JsonPropertyName("max")] double? Max,
     [property: JsonPropertyName("sum")] double? Sum,
-    [property: JsonPropertyName("count")] long? Count
+    [property: JsonPropertyName("count")] long? Count,
+    [property: JsonPropertyName("min")] double? Min = null,
+    [property: JsonPropertyName("average")] double? Average = null,
+    [property: JsonPropertyName("rate")] double? Rate = null,
+    [property: JsonPropertyName("95percentile")] double? Percentile95 = null,
+    [property: JsonPropertyName("99percentile")] double? Percentile99 = null
 );

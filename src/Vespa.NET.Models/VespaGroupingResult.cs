@@ -20,9 +20,17 @@ public sealed record VespaGroup(
     /// Document summaries returned inside this group when the grouping expression
     /// requests them via <c>each(output(summary()))</c> (<c>hitlist:*</c> children).
     /// Each element is a <c>SearchHit&lt;T&gt;</c> for the <c>T</c> used in the
-    /// <c>GroupByAsync&lt;T&gt;</c> call — cast accordingly.
+    /// <c>GroupByAsync&lt;T&gt;</c> call — use <see cref="GetHits{T}"/> for typed access.
     /// </summary>
     public IReadOnlyList<object> Hits { get; init; } = [];
+
+    /// <summary>
+    /// Returns <see cref="Hits"/> as typed <see cref="SearchHit{T}"/> instances.
+    /// <typeparamref name="T"/> must be the type used in the originating
+    /// <c>GroupByAsync&lt;T&gt;</c> call; throws <see cref="InvalidCastException"/> otherwise.
+    /// </summary>
+    public IReadOnlyList<SearchHit<T>> GetHits<T>() where T : class =>
+        [.. Hits.Cast<SearchHit<T>>()];
 }
 
 /// <summary>

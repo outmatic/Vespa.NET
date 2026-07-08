@@ -46,8 +46,8 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>(
             Documents: [
-                new VespaDocument<MusicDoc> { Id = "id:test:music::1", Fields = new MusicDoc { Title = "Song 1" } },
-                new VespaDocument<MusicDoc> { Id = "id:test:music::2", Fields = new MusicDoc { Title = "Song 2" } }
+                new VespaDocument<MusicDoc> { FullId = "id:test:music::1", Fields = new MusicDoc { Title = "Song 1" } },
+                new VespaDocument<MusicDoc> { FullId = "id:test:music::2", Fields = new MusicDoc { Title = "Song 2" } }
             ],
             Continuation: null,
             DocumentCount: 2,
@@ -64,13 +64,13 @@ public class VisitOperationsTests : IDisposable
     public async Task VisitAsync_MultiplePages_FollowsContinuationToken()
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>(
-            Documents: [new VespaDocument<MusicDoc> { Id = "id:test:music::1", Fields = new MusicDoc { Title = "Song 1" } }],
+            Documents: [new VespaDocument<MusicDoc> { FullId = "id:test:music::1", Fields = new MusicDoc { Title = "Song 1" } }],
             Continuation: "token-abc",
             DocumentCount: 1,
             PathId: null));
 
         EnqueuePage(new VespaVisitResponse<MusicDoc>(
-            Documents: [new VespaDocument<MusicDoc> { Id = "id:test:music::2", Fields = new MusicDoc { Title = "Song 2" } }],
+            Documents: [new VespaDocument<MusicDoc> { FullId = "id:test:music::2", Fields = new MusicDoc { Title = "Song 2" } }],
             Continuation: null,
             DocumentCount: 1,
             PathId: null));

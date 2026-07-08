@@ -685,16 +685,15 @@ public class VespaTensorConverterTests
     }
 
     [Fact]
-    public void Read_UnexpectedTokenType_ThrowsJsonException()
+    public void Read_NonHexString_ThrowsJsonException()
     {
-        // Arrange
-        var json = "\"this is a string\""; // Strings are not valid tensor format
+        // Bare strings are only valid as hex-encoded dense values
+        var json = "\"this is a string\"";
 
-        // Act & Assert
         var ex = Assert.Throws<JsonException>(() =>
             JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions));
 
-        Assert.Contains("Unexpected token", ex.Message);
+        Assert.Contains("hex", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -818,6 +817,291 @@ public class VespaTensorConverterTests
 
         // Assert
         Assert.Equal(typeof(double), result); // Fallback to double
+    }
+
+    #endregion
+
+    #region Bare nested dense arrays (short-value form)
+
+    [Fact]
+    public void Read_BareNestedArray_FlattensRowMajor()
+    {
+        // presentation.format.tensors=short-value renders multi-dim indexed tensors
+        // as bare nested arrays
+        var json = "[[2.0, 3.0], [5.0, 7.0]]";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.IndexedDense, tensor.Format);
+        Assert.Equal(new[] { 2.0, 3.0, 5.0, 7.0 }, tensor.GetDenseValues<double>());
+    }
+
+    [Fact]
+    public void Read_BareNestedArray_ThreeLevels_FlattensRowMajor()
+    {
+        var json = "[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(new[] { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 }, tensor.GetDenseValues<double>());
+    }
+
+    [Fact]
+    public void Read_BareNestedArray_InsideDocument_DoesNotDesyncReader()
+    {
+        // A nested tensor array followed by a sibling property must leave the reader
+        // positioned correctly (a truncated parse would corrupt the following property)
+        var json = """{"tensor":[[1.0,2.0],[3.0,4.0]],"after":42}""";
+
+        var doc = JsonSerializer.Deserialize<TensorEnvelope>(json, _jsonOptions);
+
+        Assert.NotNull(doc);
+        Assert.Equal(new[] { 1.0, 2.0, 3.0, 4.0 }, doc.Tensor!.GetDenseValues<double>());
+        Assert.Equal(42, doc.After);
+    }
+
+    private sealed record TensorEnvelope(
+        [property: System.Text.Json.Serialization.JsonPropertyName("tensor")] VespaTensor? Tensor,
+        [property: System.Text.Json.Serialization.JsonPropertyName("after")] int After);
+
+    #endregion
+
+    #region Cell/block array dispatch
+
+    [Fact]
+    public void Read_BareArrayOfBlocks_DeserializesAsBlocks()
+    {
+        // Block objects ({"address":…,"values":…}) in a bare array must not be
+        // misparsed as zero-valued cells
+        var json = """[{"address":{"x":"x1","y":"y2"},"values":[2.0,3.0]},{"address":{"x":"x2","y":"y2"},"values":[4.0,5.0]}]""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.MixedMultiSparse, tensor.Format);
+        Assert.NotNull(tensor.Blocks);
+        Assert.Equal(2, tensor.Blocks.Count);
+        Assert.Equal("x1", tensor.Blocks[0].Address["x"]);
+        Assert.Equal(new[] { 2.0, 3.0 }, tensor.Blocks[0].GetValues<double>());
+        Assert.Equal(new[] { 4.0, 5.0 }, tensor.Blocks[1].GetValues<double>());
+    }
+
+    [Fact]
+    public void Read_CellsArrayContainingBlocks_DeserializesAsBlocks()
+    {
+        var json = """{"type":"tensor(x{},y[2])","cells":[{"address":{"x":"a"},"values":[1.0,2.0]}]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.MixedMultiSparse, tensor.Format);
+        Assert.Equal(new[] { 1.0, 2.0 }, tensor.Blocks![0].GetValues<double>());
+    }
+
+    [Fact]
+    public void Read_CellObjectWithoutValueOrValues_Throws()
+    {
+        // Silently producing a 0.0-valued cell would corrupt data
+        var json = """[{"address":{"x":"a"}}]""";
+
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions));
+    }
+
+    [Fact]
+    public void Read_MixedCellsAndBlocksInOneArray_Throws()
+    {
+        var json = """[{"address":{"x":"a"},"value":1.0},{"address":{"x":"b"},"values":[2.0]}]""";
+
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions));
+    }
+
+    [Fact]
+    public void Read_BlocksArrayWithoutValues_Throws()
+    {
+        var json = """{"type":"tensor(x{},y[2])","blocks":[{"address":{"x":"a"}}]}""";
+
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions));
+    }
+
+    #endregion
+
+    #region Hex string values (presentation.format.tensors=hex|hex-value)
+
+    [Fact]
+    public void Read_HexValues_Int8_DecodesDocumentedExample()
+    {
+        // Example from docs.vespa.ai/en/reference/document-json-format.html
+        var json = """{"type":"tensor<int8>(x[6])","values":"FF00118022FE"}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(new sbyte[] { -1, 0, 17, -128, 34, -2 }, tensor.GetDenseValues<sbyte>());
+    }
+
+    [Fact]
+    public void Read_HexValues_Float_DecodesBitPattern()
+    {
+        // 1.0f = 0x3F800000, 2.0f = 0x40000000
+        var json = """{"type":"tensor<float>(x[2])","values":"3F80000040000000"}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(new[] { 1.0f, 2.0f }, tensor.GetDenseValues<float>());
+    }
+
+    [Fact]
+    public void Read_HexValues_Double_DecodesBitPattern()
+    {
+        // 1.0d = 0x3FF0000000000000
+        var json = """{"type":"tensor<double>(x[1])","values":"3FF0000000000000"}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(new[] { 1.0 }, tensor.GetDenseValues<double>());
+    }
+
+    [Fact]
+    public void Read_HexValues_BFloat16_DecodesUpperHalfOfFloat32()
+    {
+        // bfloat16 1.0 = 0x3F80, -2.0 = 0xC000 (4 hex digits per cell)
+        var json = """{"type":"tensor<bfloat16>(x[2])","values":"3F80C000"}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(new[] { 1.0f, -2.0f }, tensor.GetDenseValues<float>());
+    }
+
+    [Fact]
+    public void Read_BareHexString_DefaultsToDouble()
+    {
+        // hex-value form carries no type info — decoded as double
+        var json = "\"3FF0000000000000\"";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.IndexedDense, tensor.Format);
+        Assert.Equal(new[] { 1.0 }, tensor.GetDenseValues<double>());
+    }
+
+    [Fact]
+    public void Read_MixedSingleSparse_HexValues_Decodes()
+    {
+        // Documented mixed-tensor hex form: hex string per mapped label
+        var json = """{"type":"tensor<float>(x{},y[2])","foo":"3F80000040000000","bar":"4040000040800000"}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.MixedSingleSparse, tensor.Format);
+        var values = tensor.GetMixedSingleSparse<float>();
+        Assert.NotNull(values);
+        Assert.Equal(new[] { 1.0f, 2.0f }, values["foo"]);
+        Assert.Equal(new[] { 3.0f, 4.0f }, values["bar"]);
+    }
+
+    [Fact]
+    public void Read_BlocksArray_HexValues_Decodes()
+    {
+        var json = """{"type":"tensor<float>(x{},y[2])","blocks":[{"address":{"x":"a"},"values":"3F80000040000000"}]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(new[] { 1.0f, 2.0f }, tensor.Blocks![0].GetValues<float>());
+    }
+
+    [Fact]
+    public void Read_HexValues_WrongLength_Throws()
+    {
+        // 7 hex digits is not a multiple of 8 (float32)
+        var json = """{"type":"tensor<float>(x[1])","values":"3F80000"}""";
+
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions));
+    }
+
+    #endregion
+
+    #region Empty cells (mapped) round-trip
+
+    [Fact]
+    public void Read_EmptyCellsArray_ProducesEmptyMappedTensor()
+    {
+        var json = """{"type":"tensor(x{})","cells":[]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.MappedSingle, tensor.Format);
+        var values = tensor.GetMappedValues<double>();
+        Assert.NotNull(values);
+        Assert.Empty(values);
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyCellsArray_WritesEmptyObjectNotEmptyArray()
+    {
+        // "[]" is invalid for a mapped tensor field — an empty mapped tensor is "{}"
+        var tensor = JsonSerializer.Deserialize<VespaTensor>("""{"type":"tensor(x{})","cells":[]}""", _jsonOptions);
+
+        var json = JsonSerializer.Serialize(tensor, _jsonOptions);
+
+        Assert.Equal("{}", json);
+    }
+
+    [Fact]
+    public void Read_EmptyCellsArray_IndexedType_ProducesEmptyDenseTensor()
+    {
+        // A purely indexed type spec keeps dense semantics
+        var json = """{"type":"tensor<float>(x[0])","cells":[]}""";
+
+        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
+
+        Assert.NotNull(tensor);
+        Assert.Equal(TensorFormat.IndexedDense, tensor.Format);
+    }
+
+    #endregion
+
+    #region Write fallbacks for non-standard element types
+
+    [Fact]
+    public void Write_MappedSingle_IntValues_SerializesNumbers()
+    {
+        // SetMappedValues<int> compiles (int is INumber<int>) — must not silently emit {}
+        var tensor = new VespaTensor();
+        tensor.SetMappedValues(new Dictionary<string, int> { ["a"] = 1, ["b"] = 2 });
+
+        var json = JsonSerializer.Serialize(tensor, _jsonOptions);
+
+        Assert.Equal("""{"a":1,"b":2}""", json);
+    }
+
+    [Fact]
+    public void Write_MixedSingleSparse_IntValues_SerializesNumbers()
+    {
+        var tensor = new VespaTensor();
+        tensor.SetMixedSingleSparse(new Dictionary<string, int[]> { ["x1"] = [1, 2] });
+
+        var json = JsonSerializer.Serialize(tensor, _jsonOptions);
+
+        Assert.Equal("""{"x1":[1,2]}""", json);
+    }
+
+    [Fact]
+    public void Write_MappedSingle_UnrepresentableValues_ThrowsNotSupported()
+    {
+        // Int128 is INumber but not IConvertible — cannot be written as a JSON number
+        var tensor = new VespaTensor();
+        tensor.SetMappedValues(new Dictionary<string, Int128> { ["a"] = 1 });
+
+        Assert.Throws<NotSupportedException>(() => JsonSerializer.Serialize(tensor, _jsonOptions));
     }
 
     #endregion

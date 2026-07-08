@@ -1172,7 +1172,7 @@ public class FieldOperationsTests : IDisposable
 
     private void SetupGetSuccessResponse()
     {
-        var doc = new VespaDocument<TestDoc> { Id = "id:test:testdoc::doc-1", Fields = new TestDoc { Name = "Test" } };
+        var doc = new VespaDocument<TestDoc> { FullId = "id:test:testdoc::doc-1", Fields = new TestDoc { Name = "Test" } };
         var json = JsonSerializer.Serialize(doc, JsonOpts);
         _mockHandler
             .Protected()
