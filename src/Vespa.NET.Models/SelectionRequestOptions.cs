@@ -32,32 +32,17 @@ public sealed record SelectionRequestOptions
     public int? TraceLevel { get; init; }
 
     /// <summary>
-    /// When <see langword="true"/>, ask Vespa to stream the response as JSONL
-    /// (one object per line) and visit more buckets per HTTP round-trip, reducing
-    /// latency on large selections. The client still loops on the returned
-    /// continuation token; streaming is a transport optimization, not server-side
-    /// auto-resume.
-    /// <para>Supported on <c>UpdateBySelection</c> and <c>DeleteBySelection</c>
-    /// only — Vespa does not accept <c>stream=true</c> on
-    /// <c>CopyBySelection</c>; setting this flag on a copy throws
-    /// <see cref="ArgumentException"/>.</para>
-    /// </summary>
-    public bool? Stream { get; init; }
-
-    /// <summary>
     /// Builds query parameter tuples for use in URL construction.
-    /// <c>continuation</c> and <c>stream</c> are NOT surfaced here — selection
-    /// operations manage the former internally and the latter flips the response
-    /// parser separately.
+    /// <c>continuation</c> is NOT surfaced here — selection operations manage it internally.
     /// </summary>
     public IEnumerable<(string Key, string? Value)> ToQueryParams()
     {
         if (TimeChunk.HasValue)
-            yield return ("timeChunk", $"{(long)TimeChunk.Value.TotalMilliseconds}ms");
+            yield return ("timeChunk", VespaQueryValues.ToMilliseconds(TimeChunk.Value));
         if (BucketSpace is not null)
             yield return ("bucketSpace", BucketSpace);
         if (Timeout.HasValue)
-            yield return ("timeout", $"{(long)Timeout.Value.TotalMilliseconds}ms");
+            yield return ("timeout", VespaQueryValues.ToMilliseconds(Timeout.Value));
         if (TraceLevel.HasValue)
             yield return ("tracelevel", TraceLevel.Value.ToString());
     }

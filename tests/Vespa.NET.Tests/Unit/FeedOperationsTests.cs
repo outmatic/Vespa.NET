@@ -44,7 +44,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
 
         // Act
@@ -91,12 +91,12 @@ public class FeedOperationsTests
         // Setup: doc-2 fails, others succeed
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id == "doc-2"), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new VespaException("Test error", 500));
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id != "doc-2"), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true });
 
         // Act
@@ -125,7 +125,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new VespaException("Test error", 500));
 
         // Act
@@ -188,7 +188,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 lock (lockObj)
@@ -226,7 +226,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 await Task.Delay(1); // Small delay to increase chance of race conditions
@@ -251,7 +251,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 await Task.Delay(1);
@@ -276,7 +276,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 await Task.Delay(1);
@@ -309,7 +309,7 @@ public class FeedOperationsTests
         var firstCall = true;
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 if (firstCall)
@@ -336,7 +336,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                "testdoc", "custom-ns", It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                "testdoc", "custom-ns", It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true });
 
         // Act
@@ -348,7 +348,7 @@ public class FeedOperationsTests
             It.IsAny<object>(),
             "testdoc",
             "custom-ns",
-            It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -522,7 +522,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), "music.year > 2000", It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), "music.year > 2000", It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
 
         var result = await _feedOps.BulkPutAsync([doc], "music");
@@ -530,7 +530,7 @@ public class FeedOperationsTests
         Assert.Equal(1, result.SuccessCount);
         _mockDocOps.Verify(d => d.PutAsync(
             "doc-1", It.IsAny<object>(), "music",
-            It.IsAny<string>(), "music.year > 2000", It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
+            It.IsAny<string>(), "music.year > 2000", It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -545,7 +545,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), null, It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
 
         var result = await _feedOps.BulkPutAsync([doc], "music");
@@ -553,7 +553,7 @@ public class FeedOperationsTests
         Assert.Equal(1, result.SuccessCount);
         _mockDocOps.Verify(d => d.PutAsync(
             "doc-1", It.IsAny<object>(), "music",
-            It.IsAny<string>(), null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
+            It.IsAny<string>(), null, It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -568,7 +568,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
 
         var result = await _feedOps.BulkPutAsync(documents, "music");
@@ -576,11 +576,11 @@ public class FeedOperationsTests
         Assert.Equal(2, result.SuccessCount);
         _mockDocOps.Verify(d => d.PutAsync(
             "doc-1", It.IsAny<object>(), "music",
-            It.IsAny<string>(), "music.year > 2000", It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
+            It.IsAny<string>(), "music.year > 2000", It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
             Times.Once);
         _mockDocOps.Verify(d => d.PutAsync(
             "doc-2", It.IsAny<object>(), "music",
-            It.IsAny<string>(), null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
+            It.IsAny<string>(), null, It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -593,7 +593,7 @@ public class FeedOperationsTests
     {
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
 
         var result = await _feedOps.FeedAsync(GenerateDocuments(5), "testdoc", maxConcurrency: 2);
@@ -620,12 +620,12 @@ public class FeedOperationsTests
     {
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id == "doc-2"), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new VespaException("Test error", 500));
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.Is<string>(id => id != "doc-2"), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true });
 
         var result = await _feedOps.FeedAsync(GenerateDocuments(5), "testdoc", maxConcurrency: 2);
@@ -643,7 +643,7 @@ public class FeedOperationsTests
     {
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true });
 
         var progressCalls = new ConcurrentQueue<FeedProgress>();
@@ -668,7 +668,7 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 lock (lockObj)
@@ -711,8 +711,8 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
-            .Returns<string, object, string, string?, string?, DocumentRequestOptions?, CancellationToken>((_, _, _, _, _, _, ct) =>
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, object, string, string?, string?, bool, DocumentRequestOptions?, CancellationToken>((_, _, _, _, _, _, _, ct) =>
             {
                 cts.Cancel();
                 return Task.FromCanceled<VespaResponse>(ct);
@@ -738,7 +738,7 @@ public class FeedOperationsTests
         // channel: with the bounded channel full, the producer blocked forever.
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
 
         var feedTask = _feedOps.FeedAsync(
@@ -762,8 +762,8 @@ public class FeedOperationsTests
 
         _mockDocOps
             .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
-            .Returns<string, object, string, string?, string?, DocumentRequestOptions?, CancellationToken>(async (_, _, _, _, _, _, _) =>
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, object, string, string?, string?, bool, DocumentRequestOptions?, CancellationToken>(async (_, _, _, _, _, _, _, _) =>
             {
                 opStarted.TrySetResult();
                 await releaseOp.Task;

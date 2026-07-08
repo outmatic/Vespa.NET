@@ -52,7 +52,7 @@ public class VisitE2ETests(VespaFixture fixture)
             var visited = new List<VespaDocument<TestProduct>>();
             await foreach (var doc in fixture.Client.Documents.VisitAsync<TestProduct>(
                 "product", selection: null, cluster: null, @namespace: "test",
-                wantedDocumentCount: 100))
+                options: new VisitOptions { WantedDocumentCount = 100 }))
                 visited.Add(doc);
 
             // Should have at least our 8 documents (could have more from other tests)
@@ -75,7 +75,7 @@ public class VisitE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                wantedDocumentCount: 100))
+                options: new VisitOptions { WantedDocumentCount = 100 }))
                 visited.Add(doc);
 
             Assert.Equal(5, visited.Count);
@@ -97,7 +97,7 @@ public class VisitE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                wantedDocumentCount: 3))
+                options: new VisitOptions { WantedDocumentCount = 3 }))
             {
                 visited.Add(doc);
                 // Stop after first batch to avoid consuming all
@@ -124,8 +124,7 @@ public class VisitE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                fieldSet: "product:product_name,price",
-                wantedDocumentCount: 100))
+                options: new VisitOptions { FieldSet = "product:product_name,price", WantedDocumentCount = 100 }))
                 visited.Add(doc);
 
             Assert.Equal(3, visited.Count);
@@ -149,7 +148,7 @@ public class VisitE2ETests(VespaFixture fixture)
             var visited = new List<VespaDocument<TestProduct>>();
             await foreach (var doc in fixture.Client.Documents.VisitAsync<TestProduct>(
                 selection: $"product.category == \"{category}\"",
-                wantedDocumentCount: 100))
+                options: new VisitOptions { WantedDocumentCount = 100 }))
                 visited.Add(doc);
 
             Assert.Equal(4, visited.Count);

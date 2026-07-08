@@ -31,14 +31,58 @@ public static class FieldOp
 
     /// <summary>
     /// Tensor cell-level modify operation (replace, add, or multiply individual cells).
+    /// Serializes as <c>{"modify":{"operation":…,"cells":[{"address":…,"value":…},…]}}</c>.
     /// </summary>
     /// <param name="operation">One of <c>"replace"</c>, <c>"add"</c>, or <c>"multiply"</c>.</param>
     /// <param name="cells">
     /// A list of cell updates, each with an <c>Address</c> dictionary and a <c>Value</c>.
     /// Example: <c>[new TensorCellUpdate(new() { ["x"] = "0" }, 5.0)]</c>
     /// </param>
-    public static FieldOperation Modify(string operation, IReadOnlyList<TensorCellUpdate> cells) =>
-        new("modify", new ModifyPayload(operation, cells));
+    /// <param name="create">
+    /// When <see langword="true"/>, treat the tensor as empty (all cells zero) if the field
+    /// is not set, so the modify applies instead of being ignored. Serializes as
+    /// <c>"create": true</c> inside the modify object.
+    /// </param>
+    public static FieldOperation Modify(string operation, IReadOnlyList<TensorCellUpdate> cells, bool create = false) =>
+        new("modify", new ModifyPayload(operation, cells, null, null, create));
+
+    /// <summary>
+    /// Tensor cell-level modify operation using the short-form <c>cells</c> object for
+    /// tensors with a single mapped dimension. Serializes as
+    /// <c>{"modify":{"operation":…,"cells":{"label":value,…}}}</c>.
+    /// </summary>
+    /// <param name="operation">One of <c>"replace"</c>, <c>"add"</c>, or <c>"multiply"</c>.</param>
+    /// <param name="cells">Map from the single mapped dimension's label to the cell value.</param>
+    /// <param name="create">See <see cref="Modify(string, IReadOnlyList{TensorCellUpdate}, bool)"/>.</param>
+    public static FieldOperation ModifyCells(string operation, IReadOnlyDictionary<string, double> cells, bool create = false) =>
+        new("modify", new ModifyPayload(operation, null, cells, null, create));
+
+    /// <summary>
+    /// Tensor block-level modify operation for mixed tensors (one mapped plus indexed
+    /// dimensions). Serializes as <c>{"modify":{"operation":…,"blocks":{"label":[…],…}}}</c>,
+    /// replacing whole dense blocks addressed by the mapped dimension's label.
+    /// </summary>
+    /// <param name="operation">One of <c>"replace"</c>, <c>"add"</c>, or <c>"multiply"</c>.</param>
+    /// <param name="blocks">Map from the mapped dimension's label to the dense block values.</param>
+    /// <param name="create">See <see cref="Modify(string, IReadOnlyList{TensorCellUpdate}, bool)"/>.</param>
+    public static FieldOperation ModifyBlocks(string operation, IReadOnlyDictionary<string, IReadOnlyList<double>> blocks, bool create = false) =>
+        new("modify", new ModifyPayload(operation, null, null, blocks, create));
+
+    /// <summary>
+    /// Tensor add-cells update: adds cells to a tensor with mapped dimensions, keeping
+    /// existing cells (new cells overwrite cells with the same address). Serializes as
+    /// <c>{"add":{"cells":[{"address":…,"value":…},…]}}</c>.
+    /// </summary>
+    public static FieldOperation TensorAdd(IReadOnlyList<TensorCellUpdate> cells) =>
+        new("add", new TensorAddPayload(cells));
+
+    /// <summary>
+    /// Tensor remove-cells update: removes the cells (or, for mixed tensors, the dense
+    /// blocks) at the given addresses. Serializes as
+    /// <c>{"remove":{"addresses":[{…},…]}}</c>.
+    /// </summary>
+    public static FieldOperation TensorRemove(IReadOnlyList<IReadOnlyDictionary<string, string>> addresses) =>
+        new("remove", new TensorRemovePayload(addresses));
 }
 
 /// <summary>
@@ -52,9 +96,21 @@ internal sealed record MatchPayload(object Key, FieldOperation InnerOp);
 public sealed record TensorCellUpdate(Dictionary<string, string> Address, double Value);
 
 /// <summary>
-/// Internal payload for the "modify" operation (tensor cell-level updates).
+/// Internal payload for the "modify" operation (tensor cell/block-level updates).
+/// Exactly one of <see cref="Cells"/>, <see cref="CellsShortForm"/>, <see cref="Blocks"/> is set.
 /// </summary>
-internal sealed record ModifyPayload(string Operation, IReadOnlyList<TensorCellUpdate> Cells);
+internal sealed record ModifyPayload(
+    string Operation,
+    IReadOnlyList<TensorCellUpdate>? Cells,
+    IReadOnlyDictionary<string, double>? CellsShortForm,
+    IReadOnlyDictionary<string, IReadOnlyList<double>>? Blocks,
+    bool Create);
+
+/// <summary>Internal payload for the tensor "add" update (<c>{"add":{"cells":[…]}}</c>).</summary>
+internal sealed record TensorAddPayload(IReadOnlyList<TensorCellUpdate> Cells);
+
+/// <summary>Internal payload for the tensor "remove" update (<c>{"remove":{"addresses":[…]}}</c>).</summary>
+internal sealed record TensorRemovePayload(IReadOnlyList<IReadOnlyDictionary<string, string>> Addresses);
 
 /// <summary>
 /// Helper for constructing Vespa fieldpath syntax keys for nested updates.
@@ -119,19 +175,53 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
             writer.WritePropertyName(value.Type);
             writer.WriteStartObject();
             writer.WriteString("operation", modify.Operation);
-            writer.WritePropertyName("cells");
-            writer.WriteStartArray();
-            foreach (var cell in modify.Cells)
+            if (modify.Create)
+                writer.WriteBoolean("create", true);
+            if (modify.Cells is not null)
             {
+                writer.WritePropertyName("cells");
+                WriteCellArray(writer, modify.Cells);
+            }
+            else if (modify.CellsShortForm is not null)
+            {
+                writer.WritePropertyName("cells");
                 writer.WriteStartObject();
-                writer.WritePropertyName("address");
-                writer.WriteStartObject();
-                foreach (var (dim, label) in cell.Address)
-                    writer.WriteString(dim, label);
-                writer.WriteEndObject();
-                writer.WriteNumber("value", cell.Value);
+                foreach (var (label, cellValue) in modify.CellsShortForm)
+                    writer.WriteNumber(label, cellValue);
                 writer.WriteEndObject();
             }
+            else if (modify.Blocks is not null)
+            {
+                writer.WritePropertyName("blocks");
+                writer.WriteStartObject();
+                foreach (var (label, blockValues) in modify.Blocks)
+                {
+                    writer.WritePropertyName(label);
+                    writer.WriteStartArray();
+                    foreach (var blockValue in blockValues)
+                        writer.WriteNumberValue(blockValue);
+                    writer.WriteEndArray();
+                }
+                writer.WriteEndObject();
+            }
+            writer.WriteEndObject();
+        }
+        else if (value.Value is TensorAddPayload tensorAdd)
+        {
+            writer.WritePropertyName(value.Type);
+            writer.WriteStartObject();
+            writer.WritePropertyName("cells");
+            WriteCellArray(writer, tensorAdd.Cells);
+            writer.WriteEndObject();
+        }
+        else if (value.Value is TensorRemovePayload tensorRemove)
+        {
+            writer.WritePropertyName(value.Type);
+            writer.WriteStartObject();
+            writer.WritePropertyName("addresses");
+            writer.WriteStartArray();
+            foreach (var address in tensorRemove.Addresses)
+                WriteAddress(writer, address);
             writer.WriteEndArray();
             writer.WriteEndObject();
         }
@@ -140,5 +230,27 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
             writer.WritePropertyName(value.Type);
             JsonSerializer.Serialize(writer, value.Value, options);
         }
+    }
+
+    private static void WriteCellArray(Utf8JsonWriter writer, IReadOnlyList<TensorCellUpdate> cells)
+    {
+        writer.WriteStartArray();
+        foreach (var cell in cells)
+        {
+            writer.WriteStartObject();
+            writer.WritePropertyName("address");
+            WriteAddress(writer, cell.Address);
+            writer.WriteNumber("value", cell.Value);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndArray();
+    }
+
+    private static void WriteAddress(Utf8JsonWriter writer, IReadOnlyDictionary<string, string> address)
+    {
+        writer.WriteStartObject();
+        foreach (var (dimension, label) in address)
+            writer.WriteString(dimension, label);
+        writer.WriteEndObject();
     }
 }

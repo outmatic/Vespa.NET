@@ -1,7 +1,11 @@
+using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Vespa.Models;
 
@@ -21,7 +25,7 @@ public sealed partial class DocumentOperations(
     private const string QueryParamCreate = "create";
     private const string QueryParamFieldSet = "fieldSet";
     private const string QueryParamSelection = "selection";
-    private const string QueryParamWantedDocumentCount = "wantedDocumentCount";
+    private const string JsonlMediaType = "application/jsonl";
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
     private readonly VespaClientOptions _options = options ?? throw new ArgumentNullException(nameof(options));
 
@@ -31,6 +35,7 @@ public sealed partial class DocumentOperations(
         string documentType,
         string? @namespace = null,
         string? condition = null,
+        bool create = false,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default) where T : class
     {
@@ -39,17 +44,15 @@ public sealed partial class DocumentOperations(
         ArgumentNullException.ThrowIfNull(document);
 
         var (ns, url) = BuildDocIdUrl(documentType, documentId, @namespace, requestOptions,
-            (QueryParamCondition, condition));
+            (QueryParamCondition, condition),
+            (QueryParamCreate, create ? "true" : null));
 
         if (logger != null)
             LogPuttingDocument(logger, documentId, documentType);
 
         using var activity = StartDocumentActivity(VespaActivitySource.DocumentPut, documentType, ns, documentId);
 
-        var payload = new { fields = document };
-        using var response = await _httpClient.PostAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
-
-        return await ParseResponseAsync(response, cancellationToken);
+        return await SendPutAsync(url, document, cancellationToken);
     }
 
     public async Task<VespaDocument<T>?> GetAsync<T>(
@@ -64,7 +67,8 @@ public sealed partial class DocumentOperations(
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
 
         var (ns, url) = BuildDocIdUrl(documentType, documentId, @namespace, requestOptions,
-            (QueryParamFieldSet, fieldSet));
+            (QueryParamFieldSet, fieldSet),
+            (QueryParamCluster, requestOptions?.Cluster));
 
         if (logger != null)
             LogGettingDocument(logger, documentId, documentType);
@@ -93,9 +97,7 @@ public sealed partial class DocumentOperations(
 
         using var activity = StartDocumentActivity(VespaActivitySource.DocumentDelete, documentType, ns, documentId);
 
-        using var response = await _httpClient.DeleteAsync(url, cancellationToken);
-
-        return await ParseResponseAsync(response, cancellationToken);
+        return await SendDeleteAsync(url, cancellationToken);
     }
 
     public async Task<VespaResponse> UpdateFieldsAsync(
@@ -121,10 +123,7 @@ public sealed partial class DocumentOperations(
 
         using var activity = StartDocumentActivity(VespaActivitySource.DocumentUpdate, documentType, ns, documentId);
 
-        var payload = new { fields = fieldOperations };
-        using var response = await _httpClient.PutAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
-
-        return await ParseResponseAsync(response, cancellationToken);
+        return await SendUpdateAsync(url, fieldOperations, cancellationToken);
     }
 
     public Task<VespaDocument<T>?> GetByGroupAsync<T>(
@@ -135,7 +134,7 @@ public sealed partial class DocumentOperations(
         string? fieldSet = null,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default) where T : class
-        => GetByAddressingAsync<T>("group", Uri.EscapeDataString(group), localId, documentType, @namespace, fieldSet, requestOptions, cancellationToken);
+        => GetByAddressingAsync<T>("group", group, localId, documentType, @namespace, fieldSet, requestOptions, cancellationToken);
 
     public Task<VespaDocument<T>?> GetByNumberAsync<T>(
         long number,
@@ -154,9 +153,10 @@ public sealed partial class DocumentOperations(
         string documentType,
         string? @namespace = null,
         string? condition = null,
+        bool create = false,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default) where T : class
-        => PutByAddressingAsync("group", Uri.EscapeDataString(group), localId, document, documentType, @namespace, condition, requestOptions, cancellationToken);
+        => PutByAddressingAsync("group", group, localId, document, documentType, @namespace, condition, create, requestOptions, cancellationToken);
 
     public Task<VespaResponse> PutByNumberAsync<T>(
         long number,
@@ -165,9 +165,10 @@ public sealed partial class DocumentOperations(
         string documentType,
         string? @namespace = null,
         string? condition = null,
+        bool create = false,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default) where T : class
-        => PutByAddressingAsync("number", number.ToString(), localId, document, documentType, @namespace, condition, requestOptions, cancellationToken);
+        => PutByAddressingAsync("number", number.ToString(), localId, document, documentType, @namespace, condition, create, requestOptions, cancellationToken);
 
     public Task<VespaResponse> UpdateFieldsByGroupAsync(
         string group,
@@ -179,7 +180,7 @@ public sealed partial class DocumentOperations(
         string? condition = null,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default)
-        => UpdateFieldsByAddressingAsync("group", Uri.EscapeDataString(group), localId, fieldOperations, documentType, @namespace, createIfMissing, condition, requestOptions, cancellationToken);
+        => UpdateFieldsByAddressingAsync("group", group, localId, fieldOperations, documentType, @namespace, createIfMissing, condition, requestOptions, cancellationToken);
 
     public Task<VespaResponse> UpdateFieldsByNumberAsync(
         long number,
@@ -201,7 +202,7 @@ public sealed partial class DocumentOperations(
         string? condition = null,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default)
-        => DeleteByAddressingAsync("group", Uri.EscapeDataString(group), localId, documentType, @namespace, condition, requestOptions, cancellationToken);
+        => DeleteByAddressingAsync("group", group, localId, documentType, @namespace, condition, requestOptions, cancellationToken);
 
     public Task<VespaResponse> DeleteByNumberAsync(
         long number,
@@ -227,7 +228,8 @@ public sealed partial class DocumentOperations(
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
 
         var (ns, url) = BuildAddressingUrl(scheme, bucket, localId, documentType, @namespace, requestOptions,
-            (QueryParamFieldSet, fieldSet));
+            (QueryParamFieldSet, fieldSet),
+            (QueryParamCluster, requestOptions?.Cluster));
 
         using var activity = StartDocumentActivity(VespaActivitySource.DocumentGet, documentType, ns);
         return await GetDocumentOrNullAsync<T>(url, null, cancellationToken);
@@ -241,6 +243,7 @@ public sealed partial class DocumentOperations(
         string documentType,
         string? @namespace,
         string? condition,
+        bool create,
         DocumentRequestOptions? requestOptions,
         CancellationToken cancellationToken) where T : class
     {
@@ -249,14 +252,12 @@ public sealed partial class DocumentOperations(
         ArgumentNullException.ThrowIfNull(document);
 
         var (ns, url) = BuildAddressingUrl(scheme, bucket, localId, documentType, @namespace, requestOptions,
-            (QueryParamCondition, condition));
+            (QueryParamCondition, condition),
+            (QueryParamCreate, create ? "true" : null));
 
         using var activity = StartDocumentActivity(VespaActivitySource.DocumentPut, documentType, ns);
 
-        var payload = new { fields = document };
-        using var response = await _httpClient.PostAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
-
-        return await ParseResponseAsync(response, cancellationToken);
+        return await SendPutAsync(url, document, cancellationToken);
     }
 
     private async Task<VespaResponse> UpdateFieldsByAddressingAsync(
@@ -281,10 +282,7 @@ public sealed partial class DocumentOperations(
 
         using var activity = StartDocumentActivity(VespaActivitySource.DocumentUpdate, documentType, ns);
 
-        var payload = new { fields = fieldOperations };
-        using var response = await _httpClient.PutAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
-
-        return await ParseResponseAsync(response, cancellationToken);
+        return await SendUpdateAsync(url, fieldOperations, cancellationToken);
     }
 
     private async Task<VespaResponse> DeleteByAddressingAsync(
@@ -305,9 +303,7 @@ public sealed partial class DocumentOperations(
 
         using var activity = StartDocumentActivity(VespaActivitySource.DocumentDelete, documentType, ns);
 
-        using var response = await _httpClient.DeleteAsync(url, cancellationToken);
-
-        return await ParseResponseAsync(response, cancellationToken);
+        return await SendDeleteAsync(url, cancellationToken);
     }
 
     private (string Namespace, string Url) BuildAddressingUrl(
@@ -321,7 +317,7 @@ public sealed partial class DocumentOperations(
     {
         var ns = ResolveNamespace(@namespace);
         var url = BuildUrl(
-            $"{VespaPaths.DocV1}/{ns}/{documentType}/{scheme}/{bucket}/{Uri.EscapeDataString(localId)}",
+            $"{DocTypePrefix(documentType, ns)}/{scheme}/{Uri.EscapeDataString(bucket)}/{Uri.EscapeDataString(localId)}",
             requestOptions,
             extraParams);
         return (ns, url);
@@ -382,7 +378,6 @@ public sealed partial class DocumentOperations(
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
         ArgumentException.ThrowIfNullOrWhiteSpace(cluster);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationCluster);
-        ThrowIfStreamRequestedOnCopy(requestOptions);
 
         return ExecuteSelectionOperationAsync(
             HttpMethod.Post, selection, documentType, @namespace, cluster,
@@ -390,14 +385,6 @@ public sealed partial class DocumentOperations(
             requestOptions: requestOptions,
             contentFactory: null,
             cancellationToken);
-    }
-
-    private static void ThrowIfStreamRequestedOnCopy(SelectionRequestOptions? requestOptions)
-    {
-        if (requestOptions?.Stream == true)
-            throw new ArgumentException(
-                "SelectionRequestOptions.Stream is not supported on CopyBySelection — Vespa does not accept stream=true on the copy endpoint.",
-                nameof(requestOptions));
     }
 
     private async Task<VespaResponse> ExecuteSelectionOperationAsync(
@@ -412,6 +399,7 @@ public sealed partial class DocumentOperations(
         CancellationToken cancellationToken)
     {
         long totalDocumentCount = 0;
+        var hadIgnoredFields = false;
         SelectionPageResult page;
         string? continuation = null;
 
@@ -423,6 +411,7 @@ public sealed partial class DocumentOperations(
                 method, selection, documentType, @namespace, cluster,
                 extraParams, requestOptions, continuation, contentFactory, cancellationToken);
             totalDocumentCount += page.DocumentCount;
+            hadIgnoredFields |= page.HadIgnoredFields;
             continuation = page.Continuation;
         }
         while (continuation is not null);
@@ -433,7 +422,7 @@ public sealed partial class DocumentOperations(
             StatusCode = page.StatusCode,
             Message = "Selection operation completed successfully",
             DocumentCount = totalDocumentCount,
-            IgnoredFields = page.IgnoredFields
+            HadIgnoredFields = hadIgnoredFields
         };
     }
 
@@ -449,51 +438,26 @@ public sealed partial class DocumentOperations(
         Func<HttpContent>? contentFactory,
         CancellationToken cancellationToken)
     {
-        var streaming = requestOptions?.Stream == true;
         var optionParams = requestOptions?.ToQueryParams().ToArray() ?? [];
-        var queryParams = new List<(string Key, string? Value)>(extraParams.Length + optionParams.Length + 4)
+        var queryParams = new List<(string Key, string? Value)>(extraParams.Length + optionParams.Length + 3)
         {
             (QueryParamSelection, selection),
             (QueryParamCluster, cluster),
             (QueryParamContinuation, continuation)
         };
-        if (streaming)
-            queryParams.Add(("stream", "true"));
         queryParams.AddRange(extraParams);
         queryParams.AddRange(optionParams);
 
-        var url = BuildDocBasePath(documentType, @namespace, null, [.. queryParams]);
+        var url = BuildUrl(DocBasePath(documentType, @namespace), null, [.. queryParams]);
 
         using var request = new HttpRequestMessage(method, url);
-        if (streaming)
-        {
-            request.Headers.Accept.Clear();
-            request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/jsonl"));
-        }
         if (contentFactory is not null)
             request.Content = contentFactory();
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
-        {
-            await ThrowFromErrorResponseAsync(response, cancellationToken);
-            return null!; // unreachable
-        }
-
-        var ignoredFields = ParseIgnoredFields(response);
-
-        if (streaming)
-        {
-            var streamed = await ReadStreamingSelectionBodyAsync(response, cancellationToken);
-            return new SelectionPageResult
-            {
-                DocumentCount = streamed.DocumentCount,
-                Continuation = streamed.Continuation,
-                StatusCode = (int)response.StatusCode,
-                IgnoredFields = ignoredFields
-            };
-        }
+            throw await ErrorFromResponseAsync(response, cancellationToken);
 
         var body = await TryReadSelectionBodyAsync(response, cancellationToken);
         return new SelectionPageResult
@@ -501,61 +465,8 @@ public sealed partial class DocumentOperations(
             DocumentCount = body?.DocumentCount ?? 0,
             Continuation = body?.Continuation,
             StatusCode = (int)response.StatusCode,
-            IgnoredFields = ignoredFields
+            HadIgnoredFields = HasIgnoredFields(response)
         };
-    }
-
-    /// <summary>
-    /// Reads a streaming JSONL selection response. Each line is a JSON object with
-    /// one of these shapes:
-    /// <list type="bullet">
-    ///   <item><c>{"sessionStats": {"documentCount": N}}</c> — emitted once (or zero times); holds the chunk total.</item>
-    ///   <item><c>{"continuation": {"token": "…", "percentFinished": N}}</c> — emitted per visited bucket; the last one wins.</item>
-    ///   <item><c>{"message": {...}}</c>, and others — ignored.</item>
-    /// </list>
-    /// If the last continuation has no <c>token</c>, the operation is complete.
-    /// </summary>
-    private static async Task<(long DocumentCount, string? Continuation)> ReadStreamingSelectionBodyAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream);
-
-        long documentCount = 0;
-        string? lastContinuationToken = null;
-
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            System.Text.Json.JsonDocument doc;
-            try { doc = System.Text.Json.JsonDocument.Parse(line); }
-            catch (System.Text.Json.JsonException) { continue; }
-
-            using (doc)
-            {
-                var root = doc.RootElement;
-                if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
-                    continue;
-
-                if (root.TryGetProperty("sessionStats", out var stats) &&
-                    stats.TryGetProperty("documentCount", out var dc) &&
-                    dc.TryGetInt64(out var n))
-                {
-                    documentCount += n;
-                }
-
-                if (root.TryGetProperty("continuation", out var cont))
-                {
-                    lastContinuationToken = cont.TryGetProperty("token", out var tok) && tok.ValueKind == System.Text.Json.JsonValueKind.String
-                        ? tok.GetString()
-                        : null;
-                }
-            }
-        }
-
-        return (documentCount, lastContinuationToken);
     }
 
     public Task<SelectionPageResult> UpdateBySelectionPageAsync(
@@ -616,7 +527,6 @@ public sealed partial class DocumentOperations(
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
         ArgumentException.ThrowIfNullOrWhiteSpace(cluster);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationCluster);
-        ThrowIfStreamRequestedOnCopy(requestOptions);
 
         return ExecuteSelectionChunkAsync(
             HttpMethod.Post, selection, documentType, @namespace, cluster,
@@ -634,119 +544,213 @@ public sealed partial class DocumentOperations(
         {
             return await response.Content.ReadFromJsonAsync<SelectionResponseBody>(VespaJsonOptions.Default, cancellationToken);
         }
-        catch (System.Text.Json.JsonException)
+        catch (JsonException)
         {
             return null;
         }
-        catch (System.IO.IOException)
+        catch (IOException)
         {
             return null;
-        }
-    }
-
-    private static async Task ThrowFromErrorResponseAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        VespaError? error = null;
-        try
-        {
-            error = await response.Content.ReadFromJsonAsync<VespaError>(VespaJsonOptions.Default, cancellationToken);
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            // fall through
-        }
-
-        var message = error?.Message ?? $"HTTP {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}";
-        throw VespaException.FromStatusCode((int)response.StatusCode, message, error);
-    }
-
-    private sealed record SelectionResponseBody(
-        [property: System.Text.Json.Serialization.JsonPropertyName("documentCount")] long? DocumentCount,
-        [property: System.Text.Json.Serialization.JsonPropertyName("continuation")] string? Continuation,
-        [property: System.Text.Json.Serialization.JsonPropertyName("message")] string? Message);
-
-    public async IAsyncEnumerable<VespaDocument<T>> VisitJsonlAsync<T>(
-        string documentType,
-        string? selection = null,
-        string? cluster = null,
-        string? @namespace = null,
-        string? fieldSet = null,
-        int? wantedDocumentCount = null,
-        TimeSpan? timeout = null,
-        int? slices = null,
-        int? sliceId = null,
-        int? concurrency = null,
-        long? fromTimestamp = null,
-        long? toTimestamp = null,
-        bool? includeRemoves = null,
-        string? bucketSpace = null,
-        DocumentRequestOptions? requestOptions = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
-
-        var url = BuildDocBasePath(documentType, @namespace, requestOptions,
-            (QueryParamCluster, cluster),
-            (QueryParamSelection, selection),
-            (QueryParamFieldSet, fieldSet),
-            (QueryParamWantedDocumentCount, wantedDocumentCount?.ToString()),
-            ("timeout", timeout.HasValue ? $"{(long)timeout.Value.TotalMilliseconds}ms" : null),
-            ("slices", slices?.ToString()),
-            ("sliceId", sliceId?.ToString()),
-            ("concurrency", concurrency?.ToString()),
-            ("fromTimestamp", fromTimestamp?.ToString()),
-            ("toTimestamp", toTimestamp?.ToString()),
-            ("includeRemoves", includeRemoves.HasValue ? (includeRemoves.Value ? "true" : "false") : null),
-            ("bucketSpace", bucketSpace),
-            ("stream", "true"));
-
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Accept.Clear();
-        request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/jsonl"));
-
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-            throw VespaException.FromStatusCode((int)response.StatusCode, $"JSONL visit failed with status {response.StatusCode}");
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream);
-
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-            var doc = ParseJsonlLine<T>(line);
-            if (doc is not null)
-                yield return doc;
         }
     }
 
     /// <summary>
-    /// Parses one document/v1 JSONL stream line. Document lines are
-    /// <c>{"put":"id:...","fields":{...}}</c>, tombstones (only with
-    /// <c>includeRemoves=true</c>) are <c>{"remove":"id:..."}</c> and yield a document
-    /// with <see langword="null"/> <c>Fields</c>; <c>{"continuation":{...}}</c> progress
-    /// markers and other metadata return <see langword="null"/>.
+    /// Builds the most specific <see cref="VespaException"/> from an error response.
+    /// The body is read to a string exactly once — it may not be JSON (e.g. an HTML
+    /// 502 page from a proxy), and unbuffered <c>ResponseHeadersRead</c> content
+    /// cannot be read twice.
     /// </summary>
-    private static VespaDocument<T>? ParseJsonlLine<T>(string line) where T : class
+    private static async Task<VespaException> ErrorFromResponseAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        JsonDocument json;
-        try
-        {
-            json = JsonDocument.Parse(line);
-        }
-        catch (JsonException)
-        {
-            // Malformed/truncated line (e.g. connection drop mid-line) — skip,
-            // consistent with the selection-stream reader.
-            return null;
-        }
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        using var _ = json;
-        var root = json.RootElement;
+        VespaError? error = null;
+        if (!string.IsNullOrWhiteSpace(body))
+            try
+            {
+                error = JsonSerializer.Deserialize<VespaError>(body, VespaJsonOptions.Default);
+            }
+            catch (JsonException)
+            {
+                // Non-JSON error body — fall through to the raw-body message.
+            }
 
+        var message = error?.Message ?? $"HTTP {(int)response.StatusCode}: {body}";
+        return VespaException.FromStatusCode((int)response.StatusCode, message, error);
+    }
+
+    private sealed record SelectionResponseBody(
+        [property: JsonPropertyName("documentCount")] long? DocumentCount,
+        [property: JsonPropertyName("continuation")] string? Continuation,
+        [property: JsonPropertyName("message")] string? Message);
+
+    public IAsyncEnumerable<VespaDocument<T>> VisitJsonlAsync<T>(
+        string documentType,
+        string? selection = null,
+        string? cluster = null,
+        string? @namespace = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        return VisitJsonlCoreAsync<T>(VisitBasePath(documentType, @namespace, options), selection, cluster, options, cancellationToken);
+    }
+
+    public IAsyncEnumerable<VespaDocument<T>> VisitAsync<T>(
+        string documentType,
+        string? selection = null,
+        string? cluster = null,
+        string? @namespace = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        return VisitPagedCoreAsync<T>(VisitBasePath(documentType, @namespace, options), selection, cluster, options, cancellationToken);
+    }
+
+    public IAsyncEnumerable<VespaDocument<T>> VisitAllAsync<T>(
+        string cluster,
+        string? selection = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cluster);
+        if (options is { Group: not null } or { Number: not null })
+            throw new ArgumentException(
+                "VisitOptions.Group/Number addressing is not supported on root-level visits.",
+                nameof(options));
+
+        return VisitPagedCoreAsync<T>($"{VespaPaths.DocV1}/", selection, cluster, options, cancellationToken);
+    }
+
+    private async IAsyncEnumerable<VespaDocument<T>> VisitPagedCoreAsync<T>(
+        string basePath,
+        string? selection,
+        string? cluster,
+        VisitOptions? options,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
+    {
+        string? continuation = null;
+        do
+        {
+            var url = BuildVisitUrl(basePath, selection, cluster, options, continuation, stream: false);
+
+            using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+                throw await ErrorFromResponseAsync(response, cancellationToken);
+
+            var page = await VespaIdInjector.DeserializeVisitAndInjectAsync<T>(response.Content, cancellationToken);
+            if (page is null)
+                yield break;
+
+            foreach (var doc in page.Documents)
+                yield return doc;
+
+            continuation = page.Continuation;
+        }
+        while (continuation is not null);
+    }
+
+    /// <summary>
+    /// Streams one JSONL visit chunk per HTTP request, auto-resuming on trailing
+    /// continuation tokens (a Vespa-side visit timeout ends the stream with a
+    /// <c>continuation</c> line that still carries a <c>token</c>). The visit is
+    /// complete when the final continuation line has no token.
+    /// </summary>
+    private async IAsyncEnumerable<VespaDocument<T>> VisitJsonlCoreAsync<T>(
+        string basePath,
+        string? selection,
+        string? cluster,
+        VisitOptions? options,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
+    {
+        string? continuation = null;
+        do
+        {
+            var url = BuildVisitUrl(basePath, selection, cluster, options, continuation, stream: true);
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(JsonlMediaType));
+
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+                throw await ErrorFromResponseAsync(response, cancellationToken);
+
+            var mediaType = response.Content.Headers.ContentType?.MediaType;
+            if (!string.Equals(mediaType, JsonlMediaType, StringComparison.OrdinalIgnoreCase))
+                throw new VespaException(
+                    $"JSONL visit expected an '{JsonlMediaType}' response but got '{mediaType ?? "(none)"}'. " +
+                    "Streamed visits require Vespa 8.593 or newer — use VisitAsync against older versions.");
+
+            continuation = null;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var reader = new StreamReader(stream);
+
+            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                JsonDocument json;
+                try
+                {
+                    json = JsonDocument.Parse(line);
+                }
+                catch (JsonException)
+                {
+                    // Malformed/truncated line (e.g. connection drop mid-line) — skip.
+                    continue;
+                }
+
+                using (json)
+                {
+                    var root = json.RootElement;
+                    if (root.ValueKind != JsonValueKind.Object)
+                        continue;
+
+                    if (root.TryGetProperty("message", out var message))
+                        throw new VespaException($"JSONL visit reported an error: {FormatVisitMessage(message)}");
+
+                    if (root.TryGetProperty(QueryParamContinuation, out var marker))
+                    {
+                        // Continuation markers subsume earlier ones — remember only the
+                        // last. It has no token (percentFinished == 100) iff complete.
+                        continuation = marker.TryGetProperty("token", out var token) && token.ValueKind == JsonValueKind.String
+                            ? token.GetString()
+                            : null;
+                        continue;
+                    }
+
+                    var doc = ParseJsonlDocument<T>(root);
+                    if (doc is not null)
+                        yield return doc;
+                }
+            }
+        }
+        while (continuation is not null);
+    }
+
+    private static string FormatVisitMessage(JsonElement message) => message.ValueKind switch
+    {
+        JsonValueKind.String => message.GetString() ?? string.Empty,
+        JsonValueKind.Object when message.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String =>
+            text.GetString() ?? message.GetRawText(),
+        _ => message.GetRawText()
+    };
+
+    /// <summary>
+    /// Parses one document/v1 JSONL document line. Document lines are
+    /// <c>{"put":"id:...","fields":{...}}</c>, tombstones (only with
+    /// <c>IncludeRemoves = true</c>) are <c>{"remove":"id:..."}</c> and yield a document
+    /// with <see langword="null"/> <c>Fields</c>; other metadata returns <see langword="null"/>.
+    /// </summary>
+    private static VespaDocument<T>? ParseJsonlDocument<T>(JsonElement root) where T : class
+    {
         if (root.TryGetProperty("remove", out var removeElem))
             return new VespaDocument<T>
             {
@@ -773,79 +777,29 @@ public sealed partial class DocumentOperations(
         return doc;
     }
 
-    public async IAsyncEnumerable<VespaDocument<T>> VisitAsync<T>(
-        string documentType,
-        string? selection = null,
-        string? cluster = null,
-        string? @namespace = null,
-        string? fieldSet = null,
-        int? wantedDocumentCount = null,
-        TimeSpan? timeout = null,
-        int? slices = null,
-        int? sliceId = null,
-        int? concurrency = null,
-        long? fromTimestamp = null,
-        long? toTimestamp = null,
-        bool? includeRemoves = null,
-        string? bucketSpace = null,
-        DocumentRequestOptions? requestOptions = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
-
-        var basePath = DocBasePath(documentType, @namespace);
-        string? continuation = null;
-
-        do
-        {
-            var url = BuildUrl(basePath,
-                requestOptions,
-                (QueryParamCluster, cluster),
-                (QueryParamSelection, selection),
-                (QueryParamFieldSet, fieldSet),
-                (QueryParamWantedDocumentCount, wantedDocumentCount?.ToString()),
-                ("timeout", timeout.HasValue ? $"{(long)timeout.Value.TotalMilliseconds}ms" : null),
-                ("slices", slices?.ToString()),
-                ("sliceId", sliceId?.ToString()),
-                ("concurrency", concurrency?.ToString()),
-                ("fromTimestamp", fromTimestamp?.ToString()),
-                ("toTimestamp", toTimestamp?.ToString()),
-                ("includeRemoves", includeRemoves.HasValue ? (includeRemoves.Value ? "true" : "false") : null),
-                ("bucketSpace", bucketSpace),
-                (QueryParamContinuation, continuation));
-
-            using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-                throw VespaException.FromStatusCode((int)response.StatusCode, $"Visit failed with status {response.StatusCode}");
-
-            var page = await VespaIdInjector.DeserializeVisitAndInjectAsync<T>(response.Content, cancellationToken);
-            if (page is null)
-                yield break;
-
-            foreach (var doc in page.Documents)
-                yield return doc;
-
-            continuation = page.Continuation;
-        }
-        while (continuation is not null);
-    }
-
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private string ResolveNamespace(string? @namespace) =>
         @namespace ?? _options.DefaultNamespace;
 
     /// <summary>
-    /// Strips the Vespa ID prefix (<c>id:{namespace}:{doctype}:{k/v}:</c>) when present,
-    /// so callers can pass either the bare user ID or the full Vespa document ID.
-    /// Bare IDs — including ones that happen to contain <c>::</c> — pass through unchanged.
+    /// Escaped <c>/document/v1/{namespace}/{documentType}</c> prefix. Both segments are
+    /// escaped so user-supplied values cannot inject path segments (<c>../</c>, <c>/</c>).
     /// </summary>
-    private static string NormalizeId(string id) => VespaDocumentId.GetUserSpecified(id);
+    private static string DocTypePrefix(string documentType, string ns) =>
+        $"{VespaPaths.DocV1}/{Uri.EscapeDataString(ns)}/{Uri.EscapeDataString(documentType)}";
 
     private string DocBasePath(string documentType, string? @namespace) =>
-        $"{VespaPaths.DocV1}/{ResolveNamespace(@namespace)}/{documentType}/docid/";
+        $"{DocTypePrefix(documentType, ResolveNamespace(@namespace))}/docid/";
 
+    /// <summary>
+    /// Builds the URL for a by-document-ID operation. Full Vespa IDs
+    /// (<c>id:ns:type:kv:user</c>) are parsed structurally: <c>g=</c>/<c>n=</c> location
+    /// selectors route to the <c>group/…</c>/<c>number/…</c> path levels, and a namespace
+    /// or document type differing from the operation's target throws
+    /// <see cref="ArgumentException"/> instead of silently re-targeting another document.
+    /// Bare IDs pass through unchanged.
+    /// </summary>
     private (string Namespace, string Url) BuildDocIdUrl(
         string documentType,
         string documentId,
@@ -854,21 +808,74 @@ public sealed partial class DocumentOperations(
         params (string Key, string? Value)[] extraParams)
     {
         var ns = ResolveNamespace(@namespace);
-        var url = BuildUrl(
-            $"{VespaPaths.DocV1}/{ns}/{documentType}/docid/{Uri.EscapeDataString(NormalizeId(documentId))}",
-            requestOptions,
-            extraParams);
-        return (ns, url);
+        var prefix = DocTypePrefix(documentType, ns);
+        string path;
+
+        if (VespaDocumentId.TryParse(documentId, out var parts))
+        {
+            if (!string.Equals(parts.Namespace, ns, StringComparison.Ordinal))
+                throw new ArgumentException(
+                    $"Document ID '{documentId}' addresses namespace '{parts.Namespace}', but the operation targets namespace '{ns}'.",
+                    nameof(documentId));
+            if (!string.Equals(parts.DocumentType, documentType, StringComparison.Ordinal))
+                throw new ArgumentException(
+                    $"Document ID '{documentId}' addresses document type '{parts.DocumentType}', but the operation targets document type '{documentType}'.",
+                    nameof(documentId));
+
+            path = parts switch
+            {
+                { Group: not null } => $"{prefix}/group/{Uri.EscapeDataString(parts.Group)}/{Uri.EscapeDataString(parts.UserSpecified)}",
+                { Number: not null } => $"{prefix}/number/{parts.Number}/{Uri.EscapeDataString(parts.UserSpecified)}",
+                _ => $"{prefix}/docid/{Uri.EscapeDataString(parts.UserSpecified)}"
+            };
+        }
+        else
+            path = $"{prefix}/docid/{Uri.EscapeDataString(VespaDocumentId.GetUserSpecified(documentId))}";
+
+        return (ns, BuildUrl(path, requestOptions, extraParams));
     }
 
-    private string BuildDocBasePath(
-        string documentType,
-        string? @namespace,
-        DocumentRequestOptions? requestOptions,
-        params (string Key, string? Value)[] extraParams) =>
-        BuildUrl(DocBasePath(documentType, @namespace), requestOptions, extraParams);
+    /// <summary>
+    /// Resolves the visit base path: <c>docid/</c> by default, or the
+    /// <c>group/{group}</c>/<c>number/{number}</c> level when set on
+    /// <see cref="VisitOptions"/> (mutually exclusive).
+    /// </summary>
+    private string VisitBasePath(string documentType, string? @namespace, VisitOptions? options)
+    {
+        var prefix = DocTypePrefix(documentType, ResolveNamespace(@namespace));
+        return options switch
+        {
+            { Group: not null, Number: not null } => throw new ArgumentException(
+                "VisitOptions.Group and VisitOptions.Number are mutually exclusive.", nameof(options)),
+            { Group: not null } => $"{prefix}/group/{Uri.EscapeDataString(options.Group)}",
+            { Number: not null } => $"{prefix}/number/{options.Number}",
+            _ => $"{prefix}/docid/"
+        };
+    }
 
-    private static System.Diagnostics.Activity? StartDocumentActivity(
+    private static string BuildVisitUrl(
+        string basePath,
+        string? selection,
+        string? cluster,
+        VisitOptions? options,
+        string? continuation,
+        bool stream)
+    {
+        var queryParams = new List<(string Key, string? Value)>
+        {
+            (QueryParamCluster, cluster),
+            (QueryParamSelection, selection)
+        };
+        if (options is not null)
+            queryParams.AddRange(options.ToQueryParams(includeWantedDocumentCount: !stream));
+        if (stream)
+            queryParams.Add(("stream", "true"));
+        queryParams.Add((QueryParamContinuation, continuation));
+
+        return BuildUrl(basePath, null, [.. queryParams]);
+    }
+
+    private static Activity? StartDocumentActivity(
         string operationName, string documentType, string ns, string? documentId = null)
     {
         var activity = VespaActivitySource.Instance.StartActivity(operationName);
@@ -881,7 +888,7 @@ public sealed partial class DocumentOperations(
 
     private static string BuildUrl(string basePath, DocumentRequestOptions? requestOptions, params (string Key, string? Value)[] queryParams)
     {
-        var sb = new System.Text.StringBuilder(basePath);
+        var sb = new StringBuilder(basePath);
         var first = true;
 
         void Append((string Key, string? Value) p)
@@ -908,30 +915,48 @@ public sealed partial class DocumentOperations(
         return sb.ToString();
     }
 
-    private static IReadOnlyList<string>? ParseIgnoredFields(HttpResponseMessage response) =>
-        response.Headers.TryGetValues("X-Vespa-Ignored-Fields", out var headerValues)
-            ? headerValues
-                .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                .ToList()
-            : null;
+    /// <summary>
+    /// <c>X-Vespa-Ignored-Fields</c> is a boolean flag header — Vespa sets it to
+    /// <c>true</c> when the operation contained ignored fields; it never lists them.
+    /// </summary>
+    private static bool HasIgnoredFields(HttpResponseMessage response) =>
+        response.Headers.TryGetValues("X-Vespa-Ignored-Fields", out var headerValues) &&
+        headerValues.Any(v => string.Equals(v.Trim(), "true", StringComparison.OrdinalIgnoreCase));
 
     private static async Task<VespaResponse> ParseResponseAsync(
         HttpResponseMessage response,
         CancellationToken cancellationToken = default)
     {
-        if (response.IsSuccessStatusCode)
-        {
-            return new VespaResponse
-            {
-                IsSuccess = true,
-                StatusCode = (int)response.StatusCode,
-                Message = "Operation completed successfully",
-                IgnoredFields = ParseIgnoredFields(response)
-            };
-        }
+        if (!response.IsSuccessStatusCode)
+            throw await ErrorFromResponseAsync(response, cancellationToken);
 
-        await ThrowFromErrorResponseAsync(response, cancellationToken);
-        return null!; // unreachable
+        return new VespaResponse
+        {
+            IsSuccess = true,
+            StatusCode = (int)response.StatusCode,
+            Message = "Operation completed successfully",
+            HadIgnoredFields = HasIgnoredFields(response)
+        };
+    }
+
+    private async Task<VespaResponse> SendPutAsync<T>(string url, T document, CancellationToken cancellationToken) where T : class
+    {
+        var payload = new { fields = document };
+        using var response = await _httpClient.PostAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
+        return await ParseResponseAsync(response, cancellationToken);
+    }
+
+    private async Task<VespaResponse> SendUpdateAsync(string url, Dictionary<string, FieldOperation> fieldOperations, CancellationToken cancellationToken)
+    {
+        var payload = new { fields = fieldOperations };
+        using var response = await _httpClient.PutAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
+        return await ParseResponseAsync(response, cancellationToken);
+    }
+
+    private async Task<VespaResponse> SendDeleteAsync(string url, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.DeleteAsync(url, cancellationToken);
+        return await ParseResponseAsync(response, cancellationToken);
     }
 
     private async Task<VespaDocument<T>?> GetDocumentOrNullAsync<T>(
@@ -949,13 +974,10 @@ public sealed partial class DocumentOperations(
         }
 
         if (!response.IsSuccessStatusCode)
-            throw BuildHttpError(response.StatusCode, "GET");
+            throw await ErrorFromResponseAsync(response, cancellationToken);
 
         return await VespaIdInjector.DeserializeAndInjectAsync<T>(response.Content, cancellationToken);
     }
-
-    private static VespaException BuildHttpError(HttpStatusCode statusCode, string operation) =>
-        VespaException.FromStatusCode((int)statusCode, $"{operation} failed with status {statusCode}");
 
     [LoggerMessage(EventId = 101, Level = LogLevel.Debug, Message = "Putting document {DocumentId} of type {DocumentType}")]
     static partial void LogPuttingDocument(ILogger logger, string documentId, string documentType);

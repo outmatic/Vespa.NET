@@ -840,11 +840,13 @@ public class FieldOperationsTests : IDisposable
         Assert.Contains("destinationCluster=b", capturedUrl);
     }
 
-    // --- Selection ops — JSONL streaming (Stream=true) ---
+    // --- Selection ops — response parsing (always plain JSON, never JSONL) ---
 
     [Fact]
-    public async Task UpdateBySelectionAsync_WithStream_RequestsJsonlAndSetsQueryParam()
+    public async Task UpdateBySelectionAsync_NeverRequestsJsonlStreaming()
     {
+        // Vespa ignores stream=true outside visits and always answers selection ops
+        // with plain JSON ({"documentCount":N,"continuation":"<string>"}).
         HttpRequestMessage? captured = null;
         _mockHandler
             .Protected()
@@ -853,54 +855,56 @@ public class FieldOperationsTests : IDisposable
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
             .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
-            .ReturnsAsync(() =>
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                var resp = new HttpResponseMessage(HttpStatusCode.OK);
-                // Final continuation with no token → operation complete after one chunk.
-                resp.Content = new StringContent(
-                    """
-                    {"continuation":{"percentFinished":100}}
-                    {"sessionStats":{"documentCount":42}}
-                    """);
-                return resp;
+                Content = new StringContent("""{"documentCount": 42}""")
             });
 
         var result = await _documentOps.UpdateBySelectionAsync(
             "music.year < 2000",
             new Dictionary<string, FieldOperation> { ["status"] = FieldOp.Assign("archived") },
-            "music", cluster: "content",
-            requestOptions: new SelectionRequestOptions { Stream = true });
+            "music", cluster: "content");
 
         Assert.True(result.IsSuccess);
         Assert.Equal(42, result.DocumentCount);
 
         Assert.NotNull(captured);
-        Assert.Contains("stream=true", captured.RequestUri!.Query);
-        Assert.Equal("application/jsonl", captured.Headers.Accept.First().MediaType);
+        Assert.DoesNotContain("stream=", captured.RequestUri!.Query);
+        Assert.Empty(captured.Headers.Accept);
     }
 
     [Fact]
-    public async Task DeleteBySelectionAsync_WithStream_LoopsWhenContinuationHasToken()
+    public async Task DeleteBySelectionAsync_HtmlErrorBody_ThrowsVespaException()
     {
-        var responses = new Queue<HttpResponseMessage>(
-        [
-            new HttpResponseMessage(HttpStatusCode.OK)
+        // A non-JSON error body (e.g. HTML 502 from a proxy) must surface as a
+        // VespaException, not an InvalidOperationException from a double body read.
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.BadGateway)
             {
-                Content = new StringContent(
-                    """
-                    {"continuation":{"token":"ABC","percentFinished":50}}
-                    {"sessionStats":{"documentCount":70}}
-                    """)
-            },
-            new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    """
-                    {"continuation":{"percentFinished":100}}
-                    {"sessionStats":{"documentCount":30}}
-                    """)
-            }
-        ]);
+                Content = new StringContent("<html>502 Bad Gateway</html>",
+                    System.Text.Encoding.UTF8, "text/html")
+            });
+
+        var ex = await Assert.ThrowsAnyAsync<VespaException>(() =>
+            _documentOps.DeleteBySelectionAsync("music.year < 1980", "music", cluster: "content"));
+
+        Assert.IsType<VespaServerException>(ex);
+        Assert.Contains("502 Bad Gateway", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateBySelectionAsync_IgnoredFieldsHeader_SurfacesFlag()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"documentCount": 3}""")
+        };
+        response.Headers.Add("X-Vespa-Ignored-Fields", "true");
 
         _mockHandler
             .Protected()
@@ -908,37 +912,14 @@ public class FieldOperationsTests : IDisposable
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(responses.Dequeue);
+            .ReturnsAsync(response);
 
-        var result = await _documentOps.DeleteBySelectionAsync(
-            "music.year < 1980", "music", cluster: "content",
-            requestOptions: new SelectionRequestOptions { Stream = true });
+        var result = await _documentOps.UpdateBySelectionAsync(
+            "music.year < 2000",
+            new Dictionary<string, FieldOperation> { ["bogus"] = FieldOp.Assign(1) },
+            "music", cluster: "content");
 
-        Assert.Equal(100, result.DocumentCount);
-        _mockHandler.Protected().Verify(
-            "SendAsync", Times.Exactly(2),
-            ItExpr.IsAny<HttpRequestMessage>(),
-            ItExpr.IsAny<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task CopyBySelectionAsync_WithStream_ThrowsArgumentException()
-    {
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            _documentOps.CopyBySelectionAsync(
-                "music.year < 2000", "music",
-                cluster: "a", destinationCluster: "b",
-                requestOptions: new SelectionRequestOptions { Stream = true }));
-    }
-
-    [Fact]
-    public async Task CopyBySelectionPageAsync_WithStream_ThrowsArgumentException()
-    {
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            _documentOps.CopyBySelectionPageAsync(
-                "music.year < 2000", "music",
-                cluster: "a", destinationCluster: "b",
-                requestOptions: new SelectionRequestOptions { Stream = true }));
+        Assert.True(result.HadIgnoredFields);
     }
 
     // --- Selection ops — manual pagination (PageAsync variants) ---
@@ -1079,17 +1060,20 @@ public class FieldOperationsTests : IDisposable
             .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedUrl = req.RequestUri!.PathAndQuery)
             .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("")
+                Content = new StringContent("", System.Text.Encoding.UTF8, "application/jsonl")
             });
 
         await foreach (var _ in _documentOps.VisitJsonlAsync<object>(
             "music",
-            slices: 8,
-            sliceId: 3,
-            concurrency: 4,
-            includeRemoves: true,
-            bucketSpace: "global",
-            timeout: TimeSpan.FromSeconds(20)))
+            options: new VisitOptions
+            {
+                Slices = 8,
+                SliceId = 3,
+                Concurrency = 4,
+                IncludeRemoves = true,
+                BucketSpace = "global",
+                Timeout = TimeSpan.FromSeconds(20)
+            }))
         { }
 
         Assert.NotNull(capturedUrl);
@@ -1100,6 +1084,66 @@ public class FieldOperationsTests : IDisposable
         Assert.Contains("bucketSpace=global", capturedUrl);
         Assert.Contains("timeout=20000ms", capturedUrl);
         Assert.Contains("stream=true", capturedUrl);
+    }
+
+    // --- Tensor add/remove/modify updates ---
+
+    [Fact]
+    public void FieldOp_Modify_WithCreate_SerializesCreateFlag()
+    {
+        var op = FieldOp.Modify("replace",
+            [new TensorCellUpdate(new() { ["x"] = "b" }, 2.0)], create: true);
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        var expected = """{"modify":{"operation":"replace","create":true,"cells":[{"address":{"x":"b"},"value":2}]}}""";
+        Assert.Equal(expected, json);
+    }
+
+    [Fact]
+    public void FieldOp_ModifyCells_ShortForm_SerializesCellsObject()
+    {
+        // Short form for tensors with a single mapped dimension
+        // (docs.vespa.ai/en/reference/document-json-format.html)
+        var op = FieldOp.ModifyCells("replace", new Dictionary<string, double> { ["b"] = 2.0 });
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        Assert.Equal("""{"modify":{"operation":"replace","cells":{"b":2}}}""", json);
+    }
+
+    [Fact]
+    public void FieldOp_ModifyBlocks_SerializesBlocksObject()
+    {
+        var op = FieldOp.ModifyBlocks("add",
+            new Dictionary<string, IReadOnlyList<double>> { ["a"] = [1.0, 2.0, 3.0] });
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        Assert.Equal("""{"modify":{"operation":"add","blocks":{"a":[1,2,3]}}}""", json);
+    }
+
+    [Fact]
+    public void FieldOp_TensorAdd_SerializesCellsInsideAdd()
+    {
+        var op = FieldOp.TensorAdd([new TensorCellUpdate(new() { ["x"] = "b" }, 2.0)]);
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        Assert.Equal("""{"add":{"cells":[{"address":{"x":"b"},"value":2}]}}""", json);
+    }
+
+    [Fact]
+    public void FieldOp_TensorRemove_SerializesAddresses()
+    {
+        var op = FieldOp.TensorRemove(
+        [
+            new Dictionary<string, string> { ["x"] = "b" },
+            new Dictionary<string, string> { ["x"] = "c" }
+        ]);
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        Assert.Equal("""{"remove":{"addresses":[{"x":"b"},{"x":"c"}]}}""", json);
+    }
+
+    [Fact]
+    public void FieldOp_Add_PlainElement_StillSerializesElementForm()
+    {
+        // The array/weighted-set form must not be affected by TensorAdd
+        var op = FieldOp.Add("rock");
+        var json = JsonSerializer.Serialize(op, JsonOpts);
+        Assert.Equal("""{"add":"rock"}""", json);
     }
 
     // --- Helpers ---

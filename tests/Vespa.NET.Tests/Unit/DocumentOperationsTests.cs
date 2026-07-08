@@ -218,14 +218,15 @@ public class DocumentOperationsTests : IDisposable
 
     [Theory]
     // Full Vespa IDs are stripped to the user-specified part — which may contain "::"
-    [InlineData("id:test:testdoc::album::dark-side", "album%3A%3Adark-side")]
-    // g=/n= selectors occupy the key/value slot; the user part keeps its colons
-    [InlineData("id:test:testdoc:g=group1:doc:1", "doc%3A1")]
+    [InlineData("id:test:testdoc::album::dark-side", "/document/v1/test/testdoc/docid/album%3A%3Adark-side")]
+    // g=/n= selectors occupy the key/value slot and route to the group/number path
+    // levels — /docid/{user} would address a *different* document
+    [InlineData("id:test:testdoc:g=group1:doc:1", "/document/v1/test/testdoc/group/group1/doc%3A1")]
+    [InlineData("id:test:testdoc:n=1234:doc-1", "/document/v1/test/testdoc/number/1234/doc-1")]
     // Bare IDs that merely contain "::" are not full Vespa IDs and must not be truncated
-    [InlineData("a::b", "a%3A%3Ab")]
-    public async Task GetAsync_NormalizesId_WithoutCorruptingUserPart(string docId, string expectedEscaped)
+    [InlineData("a::b", "/document/v1/test/testdoc/docid/a%3A%3Ab")]
+    public async Task GetAsync_NormalizesId_WithoutCorruptingUserPart(string docId, string expectedUrl)
     {
-        var expectedUrl = $"/document/v1/test/testdoc/docid/{expectedEscaped}";
         SetupGetSuccessResponse(new VespaDocument<TestDocument>
         {
             Id = "test",
@@ -235,6 +236,29 @@ public class DocumentOperationsTests : IDisposable
         await _documentOps.GetAsync<TestDocument>(docId, "testdoc");
 
         VerifyHttpCall(HttpMethod.Get, expectedUrl);
+    }
+
+    [Theory]
+    // Namespace mismatch: silently re-targeting the default namespace would hit a different document
+    [InlineData("id:otherns:testdoc::doc-1")]
+    // Document type mismatch
+    [InlineData("id:test:otherdoc::doc-1")]
+    public async Task GetAsync_FullIdMismatchingTarget_ThrowsArgumentException(string docId)
+    {
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _documentOps.GetAsync<TestDocument>(docId, "testdoc"));
+
+        Assert.Contains("targets", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_FullIdWithGroupSelector_RoutesToGroupPath()
+    {
+        SetupSuccessResponse();
+
+        await _documentOps.DeleteAsync("id:test:testdoc:g=alice:doc1", "testdoc");
+
+        VerifyHttpCall(HttpMethod.Delete, "/document/v1/test/testdoc/group/alice/doc1");
     }
 
     [Fact]
@@ -395,7 +419,6 @@ public class DocumentOperationsTests : IDisposable
 
     [Theory]
     [InlineData("id:test:testdoc::doc-1", "/document/v1/test/testdoc/docid/doc-1")]
-    [InlineData("id:myns:music::abc-123", "/document/v1/test/testdoc/docid/abc-123")]
     [InlineData("doc-1", "/document/v1/test/testdoc/docid/doc-1")]
     public async Task PutAsync_NormalizesFullVespaId(string inputId, string expectedPath)
     {
@@ -405,6 +428,15 @@ public class DocumentOperationsTests : IDisposable
         await _documentOps.PutAsync(inputId, doc, "testdoc");
 
         VerifyHttpCall(HttpMethod.Post, expectedPath);
+    }
+
+    [Fact]
+    public async Task PutAsync_FullIdWithDifferentNamespace_ThrowsInsteadOfRetargeting()
+    {
+        // Historically "id:myns:music::abc-123" was silently addressed under the
+        // default namespace/testdoc — a different document.
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _documentOps.PutAsync("id:myns:testdoc::abc-123", new { field = "v" }, "testdoc"));
     }
 
     [Theory]
@@ -429,6 +461,78 @@ public class DocumentOperationsTests : IDisposable
         await _documentOps.DeleteAsync(inputId, "testdoc");
 
         VerifyHttpCall(HttpMethod.Delete, expectedPath);
+    }
+
+    #endregion
+
+    #region URL escaping of namespace/documentType and create-on-put
+
+    [Fact]
+    public async Task PutAsync_EscapesNamespaceAndDocumentType()
+    {
+        var doc = new { field = "value" };
+        SetupSuccessResponse();
+
+        await _documentOps.PutAsync("doc-1", doc, "type/../sneaky", "ns?x=1");
+
+        VerifyHttpCall(HttpMethod.Post, "/document/v1/ns%3Fx%3D1/type%2F..%2Fsneaky/docid/doc-1");
+    }
+
+    [Fact]
+    public async Task PutAsync_WithCreateTrue_AddsCreateQueryParam()
+    {
+        var doc = new { field = "value" };
+        SetupSuccessResponse();
+
+        await _documentOps.PutAsync("doc-1", doc, "testdoc",
+            condition: "testdoc.version == 1", create: true);
+
+        _mockHandler.Protected().Verify(
+            "SendAsync", Times.Once(),
+            ItExpr.Is<HttpRequestMessage>(req =>
+                req.Method == HttpMethod.Post &&
+                req.RequestUri!.Query.Contains("create=true") &&
+                req.RequestUri!.Query.Contains("condition=")),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task PutAsync_WithCreateFalse_NoCreateQueryParam()
+    {
+        var doc = new { field = "value" };
+        SetupSuccessResponse();
+
+        await _documentOps.PutAsync("doc-1", doc, "testdoc");
+
+        VerifyHttpCall(HttpMethod.Post, "/document/v1/test/testdoc/docid/doc-1");
+    }
+
+    #endregion
+
+    #region Non-JSON error bodies
+
+    [Fact]
+    public async Task GetAsync_HtmlErrorBody_ThrowsVespaExceptionWithBody()
+    {
+        // A proxy 502 page is not JSON — it must surface as VespaException,
+        // not InvalidOperationException from a double body read.
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.BadGateway)
+            {
+                Content = new StringContent("<html>502 Bad Gateway</html>",
+                    System.Text.Encoding.UTF8, "text/html")
+            });
+
+        var ex = await Assert.ThrowsAnyAsync<VespaException>(() =>
+            _documentOps.GetAsync<TestDocument>("doc-1", "testdoc"));
+
+        Assert.IsType<VespaServerException>(ex);
+        Assert.Contains("502 Bad Gateway", ex.Message);
     }
 
     #endregion

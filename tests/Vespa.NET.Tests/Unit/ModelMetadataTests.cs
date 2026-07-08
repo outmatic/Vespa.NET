@@ -215,13 +215,13 @@ public class ModelMetadataTests
     {
         var mock = new Mock<IDocumentOperations>();
         mock.Setup(m => m.PutAsync("id1", It.IsAny<Music>(), "music", "mynamespace",
-                null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                null, false, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true });
 
         await mock.Object.PutAsync("id1", new Music());
 
         mock.Verify(m => m.PutAsync("id1", It.IsAny<Music>(), "music", "mynamespace",
-            null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+            null, false, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -276,14 +276,14 @@ public class ModelMetadataTests
     {
         var mock = new Mock<IDocumentOperations>();
         mock.Setup(m => m.VisitAsync<Music>("music", null, null, "mynamespace",
-                null, null, null, null, null, null, null, null, null, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<VisitOptions?>(), It.IsAny<CancellationToken>()))
             .Returns(AsyncEnumerable.Empty<VespaDocument<Music>>());
 
         // Use named arg to avoid ambiguity with the explicit overload
         _ = mock.Object.VisitAsync<Music>(selection: null);
 
         mock.Verify(m => m.VisitAsync<Music>("music", null, null, "mynamespace",
-            null, null, null, null, null, null, null, null, null, null, It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<VisitOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

@@ -218,6 +218,9 @@ public sealed class VespaClientOptions
         if (!Uri.TryCreate(Endpoint, UriKind.Absolute, out _))
             throw new ArgumentException("Endpoint must be a valid URL", nameof(Endpoint));
 
+        // An empty namespace would produce malformed "//" segments in /document/v1 paths.
+        ArgumentException.ThrowIfNullOrWhiteSpace(DefaultNamespace);
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConnectionsPerServer);
         ArgumentOutOfRangeException.ThrowIfNegative(MaxRetryAttempts);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CircuitBreakerFailureThreshold);

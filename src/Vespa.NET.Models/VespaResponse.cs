@@ -10,10 +10,12 @@ public sealed record VespaResponse
     public string? Message { get; init; }
 
     /// <summary>
-    /// Fields that were present in the document but ignored by Vespa
-    /// (returned via <c>X-Vespa-Ignored-Fields</c> response header).
+    /// <see langword="true"/> when the put or update contained one or more fields that
+    /// Vespa ignored (e.g. fields not present in the document type). Vespa signals this
+    /// via the <c>X-Vespa-Ignored-Fields: true</c> response header — it does not report
+    /// which fields were ignored.
     /// </summary>
-    public IReadOnlyList<string>? IgnoredFields { get; init; }
+    public bool HadIgnoredFields { get; init; }
 
     /// <summary>
     /// Number of documents affected by a selection operation

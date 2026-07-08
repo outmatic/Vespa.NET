@@ -57,8 +57,7 @@ public class VisitAdvancedE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                timeout: TimeSpan.FromSeconds(30),
-                wantedDocumentCount: 100))
+                options: new VisitOptions { Timeout = TimeSpan.FromSeconds(30), WantedDocumentCount = 100 }))
                 visited.Add(doc);
 
             Assert.Equal(5, visited.Count);
@@ -81,8 +80,7 @@ public class VisitAdvancedE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                concurrency: 2,
-                wantedDocumentCount: 100))
+                options: new VisitOptions { Concurrency = 2, WantedDocumentCount = 100 }))
                 visited.Add(doc);
 
             Assert.Equal(6, visited.Count);
@@ -106,9 +104,7 @@ public class VisitAdvancedE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                slices: 2,
-                sliceId: 0,
-                wantedDocumentCount: 100))
+                options: new VisitOptions { Slices = 2, SliceId = 0, WantedDocumentCount = 100 }))
                 slice0.Add(doc);
 
             // Request slice 1 of 2
@@ -117,9 +113,7 @@ public class VisitAdvancedE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                slices: 2,
-                sliceId: 1,
-                wantedDocumentCount: 100))
+                options: new VisitOptions { Slices = 2, SliceId = 1, WantedDocumentCount = 100 }))
                 slice1.Add(doc);
 
             // Combined should cover all documents
@@ -137,7 +131,7 @@ public class VisitAdvancedE2ETests(VespaFixture fixture)
     // ── VisitJsonlAsync typed extension ──────────────────────────────────────
 
     [Fact]
-    public async Task VisitJsonlAsync_WithWantedDocumentCount_LimitsOutput()
+    public async Task VisitJsonlAsync_StreamsAndSupportsEarlyBreak()
     {
         if (!Enabled) return;
 
@@ -149,8 +143,7 @@ public class VisitAdvancedE2ETests(VespaFixture fixture)
                 "product",
                 selection: $"product.category == \"{category}\"",
                 @namespace: "test",
-                cluster: "content",
-                wantedDocumentCount: 3))
+                cluster: "content"))
             {
                 visited.Add(doc);
                 if (visited.Count >= 3)
@@ -175,8 +168,7 @@ public class VisitAdvancedE2ETests(VespaFixture fixture)
             var visited = new List<VespaDocument<TestProduct>>();
             await foreach (var doc in fixture.Client.Documents.VisitAsync<TestProduct>(
                 selection: $"product.category == \"{category}\"",
-                concurrency: 2,
-                wantedDocumentCount: 100))
+                options: new VisitOptions { Concurrency = 2, WantedDocumentCount = 100 }))
                 visited.Add(doc);
 
             Assert.Equal(4, visited.Count);

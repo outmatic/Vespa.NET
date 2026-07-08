@@ -28,9 +28,11 @@ public sealed record SelectionPageResult
     public int StatusCode { get; init; }
 
     /// <summary>
-    /// Fields ignored by Vespa for this chunk (from the <c>X-Vespa-Ignored-Fields</c> header).
+    /// <see langword="true"/> when the update contained one or more fields that Vespa
+    /// ignored in this chunk (from the <c>X-Vespa-Ignored-Fields: true</c> header).
+    /// Vespa does not report which fields were ignored.
     /// </summary>
-    public IReadOnlyList<string>? IgnoredFields { get; init; }
+    public bool HadIgnoredFields { get; init; }
 
     /// <summary>
     /// <see langword="true"/> when no continuation token was returned — i.e. this chunk

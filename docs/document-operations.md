@@ -35,6 +35,11 @@ await client.Documents.DeleteAsync(product.Id, documentType: "product");
 ```csharp
 await client.Documents.PutAsync(product.Id, product,
     condition: "product.price > 0");  // HTTP 412 → VespaConditionNotMetException
+
+// Conditional put with create (Vespa ≥ 8.178): apply even when the document
+// does not exist yet.
+await client.Documents.PutAsync(product.Id, product,
+    condition: "product.price > 0", create: true);
 ```
 
 ---
@@ -65,7 +70,11 @@ await client.Documents.UpdateFieldsAsync(product.Id, new Dictionary<string, Fiel
 | `FieldOp.Remove(value)` | Remove element from array/weightedset |
 | `FieldOp.Match(predicate)` | Match-based update |
 | `FieldOp.ClearField()` | Remove field entirely |
-| `FieldOp.Modify(op, cells)` | Tensor cell-level update |
+| `FieldOp.Modify(op, cells, create)` | Tensor cell-level update (`create: true` treats an unset tensor as empty) |
+| `FieldOp.ModifyCells(op, cells, create)` | Tensor modify, short-form `cells` object (single mapped dimension) |
+| `FieldOp.ModifyBlocks(op, blocks, create)` | Tensor modify, `blocks` form (mixed tensors) |
+| `FieldOp.TensorAdd(cells)` | Add cells to a mapped/mixed tensor (`{"add":{"cells":[…]}}`) |
+| `FieldOp.TensorRemove(addresses)` | Remove cells/blocks by address (`{"remove":{"addresses":[…]}}`) |
 
 ### Typed Lambda Builder
 
@@ -174,7 +183,6 @@ Selection operations take a `SelectionRequestOptions` record instead of
 | `BucketSpace` | `bucketSpace` | e.g. `default`, `global` |
 | `Timeout` | `timeout` | Per-request Vespa soft timeout, serialized as `{ms}ms` |
 | `TraceLevel` | `tracelevel` | Diagnostic trace level (0-9) |
-| `Stream` | `stream=true` + `Accept: application/jsonl` | Visit more buckets per HTTP call (JSONL response). Update/Delete only — not supported on Copy |
 
 ```csharp
 await client.Documents.DeleteBySelectionAsync(
@@ -188,13 +196,11 @@ await client.Documents.DeleteBySelectionAsync(
     });
 ```
 
-> [!TIP]
-> For selections that touch millions of documents, set `Stream = true` on
-> `UpdateBySelectionAsync` / `DeleteBySelectionAsync`. The client still loops on
-> the continuation token, but each HTTP request covers many more buckets, cutting
-> the round-trip count (and its latency overhead) substantially. The flag is
-> ignored internally when passed to `CopyBySelectionAsync` — Vespa does not accept
-> `stream=true` on the copy endpoint, so the client throws `ArgumentException`.
+> [!NOTE]
+> Vespa answers selection operations with a plain JSON body
+> (`{"documentCount": N, "continuation": "…"}`); `stream=true` only applies to
+> visits, so `SelectionRequestOptions` deliberately has no `Stream` flag.
+> Use a larger `TimeChunk` to reduce the number of round-trips on huge selections.
 
 ### Manual Pagination (Crash-Safe Resume)
 
@@ -208,7 +214,9 @@ example, to resume a long-running backfill after a crash or deployment.
 - `DocumentCount` — documents affected **in this chunk only** (not cumulative).
 - `Continuation` — token to pass back to resume; `null` when complete.
 - `IsComplete` — `true` iff `Continuation is null`.
-- `StatusCode`, `IgnoredFields` — same as `VespaResponse`.
+- `StatusCode`, `HadIgnoredFields` — same as `VespaResponse` (`HadIgnoredFields` is a
+  boolean flag from the `X-Vespa-Ignored-Fields: true` header; Vespa does not report
+  which fields were ignored).
 
 ```csharp
 string? token = await LoadCheckpoint();  // e.g. from database, null on first run
@@ -249,34 +257,70 @@ The same pattern applies to `DeleteBySelectionPageAsync` and `CopyBySelectionPag
 
 ### Standard Visit (continuation tokens)
 
+Common parameters (`selection`, `cluster`, `namespace`) stay on the method; everything
+else lives in the `VisitOptions` record:
+
 ```csharp
 await foreach (var doc in client.Documents.VisitAsync<Product>(
     documentType: "product",
     selection: "product.price > 100",
-    wantedDocumentCount: 1000,
-    slices: 4, sliceId: 0,          // parallel slicing
-    fromTimestamp: 1700000000,       // time-bounded
-    includeRemoves: true))
+    options: new VisitOptions
+    {
+        WantedDocumentCount = 1000,
+        Slices = 4, SliceId = 0,        // parallel slicing
+        FromTimestamp = 1700000000000000, // microseconds since UTC epoch
+        IncludeRemoves = true
+    }))
 {
     Process(doc.Fields);
 }
 ```
 
+`VisitOptions` also supports `FieldSet`, `Timeout`, `Concurrency`, `ToTimestamp`,
+`BucketSpace`, `TraceLevel`, and `TensorFormat`. `FromTimestamp`/`ToTimestamp` are
+**microseconds** since UTC epoch. `dryRun` is deliberately unavailable — Vespa
+rejects it on visits.
+
+### Group / Number / Root-Level Visiting
+
+```csharp
+// Visit one group (streaming-mode document types)
+await foreach (var doc in client.Documents.VisitAsync<Product>(
+    "product", options: new VisitOptions { Group = "tenant-42" })) { }
+
+// Visit one numeric bucket
+await foreach (var doc in client.Documents.VisitAsync<Product>(
+    "product", options: new VisitOptions { Number = 42L })) { }
+
+// Visit ALL documents in a cluster, across namespaces and document types
+await foreach (var doc in client.Documents.VisitAllAsync<Dictionary<string, object>>(
+    cluster: "content")) { }
+```
+
 ### JSONL Streaming (lower memory)
 
-`VisitJsonlAsync` streams one document per line (`Accept: application/jsonl`) and
-supports the same full parameter surface as `VisitAsync` — `timeout`, `slices`,
-`sliceId`, `concurrency`, `fromTimestamp`, `toTimestamp`, `includeRemoves`, and
-`bucketSpace`. Prefer it for large result sets.
+`VisitJsonlAsync` streams one document per line (`stream=true`,
+`Accept: application/jsonl`) and takes the same `VisitOptions`. Prefer it for large
+result sets. Notes:
+
+- Requires **Vespa ≥ 8.593** — older versions answer with plain JSON, which the
+  client rejects with a `VespaException` instead of silently yielding nothing.
+- If a chunk ends with a continuation token (e.g. after a server-side visit
+  timeout), the client **resumes automatically** until the final continuation
+  reports completion; server-reported `message` errors surface as `VespaException`.
+- `WantedDocumentCount` is not sent on this path — streaming makes it redundant.
 
 ```csharp
 await foreach (var doc in client.Documents.VisitJsonlAsync<Product>(
     documentType: "product",
     selection: "product.price > 100",
-    slices: 8, sliceId: 0,
-    concurrency: 4,
-    timeout: TimeSpan.FromMinutes(2),
-    bucketSpace: "default"))
+    options: new VisitOptions
+    {
+        Slices = 8, SliceId = 0,
+        Concurrency = 4,
+        Timeout = TimeSpan.FromMinutes(2),
+        BucketSpace = "default"
+    }))
 {
     Process(doc.Fields);
 }
@@ -296,6 +340,7 @@ var opts = new DocumentRequestOptions
     TensorFormat = "short",
     DryRun       = true,
     Timeout      = TimeSpan.FromSeconds(10),   // Vespa server-side soft timeout
+    Cluster      = "content",                  // forwarded on GETs only
 };
 
 await client.Documents.PutAsync(product.Id, product, documentType: "product", requestOptions: opts);

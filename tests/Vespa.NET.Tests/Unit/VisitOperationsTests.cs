@@ -128,7 +128,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", wantedDocumentCount: 100));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { WantedDocumentCount = 100 }));
 
         Assert.Contains("wantedDocumentCount=100", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -138,7 +138,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", timeout: TimeSpan.FromSeconds(30)));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { Timeout = TimeSpan.FromSeconds(30) }));
 
         Assert.Contains("timeout=30000ms", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -148,7 +148,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", fieldSet: "music:[document]"));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { FieldSet = "music:[document]" }));
 
         Assert.Contains("fieldSet=", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -213,7 +213,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", slices: 4));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { Slices = 4 }));
 
         Assert.Contains("slices=4", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -223,7 +223,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", slices: 4, sliceId: 2));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { Slices = 4, SliceId = 2 }));
 
         var query = _mockHandler.Requests[0].RequestUri!.Query;
         Assert.Contains("slices=4", query);
@@ -235,7 +235,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", concurrency: 8));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { Concurrency = 8 }));
 
         Assert.Contains("concurrency=8", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -245,7 +245,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", fromTimestamp: 1000000));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { FromTimestamp = 1000000 }));
 
         Assert.Contains("fromTimestamp=1000000", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -255,7 +255,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", toTimestamp: 2000000));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { ToTimestamp = 2000000 }));
 
         Assert.Contains("toTimestamp=2000000", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -265,7 +265,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", includeRemoves: true));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { IncludeRemoves = true }));
 
         Assert.Contains("includeRemoves=true", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -275,7 +275,7 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", bucketSpace: "global"));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions { BucketSpace = "global" }));
 
         Assert.Contains("bucketSpace=global", _mockHandler.Requests[0].RequestUri!.Query);
     }
@@ -285,10 +285,16 @@ public class VisitOperationsTests : IDisposable
     {
         EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
 
-        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music",
-            slices: 4, sliceId: 1, concurrency: 8,
-            fromTimestamp: 1000, toTimestamp: 2000,
-            includeRemoves: true, bucketSpace: "default"));
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music", options: new VisitOptions
+        {
+            Slices = 4,
+            SliceId = 1,
+            Concurrency = 8,
+            FromTimestamp = 1000,
+            ToTimestamp = 2000,
+            IncludeRemoves = true,
+            BucketSpace = "default"
+        }));
 
         var query = _mockHandler.Requests[0].RequestUri!.Query;
         Assert.Contains("slices=4", query);
@@ -298,6 +304,109 @@ public class VisitOperationsTests : IDisposable
         Assert.Contains("toTimestamp=2000", query);
         Assert.Contains("includeRemoves=true", query);
         Assert.Contains("bucketSpace=default", query);
+    }
+
+    // --- Group/number/root visit levels ---
+
+    [Fact]
+    public async Task VisitAsync_WithGroupOption_UsesGroupPathLevel()
+    {
+        EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
+
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music",
+            options: new VisitOptions { Group = "my group" }));
+
+        Assert.Equal("/document/v1/test/music/group/my%20group",
+            _mockHandler.Requests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task VisitAsync_WithNumberOption_UsesNumberPathLevel()
+    {
+        EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
+
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music",
+            options: new VisitOptions { Number = 42L }));
+
+        Assert.Equal("/document/v1/test/music/number/42",
+            _mockHandler.Requests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task VisitAsync_WithGroupAndNumber_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music",
+                options: new VisitOptions { Group = "g", Number = 42L })));
+    }
+
+    [Fact]
+    public async Task VisitAllAsync_UsesRootPathAndClusterParam()
+    {
+        EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
+
+        _ = await CollectAsync(_documentOps.VisitAllAsync<MusicDoc>("mycluster"));
+
+        Assert.Equal("/document/v1/", _mockHandler.Requests[0].RequestUri!.AbsolutePath);
+        Assert.Contains("cluster=mycluster", _mockHandler.Requests[0].RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task VisitAllAsync_FollowsContinuationTokens()
+    {
+        EnqueuePage(new VespaVisitResponse<MusicDoc>(
+            [new() { Id = "1", Fields = new MusicDoc { Title = "Song 1" } }], "t1", 1, null));
+        EnqueuePage(new VespaVisitResponse<MusicDoc>(
+            [new() { Id = "2", Fields = new MusicDoc { Title = "Song 2" } }], null, 1, null));
+
+        var results = await CollectAsync(_documentOps.VisitAllAsync<MusicDoc>("mycluster"));
+
+        Assert.Equal(2, results.Count);
+        Assert.Contains("continuation=t1", _mockHandler.Requests[1].RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task VisitAllAsync_EmptyCluster_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            _ = await CollectAsync(_documentOps.VisitAllAsync<MusicDoc>("")));
+    }
+
+    [Fact]
+    public async Task VisitAllAsync_WithGroupOption_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            _ = await CollectAsync(_documentOps.VisitAllAsync<MusicDoc>("mycluster",
+                options: new VisitOptions { Group = "g" })));
+    }
+
+    // --- Error mapping: visit errors surface the server message ---
+
+    [Fact]
+    public async Task VisitAsync_HttpError_SurfacesServerMessage()
+    {
+        _mockHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""{"pathId":"/document/v1/","message":"No content cluster 'x'"}""")
+        });
+
+        var ex = await Assert.ThrowsAnyAsync<VespaException>(async () =>
+            _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music")));
+        Assert.Contains("No content cluster 'x'", ex.Message);
+    }
+
+    // --- dryRun is rejected by Vespa on visits — never emitted ---
+
+    [Fact]
+    public async Task VisitAsync_NeverEmitsDryRun()
+    {
+        EnqueuePage(new VespaVisitResponse<MusicDoc>([], null, 0, null));
+
+        _ = await CollectAsync(_documentOps.VisitAsync<MusicDoc>("music",
+            options: new VisitOptions { TraceLevel = 1 }));
+
+        Assert.DoesNotContain("dryRun", _mockHandler.Requests[0].RequestUri!.Query);
+        Assert.Contains("tracelevel=1", _mockHandler.Requests[0].RequestUri!.Query);
     }
 
     // --- Helpers ---

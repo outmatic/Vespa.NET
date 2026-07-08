@@ -8,20 +8,36 @@ namespace Vespa.Documents;
 public interface IDocumentOperations
 {
     /// <summary>
-    /// Insert or update a document
+    /// Insert or replace a document.
     /// </summary>
+    /// <param name="documentId">Bare user-specified ID or full Vespa document ID
+    /// (<c>id:ns:type:kv:user</c>). Full IDs are parsed structurally: <c>g=</c>/<c>n=</c>
+    /// location selectors route to the group/number path levels, and a namespace or
+    /// document type mismatch with the operation's target throws <see cref="ArgumentException"/>.</param>
+    /// <param name="document">The document fields.</param>
+    /// <param name="documentType">Document type (schema name).</param>
+    /// <param name="namespace">Vespa namespace; falls back to <c>VespaClientOptions.DefaultNamespace</c>.</param>
+    /// <param name="condition">Optional test-and-set condition (HTTP 412 → <c>VespaConditionNotMetException</c>).</param>
+    /// <param name="create">When <see langword="true"/> together with <paramref name="condition"/>,
+    /// the put applies even when the document does not exist (conditional put with create,
+    /// Vespa ≥ 8.178). Maps to the <c>create</c> query parameter.</param>
+    /// <param name="requestOptions">Optional Vespa-level parameters.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     Task<VespaResponse> PutAsync<T>(
         string documentId,
         T document,
         string documentType,
         string? @namespace = null,
         string? condition = null,
+        bool create = false,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default
     ) where T : class;
 
     /// <summary>
-    /// Get a document by ID
+    /// Get a document by ID. Full Vespa document IDs are routed structurally
+    /// (see <see cref="PutAsync{T}"/>). Set <c>DocumentRequestOptions.Cluster</c> to
+    /// target a specific content cluster.
     /// </summary>
     Task<VespaDocument<T>?> GetAsync<T>(
         string documentId,
@@ -93,6 +109,7 @@ public interface IDocumentOperations
     /// <summary>
     /// Put a document addressed by string group name and local document ID.
     /// Maps to <c>POST /document/v1/{namespace}/{type}/group/{group}/{lid}</c>.
+    /// <paramref name="create"/> enables conditional put with create (see <see cref="PutAsync{T}"/>).
     /// See <see cref="GetByGroupAsync{T}"/> for applicability notes.
     /// </summary>
     Task<VespaResponse> PutByGroupAsync<T>(
@@ -102,6 +119,7 @@ public interface IDocumentOperations
         string documentType,
         string? @namespace = null,
         string? condition = null,
+        bool create = false,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default
     ) where T : class;
@@ -109,6 +127,7 @@ public interface IDocumentOperations
     /// <summary>
     /// Put a document addressed by integer number bucket and local document ID.
     /// Maps to <c>POST /document/v1/{namespace}/{type}/number/{number}/{lid}</c>.
+    /// <paramref name="create"/> enables conditional put with create (see <see cref="PutAsync{T}"/>).
     /// </summary>
     Task<VespaResponse> PutByNumberAsync<T>(
         long number,
@@ -117,6 +136,7 @@ public interface IDocumentOperations
         string documentType,
         string? @namespace = null,
         string? condition = null,
+        bool create = false,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default
     ) where T : class;
@@ -277,49 +297,50 @@ public interface IDocumentOperations
     );
 
     /// <summary>
-    /// Iterate over all documents using JSONL streaming (<c>Accept: application/jsonl</c>).
-    /// More efficient than <see cref="VisitAsync{T}"/> for large result sets as it streams
-    /// one document per line without accumulating full pages in memory.
+    /// Iterate over all documents using JSONL streaming (<c>stream=true</c>,
+    /// <c>Accept: application/jsonl</c>). More efficient than <see cref="VisitAsync{T}"/>
+    /// for large result sets as it streams one document per line without accumulating
+    /// full pages in memory. Requires Vespa ≥ 8.593 (older versions answer with plain
+    /// JSON, which raises a <c>VespaException</c>).
+    /// <para>If a chunk ends with a continuation token (e.g. after a server-side visit
+    /// timeout), the client resumes automatically until the final continuation reports
+    /// completion; server-reported <c>message</c> errors surface as <c>VespaException</c>.</para>
+    /// <para><c>VisitOptions.WantedDocumentCount</c> is not sent on this path —
+    /// streaming makes it redundant.</para>
     /// </summary>
     IAsyncEnumerable<VespaDocument<T>> VisitJsonlAsync<T>(
         string documentType,
         string? selection = null,
         string? cluster = null,
         string? @namespace = null,
-        string? fieldSet = null,
-        int? wantedDocumentCount = null,
-        TimeSpan? timeout = null,
-        int? slices = null,
-        int? sliceId = null,
-        int? concurrency = null,
-        long? fromTimestamp = null,
-        long? toTimestamp = null,
-        bool? includeRemoves = null,
-        string? bucketSpace = null,
-        DocumentRequestOptions? requestOptions = null,
+        VisitOptions? options = null,
         CancellationToken cancellationToken = default
     ) where T : class;
 
     /// <summary>
     /// Iterate over all documents matching an optional selection, following
-    /// continuation tokens page by page.
+    /// continuation tokens page by page. Use <see cref="VisitOptions.Group"/> /
+    /// <see cref="VisitOptions.Number"/> to visit a single group/number bucket.
     /// </summary>
     IAsyncEnumerable<VespaDocument<T>> VisitAsync<T>(
         string documentType,
         string? selection = null,
         string? cluster = null,
         string? @namespace = null,
-        string? fieldSet = null,
-        int? wantedDocumentCount = null,
-        TimeSpan? timeout = null,
-        int? slices = null,
-        int? sliceId = null,
-        int? concurrency = null,
-        long? fromTimestamp = null,
-        long? toTimestamp = null,
-        bool? includeRemoves = null,
-        string? bucketSpace = null,
-        DocumentRequestOptions? requestOptions = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default
+    ) where T : class;
+
+    /// <summary>
+    /// Iterate over all documents across all namespaces and document types stored in
+    /// <paramref name="cluster"/> (root-level visiting, <c>GET /document/v1/</c>).
+    /// The cluster is mandatory at this level. <see cref="VisitOptions.Group"/> /
+    /// <see cref="VisitOptions.Number"/> are not supported here.
+    /// </summary>
+    IAsyncEnumerable<VespaDocument<T>> VisitAllAsync<T>(
+        string cluster,
+        string? selection = null,
+        VisitOptions? options = null,
         CancellationToken cancellationToken = default
     ) where T : class;
 }

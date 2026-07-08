@@ -38,7 +38,15 @@ public sealed record DocumentRequestOptions
     public TimeSpan? Timeout { get; init; }
 
     /// <summary>
+    /// Content cluster to read from. Maps to the <c>cluster</c> query parameter.
+    /// Only forwarded on single-document GET operations (where Vespa documents it);
+    /// it is NOT emitted by <see cref="ToQueryParams"/> and is ignored on writes.
+    /// </summary>
+    public string? Cluster { get; init; }
+
+    /// <summary>
     /// Builds query parameter tuples for use in URL construction.
+    /// <see cref="Cluster"/> is NOT surfaced here — GET operations forward it explicitly.
     /// </summary>
     public IEnumerable<(string Key, string? Value)> ToQueryParams()
     {
@@ -51,6 +59,6 @@ public sealed record DocumentRequestOptions
         if (DryRun)
             yield return ("dryRun", "true");
         if (Timeout.HasValue)
-            yield return ("timeout", $"{(long)Timeout.Value.TotalMilliseconds}ms");
+            yield return ("timeout", VespaQueryValues.ToMilliseconds(Timeout.Value));
     }
 }

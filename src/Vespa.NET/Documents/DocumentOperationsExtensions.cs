@@ -9,16 +9,20 @@ namespace Vespa.Documents;
 /// </summary>
 public static class DocumentOperationsExtensions
 {
-    /// <summary>Insert or replace — document type and namespace inferred from <c>[VespaDocument]</c>.</summary>
+    /// <summary>
+    /// Insert or replace — document type and namespace inferred from <c>[VespaDocument]</c>.
+    /// <paramref name="create"/> enables conditional put with create (Vespa ≥ 8.178).
+    /// </summary>
     public static Task<VespaResponse> PutAsync<T>(
         this IDocumentOperations ops,
         string documentId,
         T document,
         string? condition = null,
+        bool create = false,
         CancellationToken cancellationToken = default) where T : class
     {
         var (docType, ns) = VespaDocumentMeta.For<T>();
-        return ops.PutAsync(documentId, document, docType, ns, condition, requestOptions: null, cancellationToken: cancellationToken);
+        return ops.PutAsync(documentId, document, docType, ns, condition, create, requestOptions: null, cancellationToken: cancellationToken);
     }
 
     /// <summary>Get — document type and namespace inferred from <c>[VespaDocument]</c>.</summary>
@@ -270,21 +274,26 @@ public static class DocumentOperationsExtensions
         this IDocumentOperations ops,
         string? selection = null,
         string? cluster = null,
-        string? fieldSet = null,
-        int? wantedDocumentCount = null,
-        TimeSpan? timeout = null,
-        int? slices = null,
-        int? sliceId = null,
-        int? concurrency = null,
-        long? fromTimestamp = null,
-        long? toTimestamp = null,
-        bool? includeRemoves = null,
-        string? bucketSpace = null,
+        VisitOptions? options = null,
         CancellationToken cancellationToken = default) where T : class
     {
         var (docType, ns) = VespaDocumentMeta.For<T>();
-        return ops.VisitAsync<T>(docType, selection, cluster, ns, fieldSet, wantedDocumentCount, timeout,
-            slices, sliceId, concurrency, fromTimestamp, toTimestamp, includeRemoves, bucketSpace, requestOptions: null, cancellationToken: cancellationToken);
+        return ops.VisitAsync<T>(docType, selection, cluster, ns, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Visit all documents via JSONL streaming — document type and namespace inferred
+    /// from <c>[VespaDocument]</c>. See <see cref="IDocumentOperations.VisitJsonlAsync{T}"/>.
+    /// </summary>
+    public static IAsyncEnumerable<VespaDocument<T>> VisitJsonlAsync<T>(
+        this IDocumentOperations ops,
+        string? selection = null,
+        string? cluster = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        var (docType, ns) = VespaDocumentMeta.For<T>();
+        return ops.VisitJsonlAsync<T>(docType, selection, cluster, ns, options, cancellationToken);
     }
 
     /// <summary>

@@ -172,14 +172,14 @@ public class CrudAdvancedE2ETests(VespaFixture fixture)
             await fixture.Client.Documents.DeleteAsync<TestProduct>(id);
     }
 
-    // ── Selection-op streaming (stream=true) ─────────────────────────────────
+    // ── Selection-op documentCount aggregation ───────────────────────────────
 
     [Fact]
-    public async Task UpdateBySelection_WithStream_AppliesToAllMatchingDocuments()
+    public async Task UpdateBySelection_ReportsDocumentCountAcrossChunks()
     {
         if (!Enabled) return;
 
-        var category = $"stream-upd-{Guid.NewGuid():N}";
+        var category = $"count-upd-{Guid.NewGuid():N}";
         var ids = new List<string>();
         for (int i = 0; i < 4; i++)
         {
@@ -187,7 +187,7 @@ public class CrudAdvancedE2ETests(VespaFixture fixture)
             ids.Add(id);
             await fixture.Client.Documents.PutAsync(id, new TestProduct
             {
-                Name = $"STR-{i}",
+                Name = $"CNT-{i}",
                 Price = 1,
                 Category = category
             });
@@ -197,10 +197,12 @@ public class CrudAdvancedE2ETests(VespaFixture fixture)
         var result = await fixture.Client.Documents.UpdateBySelectionAsync(
             $"product.category == \"{category}\"",
             new Dictionary<string, FieldOperation> { ["price"] = FieldOp.Assign(55.0) },
-            "product", @namespace: "test", cluster: "content",
-            requestOptions: new SelectionRequestOptions { Stream = true });
+            "product", @namespace: "test", cluster: "content");
 
         Assert.True(result.IsSuccess);
+        // The plain-JSON selection response carries documentCount per chunk;
+        // the client sums it across continuations.
+        Assert.Equal(4, result.DocumentCount);
         await Task.Delay(2000);
 
         foreach (var id in ids)
