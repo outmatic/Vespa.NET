@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Moq;
 using Vespa;
 using Vespa.Documents;
@@ -748,7 +749,8 @@ public class FeedOperationsTests
 
         var completed = await Task.WhenAny(feedTask, Task.Delay(TimeSpan.FromSeconds(10)));
         Assert.Same(feedTask, completed);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => feedTask);
+        var ex = await Assert.ThrowsAsync<VespaFeedException>(() => feedTask);
+        Assert.IsType<InvalidOperationException>(ex.InnerException);
     }
 
     [Fact]
@@ -786,8 +788,11 @@ public class FeedOperationsTests
         Assert.NotSame(feedTask, earlyWinner);
 
         releaseOp.SetResult();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => feedTask);
+        var ex = await Assert.ThrowsAsync<VespaFeedException>(() => feedTask);
+        Assert.IsType<InvalidOperationException>(ex.InnerException);
         Assert.True(opCompleted);
+        // The buffered document was drained and its outcome is visible in the partial result
+        Assert.Equal(1, ex.PartialResult.SuccessCount);
     }
 
     #endregion
@@ -935,6 +940,333 @@ public class FeedOperationsTests
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             _feedOps.BulkUpdateAsync(updates, "music", maxConcurrency: 0));
+    }
+
+    #endregion
+
+    #region Pipeline fault → VespaFeedException (E1, E7)
+
+    [Fact]
+    public async Task FeedAsync_PipelineFault_ThrowsVespaFeedExceptionCarryingPartialResult()
+    {
+        SetupPutSuccess();
+
+        var seen = 0;
+        var ex = await Assert.ThrowsAsync<VespaFeedException>(() =>
+            _feedOps.FeedAsync(GenerateDocuments(10), "testdoc", maxConcurrency: 1,
+                onProgress: _ =>
+                {
+                    if (Interlocked.Increment(ref seen) == 3)
+                        throw new InvalidOperationException("boom");
+                }));
+
+        Assert.IsType<InvalidOperationException>(ex.InnerException);
+        Assert.Equal(3, ex.PartialResult.SuccessCount);
+        Assert.Equal(0, ex.PartialResult.FailureCount);
+        Assert.True(ex.PartialResult.Duration > TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task FeedAsync_MultipleRealFaults_AggregatesInsideVespaFeedException()
+    {
+        SetupPutSuccess();
+
+        // Two consumers each fault with a real exception at the same time
+        using var barrier = new Barrier(2);
+        var ex = await Assert.ThrowsAsync<VespaFeedException>(() =>
+            _feedOps.FeedAsync(GenerateDocuments(2), "testdoc", maxConcurrency: 2,
+                onProgress: p =>
+                {
+                    barrier.SignalAndWait(TimeSpan.FromSeconds(5));
+                    throw new InvalidOperationException($"boom {p.LastDocumentId}");
+                }));
+
+        var aggregate = Assert.IsType<AggregateException>(ex.InnerException);
+        Assert.Equal(2, aggregate.InnerExceptions.Count);
+        Assert.All(aggregate.InnerExceptions, e => Assert.IsType<InvalidOperationException>(e));
+    }
+
+    [Fact]
+    public async Task FeedAsync_CallerCancellation_SurfacesOperationCanceledNotFeedException()
+    {
+        using var cts = new CancellationTokenSource();
+
+        _mockDocOps
+            .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, object, string, string?, string?, bool, DocumentRequestOptions?, CancellationToken>((_, _, _, _, _, _, _, ct) =>
+            {
+                cts.Cancel();
+                return Task.FromCanceled<VespaResponse>(ct);
+            });
+
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            _feedOps.FeedAsync(GenerateDocuments(3), "testdoc", maxConcurrency: 1, cancellationToken: cts.Token));
+        Assert.IsNotType<VespaFeedException>(ex);
+    }
+
+    #endregion
+
+    #region Feed-level retry (E2)
+
+    private FeedOperations CreateFeedOps(
+        bool enableRetry = true, int maxRetryAttempts = 3, int? maxRetainedErrors = null) =>
+        new(_mockDocOps.Object, new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            DefaultNamespace = "test",
+            EnableRetry = enableRetry,
+            MaxRetryAttempts = maxRetryAttempts,
+            FeedRetryBaseDelay = TimeSpan.FromMilliseconds(1),
+            FeedMaxRetainedErrors = maxRetainedErrors ?? FeedResult.DefaultMaxRetainedErrors
+        });
+
+    private void SetupPutSuccess() =>
+        _mockDocOps
+            .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
+
+    private void SetupPut(Func<Task<VespaResponse>> factory) =>
+        _mockDocOps
+            .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .Returns(factory);
+
+    [Fact]
+    public async Task BulkPutAsync_429WithRetryAfter_IsRetriedThenSucceeds()
+    {
+        var feedOps = CreateFeedOps();
+        var calls = 0;
+        SetupPut(() => Interlocked.Increment(ref calls) == 1
+            ? throw new VespaTooManyRequestsException("throttled", retryAfter: TimeSpan.FromMilliseconds(75))
+            : Task.FromResult(new VespaResponse { IsSuccess = true, StatusCode = 200 }));
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = await feedOps.BulkPutAsync(
+            [TestDataFactory.CreateFeedDocument("doc-1", new { })], "testdoc");
+        stopwatch.Stop();
+
+        Assert.Equal(1, result.SuccessCount);
+        Assert.Equal(0, result.FailureCount);
+        Assert.Empty(result.Errors);
+        Assert.Equal(2, calls);
+        // The server's Retry-After (75 ms) must have been honored before the second attempt
+        Assert.True(stopwatch.ElapsedMilliseconds >= 50,
+            $"Expected Retry-After to delay the retry, elapsed only {stopwatch.ElapsedMilliseconds}ms");
+    }
+
+    [Fact]
+    public async Task FeedAsync_503_IsRetriedThenSucceeds()
+    {
+        var feedOps = CreateFeedOps();
+        var calls = 0;
+        SetupPut(() => Interlocked.Increment(ref calls) == 1
+            ? throw new VespaServerException("overloaded", statusCode: 503)
+            : Task.FromResult(new VespaResponse { IsSuccess = true, StatusCode = 200 }));
+
+        var result = await feedOps.FeedAsync(GenerateDocuments(1), "testdoc");
+
+        Assert.Equal(1, result.SuccessCount);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task FeedAsync_RetryDisabled_SingleAttempt()
+    {
+        var feedOps = CreateFeedOps(enableRetry: false);
+        var calls = 0;
+        SetupPut(() =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new VespaTooManyRequestsException("throttled");
+        });
+
+        var result = await feedOps.FeedAsync(GenerateDocuments(1), "testdoc");
+
+        Assert.Equal(1, result.FailureCount);
+        Assert.Equal(1, calls);
+        Assert.Equal(429, result.Errors.First().StatusCode);
+    }
+
+    [Fact]
+    public async Task FeedAsync_NonRetryableStatus_IsNotRetried()
+    {
+        var feedOps = CreateFeedOps();
+        var calls = 0;
+        SetupPut(() =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new VespaServerException("internal error", statusCode: 500);
+        });
+
+        var result = await feedOps.FeedAsync(GenerateDocuments(1), "testdoc");
+
+        Assert.Equal(1, result.FailureCount);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task FeedAsync_RetriesExhausted_RecordsSingleFailure()
+    {
+        var feedOps = CreateFeedOps(maxRetryAttempts: 2);
+        var calls = 0;
+        SetupPut(() =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new VespaTooManyRequestsException("throttled");
+        });
+
+        var result = await feedOps.FeedAsync(GenerateDocuments(1), "testdoc");
+
+        Assert.Equal(1, result.FailureCount);
+        Assert.Single(result.Errors);
+        Assert.Equal(3, calls); // 1 initial + 2 retries
+    }
+
+    #endregion
+
+    #region Error cap (E5)
+
+    [Fact]
+    public async Task BulkPutAsync_ErrorCap_TruncatesRetainedErrorsButCountsAllFailures()
+    {
+        var feedOps = CreateFeedOps(maxRetainedErrors: 5);
+        var documents = Enumerable.Range(0, 20)
+            .Select(i => TestDataFactory.CreateFeedDocument($"doc-{i}", new { value = i }))
+            .ToList();
+
+        SetupPut(() => throw new VespaException("Test error", statusCode: 400));
+
+        var result = await feedOps.BulkPutAsync(documents, "testdoc", maxConcurrency: 4);
+
+        Assert.Equal(20, result.TotalDocuments);
+        Assert.Equal(20, result.FailureCount);
+        Assert.Equal(5, result.Errors.Count);
+        Assert.True(result.ErrorsTruncated);
+        Assert.False(result.IsSuccess);
+    }
+
+    [Fact]
+    public void FeedResult_UnderCap_ErrorsTruncatedIsFalse()
+    {
+        var result = new FeedResult(maxRetainedErrors: 5);
+        for (var i = 0; i < 5; i++)
+        {
+            result.IncrementFailure();
+            result.AddError(new FeedError { DocumentId = $"doc-{i}" });
+        }
+
+        Assert.Equal(5, result.Errors.Count);
+        Assert.False(result.ErrorsTruncated);
+    }
+
+    #endregion
+
+    #region Ignored fields (E6)
+
+    [Fact]
+    public async Task BulkPutAsync_ResponseWithIgnoredFields_SetsHadIgnoredFields()
+    {
+        var documents = new[]
+        {
+            TestDataFactory.CreateFeedDocument("doc-1", new { }),
+            TestDataFactory.CreateFeedDocument("doc-2", new { }),
+            TestDataFactory.CreateFeedDocument("doc-3", new { })
+        };
+
+        _mockDocOps
+            .Setup(d => d.PutAsync(It.IsAny<string>(), It.IsAny<object>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200 });
+        _mockDocOps
+            .Setup(d => d.PutAsync("doc-2", It.IsAny<object>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<DocumentRequestOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VespaResponse { IsSuccess = true, StatusCode = 200, HadIgnoredFields = true });
+
+        var result = await _feedOps.BulkPutAsync(documents, "testdoc");
+
+        Assert.Equal(3, result.SuccessCount);
+        Assert.True(result.HadIgnoredFields);
+    }
+
+    [Fact]
+    public async Task BulkPutAsync_NoIgnoredFields_FlagStaysFalse()
+    {
+        SetupPutSuccess();
+
+        var result = await _feedOps.BulkPutAsync(
+            [TestDataFactory.CreateFeedDocument("doc-1", new { })], "testdoc");
+
+        Assert.False(result.HadIgnoredFields);
+    }
+
+    #endregion
+
+    #region Monotonic progress (E4)
+
+    [Fact]
+    public async Task FeedAsync_ProgressIsMonotonicUnderConcurrency()
+    {
+        SetupPut(async () =>
+        {
+            await Task.Delay(1);
+            return new VespaResponse { IsSuccess = true };
+        });
+
+        var maxProcessed = 0;
+        var violations = 0;
+        var invocations = 0;
+
+        var result = await _feedOps.FeedAsync(GenerateDocuments(100), "testdoc",
+            maxConcurrency: 8,
+            onProgress: p =>
+            {
+                Interlocked.Increment(ref invocations);
+
+                // Coherence: outcome counters are read after the shared increment
+                if (p.SuccessCount + p.FailureCount < p.ProcessedCount)
+                    Interlocked.Increment(ref violations);
+
+                // Interlocked max: ProcessedCount must never go backwards
+                int observed;
+                while ((observed = Volatile.Read(ref maxProcessed)) < p.ProcessedCount &&
+                       Interlocked.CompareExchange(ref maxProcessed, p.ProcessedCount, observed) != observed)
+                {
+                }
+            });
+
+        Assert.Equal(100, result.SuccessCount);
+        Assert.Equal(0, violations);
+        Assert.Equal(100, invocations);
+        Assert.Equal(100, maxProcessed);
+    }
+
+    #endregion
+
+    #region Synchronous argument validation + capacity overflow (E8, E9)
+
+    [Fact]
+    public void FeedAsync_WithInvalidArguments_ThrowsSynchronously()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => { _ = _feedOps.FeedAsync(GenerateDocuments(1), "testdoc", maxConcurrency: 0); });
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => { _ = _feedOps.FeedAsync(GenerateDocuments(1), "testdoc", boundedCapacity: 0); });
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => { _ = _feedOps.BulkPutAsync([TestDataFactory.CreateFeedDocument("d", new { })], "testdoc", maxConcurrency: -1); });
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => { _ = _feedOps.BulkDeleteAsync(["a"], "testdoc", maxConcurrency: 0); });
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => { _ = _feedOps.BulkUpdateAsync([MakeUpdate("doc-1")], "testdoc", maxConcurrency: 0); });
+    }
+
+    [Fact]
+    public void ComputeDefaultCapacity_ClampsInsteadOfOverflowing()
+    {
+        Assert.Equal(20, FeedOperations.ComputeDefaultCapacity(10));
+        Assert.Equal(int.MaxValue, FeedOperations.ComputeDefaultCapacity(int.MaxValue));
+        Assert.Equal(int.MaxValue, FeedOperations.ComputeDefaultCapacity(int.MaxValue / 2 + 1));
     }
 
     #endregion

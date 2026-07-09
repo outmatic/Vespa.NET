@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Vespa.Documents;
 using Vespa.Feed;
 using Vespa.IntegrationTests.Fixtures;
+using Vespa.Models;
 using Xunit;
 
 namespace Vespa.IntegrationTests.E2E;

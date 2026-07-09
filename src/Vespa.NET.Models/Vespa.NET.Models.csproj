@@ -14,4 +14,10 @@
     <IsPackable>true</IsPackable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The feed pipeline (Vespa.NET) populates FeedResult via internal mutators. -->
+    <InternalsVisibleTo Include="Vespa.NET" />
+    <InternalsVisibleTo Include="Vespa.NET.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -15,6 +15,8 @@ public sealed partial class FeedOperations(
     VespaClientOptions options,
     ILogger? logger = null) : IFeedOperations
 {
+    private static readonly TimeSpan MaxRetryBackoff = TimeSpan.FromSeconds(30);
+
     private readonly IDocumentOperations _documentOperations =
         documentOperations ?? throw new ArgumentNullException(nameof(documentOperations));
     private readonly VespaClientOptions _options =
@@ -30,11 +32,12 @@ public sealed partial class FeedOperations(
     {
         ArgumentNullException.ThrowIfNull(documents);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrency);
 
-        return FeedAsync(
+        return ExecutePutPipelineAsync(
             documents.ToAsyncEnumerable(cancellationToken), documentType, @namespace,
-            maxConcurrency, boundedCapacity: maxConcurrency * 2,
-            onProgress: null, cancellationToken: cancellationToken);
+            maxConcurrency, ComputeDefaultCapacity(maxConcurrency),
+            onProgress: null, cancellationToken);
     }
 
     public Task<FeedResult> BulkUpdateAsync(
@@ -47,6 +50,7 @@ public sealed partial class FeedOperations(
     {
         ArgumentNullException.ThrowIfNull(updates);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrency);
 
         var feedDocs = updates.Select(u => new FeedDocument<Dictionary<string, FieldOperation>>
         {
@@ -57,15 +61,12 @@ public sealed partial class FeedOperations(
 
         return ExecutePipelineAsync(
             feedDocs.ToAsyncEnumerable(cancellationToken), documentType, @namespace,
-            maxConcurrency, maxConcurrency * 2,
-            async (doc, ct) =>
-            {
-                await _documentOperations.UpdateFieldsAsync(
-                    doc.Id, doc.Fields, documentType, @namespace,
-                    createIfMissing: createIfMissing,
-                    condition: doc.Condition,
-                    cancellationToken: ct);
-            },
+            maxConcurrency, ComputeDefaultCapacity(maxConcurrency),
+            (doc, ct) => _documentOperations.UpdateFieldsAsync(
+                doc.Id, doc.Fields, documentType, @namespace,
+                createIfMissing: createIfMissing,
+                condition: doc.Condition,
+                cancellationToken: ct),
             (docId, ex) => { if (_logger != null) LogDocumentUpdateFailed(_logger, docId, ex); },
             onProgress: null, cancellationToken);
     }
@@ -79,17 +80,19 @@ public sealed partial class FeedOperations(
     {
         ArgumentNullException.ThrowIfNull(documentIds);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrency);
 
         var docs = documentIds.Select(id => new FeedDocument<object> { Id = id, Fields = null! });
 
         return ExecutePipelineAsync(
             docs.ToAsyncEnumerable(cancellationToken), documentType, @namespace,
-            maxConcurrency, maxConcurrency * 2,
+            maxConcurrency, ComputeDefaultCapacity(maxConcurrency),
             async (doc, ct) =>
             {
-                await _documentOperations.DeleteAsync(
+                var response = await _documentOperations.DeleteAsync(
                     doc.Id, documentType, @namespace, cancellationToken: ct);
                 if (_logger != null) LogDocumentDeleted(_logger, doc.Id);
+                return response;
             },
             (docId, ex) => { if (_logger != null) LogDocumentDeleteFailed(_logger, docId, ex); },
             onProgress: null, cancellationToken);
@@ -106,20 +109,44 @@ public sealed partial class FeedOperations(
     {
         ArgumentNullException.ThrowIfNull(documents);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrency);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(boundedCapacity);
 
+        return ExecutePutPipelineAsync(
+            documents, documentType, @namespace,
+            maxConcurrency, boundedCapacity, onProgress, cancellationToken);
+    }
+
+    private Task<FeedResult> ExecutePutPipelineAsync<T>(
+        IAsyncEnumerable<FeedDocument<T>> documents,
+        string documentType,
+        string? @namespace,
+        int maxConcurrency,
+        int boundedCapacity,
+        Action<FeedProgress>? onProgress,
+        CancellationToken cancellationToken) where T : class
+    {
         return ExecutePipelineAsync(
             documents, documentType, @namespace,
             maxConcurrency, boundedCapacity,
             async (doc, ct) =>
             {
-                await _documentOperations.PutAsync(
+                var response = await _documentOperations.PutAsync(
                     doc.Id, doc.Fields, documentType, @namespace,
                     condition: doc.Condition, cancellationToken: ct);
                 if (_logger != null) LogDocumentFed(_logger, doc.Id, documentType);
+                return response;
             },
             (docId, ex) => { if (_logger != null) LogDocumentFeedFailed(_logger, docId, ex); },
             onProgress, cancellationToken);
     }
+
+    /// <summary>
+    /// Default channel capacity for the bulk wrappers: twice the consumer count,
+    /// clamped so the multiplication cannot overflow.
+    /// </summary>
+    internal static int ComputeDefaultCapacity(int maxConcurrency) =>
+        (int)Math.Min(2L * maxConcurrency, int.MaxValue);
 
     // ── Core pipeline engine ─────────────────────────────────────────────────
 
@@ -129,14 +156,11 @@ public sealed partial class FeedOperations(
         string? @namespace,
         int maxConcurrency,
         int boundedCapacity,
-        Func<FeedDocument<T>, CancellationToken, Task> operation,
+        Func<FeedDocument<T>, CancellationToken, Task<VespaResponse>> operation,
         Action<string, Exception> onError,
         Action<FeedProgress>? onProgress,
         CancellationToken cancellationToken) where T : class
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrency);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(boundedCapacity);
-
         if (_logger != null) LogPipelineStart(_logger, maxConcurrency, boundedCapacity);
 
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.FeedPipeline);
@@ -150,7 +174,8 @@ public sealed partial class FeedOperations(
                 SingleWriter = true
             });
 
-        var result = new FeedResult();
+        var result = new FeedResult(_options.FeedMaxRetainedErrors);
+        var processedCount = 0;
         var stopwatch = Stopwatch.StartNew();
 
         // A consumer dying (e.g. a throwing onProgress callback) must unblock the
@@ -158,7 +183,10 @@ public sealed partial class FeedOperations(
         using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var pipelineToken = pipelineCts.Token;
 
-        // Producer: reads from IAsyncEnumerable, writes to bounded channel
+        // Producer: reads from IAsyncEnumerable, writes to bounded channel.
+        // On a source-enumeration fault the writer is still completed (not cancelled):
+        // already-buffered documents are drained by the consumers, and their outcomes
+        // are visible in the partial result carried by the VespaFeedException.
         async Task ProduceAsync()
         {
             var count = 0;
@@ -177,6 +205,33 @@ public sealed partial class FeedOperations(
             }
         }
 
+        // Per-document retry for Vespa's transient backpressure signals (429/503).
+        // The DI-registered HTTP handler may already retry transient responses; when both
+        // are active the handler retries first, and this loop re-sends the operation only
+        // after the handler has given up.
+        async Task<VespaResponse> ExecuteWithRetryAsync(FeedDocument<T> doc)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    return await operation(doc, pipelineToken);
+                }
+                catch (VespaException ex) when (
+                    _options.EnableRetry &&
+                    attempt < _options.MaxRetryAttempts &&
+                    IsRetryableFeedError(ex))
+                {
+                    var delay = ComputeRetryDelay(
+                        _options.FeedRetryBaseDelay, attempt,
+                        (ex as VespaTooManyRequestsException)?.RetryAfter);
+                    if (_logger != null)
+                        LogDocumentFeedRetry(_logger, doc.Id, attempt + 1, delay.TotalMilliseconds, ex);
+                    await Task.Delay(delay, pipelineToken);
+                }
+            }
+        }
+
         // Consumer: reads from channel and executes operation
         async Task ConsumeAsync()
         {
@@ -186,7 +241,9 @@ public sealed partial class FeedOperations(
                 {
                     try
                     {
-                        await operation(doc, pipelineToken);
+                        var response = await ExecuteWithRetryAsync(doc);
+                        if (response.HadIgnoredFields && result.MarkIgnoredFields() && _logger != null)
+                            LogIgnoredFields(_logger, doc.Id);
                         result.IncrementSuccess();
                     }
                     catch (OperationCanceledException) when (pipelineToken.IsCancellationRequested)
@@ -205,7 +262,11 @@ public sealed partial class FeedOperations(
                         onError(doc.Id, ex);
                     }
 
-                    onProgress?.Invoke(new FeedProgress(result.SuccessCount, result.FailureCount, doc.Id));
+                    // Single shared counter incremented once per outcome; success/failure are
+                    // read *after* the increment so SuccessCount + FailureCount >= ProcessedCount
+                    // holds within every snapshot and ProcessedCount is monotonic.
+                    var processed = Interlocked.Increment(ref processedCount);
+                    onProgress?.Invoke(new FeedProgress(processed, result.SuccessCount, result.FailureCount, doc.Id));
                 }
             }
             catch
@@ -225,17 +286,40 @@ public sealed partial class FeedOperations(
             // consumers with HTTP operations still in flight (and vice versa).
             await Task.WhenAll(allTasks);
         }
-        catch
+        catch (Exception whenAllException)
         {
-            // WhenAll surfaces the first task's exception; after a consumer fault the
-            // producer typically fails with the linked cancellation — prefer the real cause.
-            var realFault = allTasks
+            stopwatch.Stop();
+            result.Duration = stopwatch.Elapsed;
+
+            // Caller cancellation always surfaces as OperationCanceledException.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                if (whenAllException is OperationCanceledException)
+                    throw;
+                throw new OperationCanceledException(
+                    "The feed pipeline was canceled.", whenAllException, cancellationToken);
+            }
+
+            // WhenAll surfaces only the first task's exception; after a consumer fault the
+            // producer typically fails with the linked cancellation — prefer the real causes
+            // and aggregate when several tasks faulted independently.
+            var realFaults = allTasks
                 .Where(t => t.IsFaulted)
                 .SelectMany(t => t.Exception!.InnerExceptions)
-                .FirstOrDefault(e => e is not OperationCanceledException);
-            if (realFault is not null)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(realFault).Throw();
-            throw;
+                .Where(e => e is not OperationCanceledException)
+                .ToList();
+
+            Exception cause = realFaults switch
+            {
+                [] => whenAllException,
+                [var single] => single,
+                _ => new AggregateException(realFaults)
+            };
+
+            throw new VespaFeedException(
+                $"Feed pipeline faulted after {result.SuccessCount} succeeded and " +
+                $"{result.FailureCount} failed (see PartialResult): {cause.Message}",
+                result, cause);
         }
 
         stopwatch.Stop();
@@ -247,6 +331,24 @@ public sealed partial class FeedOperations(
             LogPipelineComplete(_logger, result.SuccessCount, result.TotalDocuments, stopwatch.ElapsedMilliseconds);
 
         return result;
+    }
+
+    /// <summary>429 (always transient backpressure) and 503 (overload/unavailable) are retryable.</summary>
+    private static bool IsRetryableFeedError(VespaException ex) =>
+        ex is VespaTooManyRequestsException or VespaServerException { StatusCode: 503 };
+
+    /// <summary>
+    /// Server-suggested <c>Retry-After</c> wins; otherwise exponential backoff
+    /// (base × 2^attempt, capped) with ±20% jitter.
+    /// </summary>
+    private static TimeSpan ComputeRetryDelay(TimeSpan baseDelay, int attempt, TimeSpan? retryAfter)
+    {
+        if (retryAfter is { } serverDelay && serverDelay > TimeSpan.Zero)
+            return serverDelay;
+
+        var exponential = baseDelay * Math.Pow(2, Math.Min(attempt, 10));
+        var capped = exponential > MaxRetryBackoff ? MaxRetryBackoff : exponential;
+        return capped * (0.8 + Random.Shared.NextDouble() * 0.4);
     }
 
     [LoggerMessage(203, LogLevel.Debug, "Fed document {DocumentId} [{DocType}]")]
@@ -269,6 +371,14 @@ public sealed partial class FeedOperations(
 
     [LoggerMessage(215, LogLevel.Information, "Feed pipeline complete: {Success}/{Total} in {ElapsedMs}ms")]
     static partial void LogPipelineComplete(ILogger logger, int success, int total, long elapsedMs);
+
+    [LoggerMessage(216, LogLevel.Warning,
+        "Retrying document {DocumentId} after transient failure (attempt {Attempt}, delay {DelayMs}ms)")]
+    static partial void LogDocumentFeedRetry(ILogger logger, string documentId, int attempt, double delayMs, Exception ex);
+
+    [LoggerMessage(217, LogLevel.Warning,
+        "Vespa ignored unknown fields during this feed (first seen on document {DocumentId}) — check for a document/schema mismatch")]
+    static partial void LogIgnoredFields(ILogger logger, string documentId);
 }
 
 /// <summary>

@@ -1,11 +1,28 @@
-using System.Collections.Concurrent;
 using Vespa.Models;
 
 namespace Vespa.Feed;
 
 /// <summary>
-/// Interface for bulk feed operations
+/// Interface for bulk feed operations.
 /// </summary>
+/// <remarks>
+/// <para><b>Failure semantics (all methods):</b> individual document failures are recorded in
+/// <see cref="FeedResult.Errors"/> (capped at <see cref="VespaClientOptions.FeedMaxRetainedErrors"/>;
+/// counts stay exact) and do not stop the feed. If the pipeline itself faults — the source
+/// enumeration throws, or a progress callback throws — a <see cref="VespaFeedException"/> is
+/// thrown carrying the partial <see cref="FeedResult"/>, with the original fault as its inner
+/// exception. Cancellation via the caller's token surfaces as
+/// <see cref="OperationCanceledException"/>.</para>
+/// <para><b>Retry semantics:</b> when <see cref="VespaClientOptions.EnableRetry"/> is set, each
+/// document operation that fails with HTTP 429 (<see cref="VespaTooManyRequestsException"/>,
+/// honoring its <see cref="VespaTooManyRequestsException.RetryAfter"/>) or HTTP 503
+/// (<see cref="VespaServerException"/>) is re-sent with exponential backoff and jitter, up to
+/// <see cref="VespaClientOptions.MaxRetryAttempts"/> extra attempts
+/// (base delay: <see cref="VespaClientOptions.FeedRetryBaseDelay"/>). Clients registered via DI
+/// additionally retry transient responses at the HTTP-handler level; when both are active the
+/// handler retries first, so each feed-level attempt may itself have been retried at the HTTP
+/// level.</para>
+/// </remarks>
 public interface IFeedOperations
 {
     /// <summary>
@@ -55,8 +72,18 @@ public interface IFeedOperations
     /// <param name="namespace">Optional namespace override.</param>
     /// <param name="maxConcurrency">Number of parallel HTTP/2 streams (default 64).</param>
     /// <param name="boundedCapacity">Channel buffer size for backpressure (default 256).</param>
-    /// <param name="onProgress">Optional callback invoked after each document (success or failure).</param>
+    /// <param name="onProgress">
+    /// Optional callback invoked after each document outcome (success or failure).
+    /// It is invoked <b>concurrently</b> from multiple consumer tasks — it must be thread-safe.
+    /// <see cref="FeedProgress.ProcessedCount"/> is unique and monotonically increasing per
+    /// invocation. A throwing callback faults the pipeline (see the interface remarks).
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <remarks>
+    /// If the source enumeration throws mid-feed, documents already buffered in the channel are
+    /// still sent before the fault surfaces — their outcomes are included in the partial
+    /// <see cref="FeedResult"/> carried by the resulting <see cref="VespaFeedException"/>.
+    /// </remarks>
     Task<FeedResult> FeedAsync<T>(
         IAsyncEnumerable<FeedDocument<T>> documents,
         string documentType,
@@ -103,42 +130,18 @@ public sealed record BulkFieldUpdate
 }
 
 /// <summary>
-/// Result of a bulk feed operation. Populated by the feed pipeline;
-/// read-only for consumers.
+/// Progress snapshot emitted by <see cref="IFeedOperations.FeedAsync{T}"/> after each document outcome.
 /// </summary>
-public sealed class FeedResult
-{
-    private readonly ConcurrentQueue<FeedError> _errors = new();
-    private int _successCount;
-    private int _failureCount;
-
-    public int TotalDocuments { get; internal set; }
-    public int SuccessCount => _successCount;
-    public int FailureCount => _failureCount;
-    public IReadOnlyCollection<FeedError> Errors => _errors;
-    public TimeSpan Duration { get; internal set; }
-
-    public bool IsSuccess => FailureCount == 0;
-    public double SuccessRate => TotalDocuments > 0 ? (double)SuccessCount / TotalDocuments : 0;
-
-    internal void IncrementSuccess() => Interlocked.Increment(ref _successCount);
-
-    internal void IncrementFailure() => Interlocked.Increment(ref _failureCount);
-
-    internal void AddError(FeedError error) => _errors.Enqueue(error);
-}
-
-/// <summary>
-/// Error details for a failed feed operation
-/// </summary>
-public sealed record FeedError
-{
-    public string DocumentId { get; init; } = string.Empty;
-    public string Message { get; init; } = string.Empty;
-    public int? StatusCode { get; init; }
-}
-
-/// <summary>
-/// Progress snapshot emitted by <see cref="IFeedOperations.FeedAsync{T}"/> after each document.
-/// </summary>
-public sealed record FeedProgress(int SuccessCount, int FailureCount, string LastDocumentId);
+/// <param name="ProcessedCount">
+/// Number of documents whose outcome had been recorded when this snapshot was taken —
+/// unique and monotonically increasing across invocations (success + failure).
+/// </param>
+/// <param name="SuccessCount">Successful documents so far.</param>
+/// <param name="FailureCount">Failed documents so far.</param>
+/// <param name="LastDocumentId">The document this snapshot was emitted for.</param>
+/// <remarks>
+/// Snapshots are emitted concurrently, so observed callback order may not match
+/// <paramref name="ProcessedCount"/> order; within a snapshot,
+/// <c>SuccessCount + FailureCount &gt;= ProcessedCount</c> always holds.
+/// </remarks>
+public sealed record FeedProgress(int ProcessedCount, int SuccessCount, int FailureCount, string LastDocumentId);

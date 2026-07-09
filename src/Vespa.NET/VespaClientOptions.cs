@@ -148,14 +148,36 @@ public sealed class VespaClientOptions
     public int MaxConnectionsPerServer { get; init; } = 100;
 
     /// <summary>
-    /// Enable automatic retry on transient failures
+    /// Enable automatic retry on transient failures.
+    /// <para>Applies at two levels: clients registered via DI (<c>AddVespaClient</c>) install an
+    /// HTTP-handler resilience pipeline that retries transient responses before they surface,
+    /// and the feed pipeline (<see cref="Feed.IFeedOperations"/>) additionally re-sends
+    /// individual document operations that fail with HTTP 429 or 503. When both are active the
+    /// handler retries first — each feed-level attempt may itself have been retried at the
+    /// HTTP level.</para>
     /// </summary>
     public bool EnableRetry { get; init; } = true;
 
     /// <summary>
-    /// Maximum number of retry attempts
+    /// Maximum number of retry attempts (per level — HTTP handler and feed pipeline each
+    /// honor this bound independently; see <see cref="EnableRetry"/>).
     /// </summary>
     public int MaxRetryAttempts { get; init; } = 3;
+
+    /// <summary>
+    /// Base delay for feed-level per-document retries on HTTP 429/503. The actual delay is
+    /// the server's <c>Retry-After</c> when present, otherwise exponential backoff from this
+    /// base with jitter, capped at 30 seconds. See <see cref="Feed.IFeedOperations"/>.
+    /// </summary>
+    public TimeSpan FeedRetryBaseDelay { get; init; } = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>
+    /// Maximum number of per-document <see cref="Models.FeedError"/> entries retained on
+    /// <see cref="Models.FeedResult.Errors"/> (first errors win). Failure counts stay exact
+    /// regardless; <see cref="Models.FeedResult.ErrorsTruncated"/> reports whether entries
+    /// were dropped.
+    /// </summary>
+    public int FeedMaxRetainedErrors { get; init; } = Models.FeedResult.DefaultMaxRetainedErrors;
 
     /// <summary>
     /// Enable circuit breaker pattern for fault tolerance
@@ -223,6 +245,8 @@ public sealed class VespaClientOptions
 
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConnectionsPerServer);
         ArgumentOutOfRangeException.ThrowIfNegative(MaxRetryAttempts);
+        ThrowIfTimeSpanZeroOrNegative(FeedRetryBaseDelay, nameof(FeedRetryBaseDelay));
+        ArgumentOutOfRangeException.ThrowIfNegative(FeedMaxRetainedErrors);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CircuitBreakerFailureThreshold);
         // Polly's HttpCircuitBreakerStrategyOptions requires MinimumThroughput >= 2;
         // validating here surfaces the error at registration instead of on the first request.
