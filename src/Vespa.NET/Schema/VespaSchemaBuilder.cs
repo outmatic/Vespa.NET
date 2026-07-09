@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Reflection;
 using System.Security;
@@ -368,20 +369,20 @@ public static class VespaSchemaBuilder
         {
             sb.Append("    <nodes>\n");
             for (var i = 0; i < opts.NodeCount; i++)
-                sb.Append($"      <node hostalias=\"node{i + 1}\"/>\n");
+                sb.Append(CultureInfo.InvariantCulture, $"      <node hostalias=\"node{i + 1}\"/>\n");
             sb.Append("    </nodes>\n");
         }
 
         sb.Append("  </container>\n");
         sb.Append("  <content id=\"content\" version=\"1.0\">\n");
-        sb.Append($"    <redundancy>{opts.Redundancy}</redundancy>\n");
+        sb.Append(CultureInfo.InvariantCulture, $"    <redundancy>{opts.Redundancy}</redundancy>\n");
 
         // Any per-document selection implies garbage collection: documents no longer
         // matching their selection are removed by the content nodes.
         var garbageCollection = docInfos.Any(d => d.Selection is not null)
             ? " garbage-collection=\"true\""
             : "";
-        sb.Append($"    <documents{garbageCollection}>\n");
+        sb.Append(CultureInfo.InvariantCulture, $"    <documents{garbageCollection}>\n");
 
         foreach (var (docType, global, docMode, selection) in docInfos)
         {
@@ -393,13 +394,13 @@ public static class VespaSchemaBuilder
             };
             var globalAttr = global ? " global=\"true\"" : "";
             var selectionAttr = selection is not null ? $" selection=\"{XmlEscape(selection)}\"" : "";
-            sb.Append($"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}{selectionAttr}/>\n");
+            sb.Append(CultureInfo.InvariantCulture, $"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}{selectionAttr}/>\n");
         }
 
         sb.Append("    </documents>\n");
         sb.Append("    <nodes>\n");
         for (var i = 0; i < opts.NodeCount; i++)
-            sb.Append($"      <node hostalias=\"node{i + 1}\" distribution-key=\"{i}\"/>\n");
+            sb.Append(CultureInfo.InvariantCulture, $"      <node hostalias=\"node{i + 1}\" distribution-key=\"{i}\"/>\n");
         sb.Append("    </nodes>\n");
 
         if (opts.ContentOptions is { Count: > 0 })
@@ -422,8 +423,8 @@ public static class VespaSchemaBuilder
         {
             var alias = $"node{i + 1}";
             var hostName = opts.HostNames is not null ? opts.HostNames[i] : alias;
-            sb.Append($"  <host name=\"{XmlEscape(hostName)}\">\n");
-            sb.Append($"    <alias>{XmlEscape(alias)}</alias>\n");
+            sb.Append(CultureInfo.InvariantCulture, $"  <host name=\"{XmlEscape(hostName)}\">\n");
+            sb.Append(CultureInfo.InvariantCulture, $"    <alias>{XmlEscape(alias)}</alias>\n");
             sb.Append("  </host>\n");
         }
 

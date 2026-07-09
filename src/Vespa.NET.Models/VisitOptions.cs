@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Vespa.Models;
 
 /// <summary>
@@ -113,25 +115,25 @@ public sealed record VisitOptions
         if (FieldSet is not null)
             yield return ("fieldSet", FieldSet);
         if (includeWantedDocumentCount && WantedDocumentCount.HasValue)
-            yield return ("wantedDocumentCount", WantedDocumentCount.Value.ToString());
+            yield return ("wantedDocumentCount", WantedDocumentCount.Value.ToString(CultureInfo.InvariantCulture));
         if (Timeout.HasValue)
             yield return ("timeout", VespaQueryValues.ToMilliseconds(Timeout.Value));
         if (Slices.HasValue)
-            yield return ("slices", Slices.Value.ToString());
+            yield return ("slices", Slices.Value.ToString(CultureInfo.InvariantCulture));
         if (SliceId.HasValue)
-            yield return ("sliceId", SliceId.Value.ToString());
+            yield return ("sliceId", SliceId.Value.ToString(CultureInfo.InvariantCulture));
         if (Concurrency.HasValue)
-            yield return ("concurrency", Concurrency.Value.ToString());
+            yield return ("concurrency", Concurrency.Value.ToString(CultureInfo.InvariantCulture));
         if (FromTimestamp.HasValue)
-            yield return ("fromTimestamp", FromTimestamp.Value.ToString());
+            yield return ("fromTimestamp", FromTimestamp.Value.ToString(CultureInfo.InvariantCulture));
         if (ToTimestamp.HasValue)
-            yield return ("toTimestamp", ToTimestamp.Value.ToString());
+            yield return ("toTimestamp", ToTimestamp.Value.ToString(CultureInfo.InvariantCulture));
         if (IncludeRemoves.HasValue)
             yield return ("includeRemoves", IncludeRemoves.Value ? "true" : "false");
         if (BucketSpace is not null)
             yield return ("bucketSpace", BucketSpace);
         if (TraceLevel.HasValue)
-            yield return ("tracelevel", TraceLevel.Value.ToString());
+            yield return ("tracelevel", TraceLevel.Value.ToString(CultureInfo.InvariantCulture));
         if (TensorFormat is not null)
             yield return ("format.tensors", TensorFormat);
     }

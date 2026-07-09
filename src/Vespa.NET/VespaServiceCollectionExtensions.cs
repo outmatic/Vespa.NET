@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
 using Polly;
@@ -27,9 +28,14 @@ public static partial class VespaServiceCollectionExtensions
     /// <returns>An IHttpClientBuilder for further configuration</returns>
     /// <remarks>
     /// Call this overload once per container: it registers a single unnamed
-    /// <see cref="IVespaClient"/>. To talk to multiple Vespa endpoints, use the
-    /// named overload (<see cref="AddVespaClient(IServiceCollection, string, VespaClientOptions, Action{HttpClient})"/>)
+    /// <see cref="IVespaClient"/> and throws <see cref="InvalidOperationException"/> on a
+    /// second call (stacked registrations would silently combine both configurations).
+    /// To talk to multiple Vespa endpoints, use the named overload
+    /// (<see cref="AddVespaClient(IServiceCollection, string, VespaClientOptions, Action{HttpClient})"/>)
     /// and resolve clients with <c>GetRequiredKeyedService&lt;IVespaClient&gt;(name)</c>.
+    /// <para>The <paramref name="options"/> instance is captured directly by the client
+    /// factory; it is additionally exposed via <c>TryAddSingleton</c> for diagnostics, so a
+    /// consumer-registered <see cref="VespaClientOptions"/> singleton never affects the client.</para>
     /// </remarks>
     public static IHttpClientBuilder AddVespaClient(
         this IServiceCollection services,
@@ -40,9 +46,11 @@ public static partial class VespaServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(options);
 
         options.Validate();
+        ThrowIfUnnamedClientRegistered(services);
 
-        // Register options as singleton
-        services.AddSingleton(options);
+        // TryAdd: exposed for diagnostics only — the client factory captures `options`
+        // in a closure, so a pre-existing consumer registration cannot collide with it.
+        services.TryAddSingleton(options);
 
         // Configure HttpClient with factory. Registered as a NAMED client +
         // AddTypedClient: the generic AddHttpClient<IVespaClient, VespaClient>
@@ -52,7 +60,7 @@ public static partial class VespaServiceCollectionExtensions
                 httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
             .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
             .AddHttpMessageHandler(() => new VespaMetricsHandler())
-            .AddTypedClient<IVespaClient>(CreatePreconfiguredVespaClient);
+            .AddTypedClient(CreatePreconfiguredVespaClient(options));
 
         // Add default resilience strategy based on options
         ConfigureDefaultResilience(builder, options);
@@ -60,12 +68,21 @@ public static partial class VespaServiceCollectionExtensions
         return builder;
     }
 
-    private static IVespaClient CreatePreconfiguredVespaClient(HttpClient httpClient, IServiceProvider sp) =>
-        new VespaClient(
+    private static Func<HttpClient, IServiceProvider, IVespaClient> CreatePreconfiguredVespaClient(
+        VespaClientOptions options) =>
+        (httpClient, sp) => new VespaClient(
             httpClient,
-            sp.GetRequiredService<VespaClientOptions>(),
+            options,
             sp.GetService<ILogger<VespaClient>>(),
             httpClientPreconfigured: true);
+
+    private static void ThrowIfUnnamedClientRegistered(IServiceCollection services)
+    {
+        if (services.Any(d => !d.IsKeyedService && d.ServiceType == typeof(IVespaClient)))
+            throw new InvalidOperationException(
+                "An unnamed IVespaClient is already registered. Call AddVespaClient once per container, " +
+                "or use the named overload AddVespaClient(name, options) to talk to multiple Vespa endpoints.");
+    }
 
     /// <summary>
     /// Adds named VespaClient to the service collection with IHttpClientFactory integration
@@ -130,16 +147,17 @@ public static partial class VespaServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configureResilience);
 
         options.Validate();
+        ThrowIfUnnamedClientRegistered(services);
 
-        // Register options as singleton
-        services.AddSingleton(options);
+        // TryAdd: exposed for diagnostics only — see AddVespaClient
+        services.TryAddSingleton(options);
 
         // Configure HttpClient with factory (named + AddTypedClient — see AddVespaClient)
         var builder = services.AddHttpClient(DefaultHttpClientName,
                 httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
             .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
             .AddHttpMessageHandler(() => new VespaMetricsHandler())
-            .AddTypedClient<IVespaClient>(CreatePreconfiguredVespaClient);
+            .AddTypedClient(CreatePreconfiguredVespaClient(options));
 
         // Apply custom resilience strategy
         builder.AddResilienceHandler("vespa-custom-resilience", configureResilience);
@@ -185,9 +203,20 @@ public static partial class VespaServiceCollectionExtensions
             httpClient.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.ApiKey);
 
+        // Validated Add (not TryAddWithoutValidation): a malformed header name/value
+        // should fail loudly at configuration time, not corrupt requests silently.
         if (options.DefaultRequestHeaders is not null)
             foreach (var (key, value) in options.DefaultRequestHeaders)
-                httpClient.DefaultRequestHeaders.TryAddWithoutValidation(key, value);
+                try
+                {
+                    httpClient.DefaultRequestHeaders.Add(key, value);
+                }
+                catch (Exception ex) when (ex is FormatException or InvalidOperationException)
+                {
+                    throw new ArgumentException(
+                        $"Invalid default request header '{key}': {ex.Message}",
+                        nameof(options), ex);
+                }
     }
 
     /// <summary>
@@ -255,12 +284,24 @@ public static partial class VespaServiceCollectionExtensions
     /// and Testcontainers integrations) so they get the same connection pooling,
     /// compression, and mTLS behaviour as the DI path.
     /// </summary>
-    public static SocketsHttpHandler BuildSocketsHttpHandler(VespaClientOptions options)
+    public static SocketsHttpHandler BuildSocketsHttpHandler(VespaClientOptions options) =>
+        BuildSocketsHttpHandler(options, out _);
+
+    /// <summary>
+    /// Same as <see cref="BuildSocketsHttpHandler(VespaClientOptions)"/>, additionally
+    /// returning the certificate this call loaded from disk (PFX/PEM options) so the
+    /// caller can dispose it with the handler. <paramref name="loadedCertificate"/> is
+    /// <see langword="null"/> when mTLS is not configured or when
+    /// <see cref="VespaClientOptions.ClientCertificate"/> supplied a caller-owned instance.
+    /// </summary>
+    internal static SocketsHttpHandler BuildSocketsHttpHandler(
+        VespaClientOptions options,
+        out X509Certificate2? loadedCertificate)
     {
         var handler = new SocketsHttpHandler
         {
             MaxConnectionsPerServer = options.MaxConnectionsPerServer,
-            UseProxy = false,
+            UseProxy = options.UseProxy,
             UseCookies = false,
             AllowAutoRedirect = false,
             AutomaticDecompression = options.UseCompression
@@ -277,6 +318,7 @@ public static partial class VespaServiceCollectionExtensions
             handler.InitialHttp2StreamWindowSize = options.InitialHttp2StreamWindowSize.Value;
 
         var cert = options.CreateClientCertificate();
+        loadedCertificate = ReferenceEquals(cert, options.ClientCertificate) ? null : cert;
         if (cert is not null)
         {
             handler.SslOptions = new SslClientAuthenticationOptions

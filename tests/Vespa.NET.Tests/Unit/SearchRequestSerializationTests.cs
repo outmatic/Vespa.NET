@@ -463,4 +463,42 @@ public class SearchRequestSerializationTests
         Assert.DoesNotContain("matching.", json);
         Assert.DoesNotContain("significance.", json);
     }
+
+    [Fact]
+    public void ShallowClone_CopiesCustomParametersAndInputDictionaries()
+    {
+        // Page clones must not share dictionaries: mutating one page's parameters
+        // would bleed into every other page of a paged/streaming search.
+        var original = new VespaSearchRequest
+        {
+            Yql = "select * from doc",
+            CustomParameters = new Dictionary<string, object> { ["text"] = "query" },
+            Input = new Dictionary<string, object> { ["query(embedding)"] = new[] { 1.0, 2.0 } }
+        };
+
+        var clone = original.ShallowClone();
+
+        Assert.NotSame(original.CustomParameters, clone.CustomParameters);
+        Assert.NotSame(original.Input, clone.Input);
+        Assert.Equal(original.CustomParameters, clone.CustomParameters);
+        Assert.Equal(original.Input, clone.Input);
+
+        clone.CustomParameters!["text"] = "changed";
+        clone.Input!["query(other)"] = 42;
+
+        Assert.Equal("query", original.CustomParameters!["text"]);
+        Assert.False(original.Input!.ContainsKey("query(other)"));
+    }
+
+    [Fact]
+    public void ShallowClone_WithNullDictionaries_LeavesThemNull()
+    {
+        var original = new VespaSearchRequest { Yql = "select * from doc" };
+
+        var clone = original.ShallowClone();
+
+        Assert.Null(clone.CustomParameters);
+        Assert.Null(clone.Input);
+        Assert.Equal(original.Yql, clone.Yql);
+    }
 }

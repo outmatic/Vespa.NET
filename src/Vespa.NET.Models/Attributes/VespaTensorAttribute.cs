@@ -26,14 +26,14 @@ public class VespaTensorAttribute : Attribute
     /// <see cref="TensorIndexType.Hnsw"/>; combining an index request with
     /// <see cref="TensorIndexType.None"/> fails schema generation.
     /// </summary>
-    public bool EnableIndex { get; set; } = false;
+    public bool EnableIndex { get; set; }
 
     /// <summary>
     /// Whether this tensor should be included in document summaries (returned with search results).
     /// Also enabled when a companion <c>[VespaField]</c> requests <c>IndexingMode.Summary</c>.
     /// Default: <see langword="false"/> — embeddings are typically large and not needed in results.
     /// </summary>
-    public bool IncludeInSummary { get; set; } = false;
+    public bool IncludeInSummary { get; set; }
 
     /// <summary>
     /// Index type for nearest neighbor search. <see cref="TensorIndexType.Hnsw"/>

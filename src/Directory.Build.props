@@ -1,0 +1,21 @@
+<Project>
+
+  <!-- Inherit the repo-wide settings, then tighten analysis for shipped src/ projects only
+       (tests/samples/benchmarks keep the SDK defaults). -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
+  <PropertyGroup>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Deliberate suppressions:
+         CA2007 (ConfigureAwait) NOT enabled: consumers are assumed to be ASP.NET Core /
+                console apps without a synchronization context (review decision 2026-07-09).
+         CA1716 ("namespace" parameter name): established public API mirroring Vespa's
+                document namespace concept; renaming breaks named-argument callers.
+         CA1720 (identifiers contain type names): enum members deliberately mirror Vespa
+                schema type names (int, long, float, double, int8, string). -->
+    <NoWarn>$(NoWarn);CA2007;CA1716;CA1720</NoWarn>
+  </PropertyGroup>
+
+</Project>

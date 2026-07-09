@@ -376,7 +376,7 @@ internal sealed class SchemaModelBuilder
         };
     }
 
-    private SchemaFieldModel BuildTensorField(
+    private static SchemaFieldModel BuildTensorField(
         PropertyInfo prop,
         VespaTensorAttribute tensorAttr,
         VespaFieldAttribute? fieldAttr,

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -144,7 +145,7 @@ public sealed partial class DocumentOperations(
         string? fieldSet = null,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default) where T : class
-        => GetByAddressingAsync<T>("number", number.ToString(), localId, documentType, @namespace, fieldSet, requestOptions, cancellationToken);
+        => GetByAddressingAsync<T>("number", number.ToString(CultureInfo.InvariantCulture), localId, documentType, @namespace, fieldSet, requestOptions, cancellationToken);
 
     public Task<VespaResponse> PutByGroupAsync<T>(
         string group,
@@ -168,7 +169,7 @@ public sealed partial class DocumentOperations(
         bool create = false,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default) where T : class
-        => PutByAddressingAsync("number", number.ToString(), localId, document, documentType, @namespace, condition, create, requestOptions, cancellationToken);
+        => PutByAddressingAsync("number", number.ToString(CultureInfo.InvariantCulture), localId, document, documentType, @namespace, condition, create, requestOptions, cancellationToken);
 
     public Task<VespaResponse> UpdateFieldsByGroupAsync(
         string group,
@@ -192,7 +193,7 @@ public sealed partial class DocumentOperations(
         string? condition = null,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default)
-        => UpdateFieldsByAddressingAsync("number", number.ToString(), localId, fieldOperations, documentType, @namespace, createIfMissing, condition, requestOptions, cancellationToken);
+        => UpdateFieldsByAddressingAsync("number", number.ToString(CultureInfo.InvariantCulture), localId, fieldOperations, documentType, @namespace, createIfMissing, condition, requestOptions, cancellationToken);
 
     public Task<VespaResponse> DeleteByGroupAsync(
         string group,
@@ -212,7 +213,7 @@ public sealed partial class DocumentOperations(
         string? condition = null,
         DocumentRequestOptions? requestOptions = null,
         CancellationToken cancellationToken = default)
-        => DeleteByAddressingAsync("number", number.ToString(), localId, documentType, @namespace, condition, requestOptions, cancellationToken);
+        => DeleteByAddressingAsync("number", number.ToString(CultureInfo.InvariantCulture), localId, documentType, @namespace, condition, requestOptions, cancellationToken);
 
     private async Task<VespaDocument<T>?> GetByAddressingAsync<T>(
         string scheme,
@@ -457,7 +458,7 @@ public sealed partial class DocumentOperations(
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
-            throw await ErrorFromResponseAsync(response, cancellationToken);
+            throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
         var body = await TryReadSelectionBodyAsync(response, cancellationToken);
         return new SelectionPageResult
@@ -554,33 +555,6 @@ public sealed partial class DocumentOperations(
         }
     }
 
-    /// <summary>
-    /// Builds the most specific <see cref="VespaException"/> from an error response.
-    /// The body is read to a string exactly once — it may not be JSON (e.g. an HTML
-    /// 502 page from a proxy), and unbuffered <c>ResponseHeadersRead</c> content
-    /// cannot be read twice.
-    /// </summary>
-    private static async Task<VespaException> ErrorFromResponseAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-
-        VespaError? error = null;
-        if (!string.IsNullOrWhiteSpace(body))
-            try
-            {
-                error = JsonSerializer.Deserialize<VespaError>(body, VespaJsonOptions.Default);
-            }
-            catch (JsonException)
-            {
-                // Non-JSON error body — fall through to the raw-body message.
-            }
-
-        var message = error?.Message ?? $"HTTP {(int)response.StatusCode}: {body}";
-        return VespaException.FromStatusCode(
-            (int)response.StatusCode, message, error, VespaResponseHeaders.GetRetryAfter(response));
-    }
-
     private sealed record SelectionResponseBody(
         [property: JsonPropertyName("documentCount")] long? DocumentCount,
         [property: JsonPropertyName("continuation")] string? Continuation,
@@ -640,7 +614,7 @@ public sealed partial class DocumentOperations(
             using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
-                throw await ErrorFromResponseAsync(response, cancellationToken);
+                throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
             var page = await VespaIdInjector.DeserializeVisitAndInjectAsync<T>(response.Content, cancellationToken);
             if (page is null)
@@ -679,7 +653,7 @@ public sealed partial class DocumentOperations(
             using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
-                throw await ErrorFromResponseAsync(response, cancellationToken);
+                throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
             var mediaType = response.Content.Headers.ContentType?.MediaType;
             if (!string.Equals(mediaType, JsonlMediaType, StringComparison.OrdinalIgnoreCase))
@@ -876,13 +850,15 @@ public sealed partial class DocumentOperations(
         return BuildUrl(basePath, null, [.. queryParams]);
     }
 
-    private static Activity? StartDocumentActivity(
+    private Activity? StartDocumentActivity(
         string operationName, string documentType, string ns, string? documentId = null)
     {
         var activity = VespaActivitySource.Instance.StartActivity(operationName);
         activity?.SetTag(VespaActivitySource.TagDocType, documentType);
         activity?.SetTag(VespaActivitySource.TagNamespace, ns);
-        if (documentId is not null)
+        // Document ids can embed user identifiers — only export them to tracing
+        // backends when explicitly opted in (RecordQueryTextInTraces).
+        if (documentId is not null && _options.RecordQueryTextInTraces)
             activity?.SetTag(VespaActivitySource.TagDocId, documentId);
         return activity;
     }
@@ -929,7 +905,7 @@ public sealed partial class DocumentOperations(
         CancellationToken cancellationToken = default)
     {
         if (!response.IsSuccessStatusCode)
-            throw await ErrorFromResponseAsync(response, cancellationToken);
+            throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
         return new VespaResponse
         {
@@ -975,7 +951,7 @@ public sealed partial class DocumentOperations(
         }
 
         if (!response.IsSuccessStatusCode)
-            throw await ErrorFromResponseAsync(response, cancellationToken);
+            throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
         return await VespaIdInjector.DeserializeAndInjectAsync<T>(response.Content, cancellationToken);
     }

@@ -266,6 +266,9 @@ var metrics = await client.GetMetricsAsync();
 > **Note:**
 > `ApiKey`, `DefaultRequestHeaders`, compression, timeout, and mTLS settings are applied to both the data-plane client and the admin/config-server client.
 
+> **Note:**
+> Retry and circuit-breaker options are enforced by the DI registrations (`AddVespaClient`). A directly constructed `VespaClient` applies feed-level retry only; use `new VespaClient(options)` (options-only constructor) to get a fully configured handler (mTLS, compression, pooling) without DI.
+
 > **Tip:**
 > Health/state helpers such as `HealthCheckAsync`, `IsReadyAsync`, `GetMetricsAsync`, `GetVersionAsync`, and `GetHistogramsAsync` are best-effort on ordinary failures, but they still propagate `OperationCanceledException` when the request is cancelled.
 
@@ -328,6 +331,7 @@ builder.Services.AddOpenTelemetry()
 ```
 
 Spans: `vespa.search`, `vespa.document.*`, `vespa.feed.pipeline`, etc.
+Query text (YQL) and document ids are excluded from span tags by default; opt in with `VespaClientOptions.RecordQueryTextInTraces = true`.
 Metrics: `vespa.client.requests`, `vespa.client.request_duration`, `vespa.client.documents_written`, etc.
 
 </details>

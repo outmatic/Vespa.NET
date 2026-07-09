@@ -139,11 +139,11 @@ internal abstract class YqlPredicate
         public override string Build()
         {
             var opts = new System.Text.StringBuilder();
-            if (maxEditDistance.HasValue) opts.Append($"maxEditDistance:{maxEditDistance}");
+            if (maxEditDistance.HasValue) opts.Append(System.Globalization.CultureInfo.InvariantCulture, $"maxEditDistance:{maxEditDistance}");
             if (prefixLength.HasValue)
             {
                 if (opts.Length > 0) opts.Append(',');
-                opts.Append($"prefixLength:{prefixLength}");
+                opts.Append(System.Globalization.CultureInfo.InvariantCulture, $"prefixLength:{prefixLength}");
             }
             var annotation = opts.Length > 0 ? $"({{{opts}}}fuzzy(\"{Escape(term)}\"))" : $"fuzzy(\"{Escape(term)}\")";
             return $"""{field} contains {annotation}""";

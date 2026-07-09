@@ -30,10 +30,10 @@ public sealed partial class AdminOperations(
 
     private string ResolveTenant(string? tenant) => tenant ?? _options.Tenant;
 
-    private string PrepareAndActivatePath(string tenant) =>
+    private static string PrepareAndActivatePath(string tenant) =>
         $"/application/v2/tenant/{Uri.EscapeDataString(tenant)}/prepareandactivate";
 
-    private string ApplicationStatusPath(string tenant) =>
+    private static string ApplicationStatusPath(string tenant) =>
         $"/application/v2/tenant/{Uri.EscapeDataString(tenant)}/application/default";
 
     public async Task DeployAsync(Stream applicationPackage, string? tenant = null, CancellationToken cancellationToken = default)
@@ -52,13 +52,7 @@ public sealed partial class AdminOperations(
         using var response = await _httpClient.PostAsync(PrepareAndActivatePath(resolvedTenant), content, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw VespaException.FromStatusCode(
-                (int)response.StatusCode,
-                $"Deploy failed with status {response.StatusCode}: {error}",
-                retryAfter: VespaResponseHeaders.GetRetryAfter(response));
-        }
+            throw await VespaErrorResponse.CreateAsync(response, cancellationToken, context: "Deploy failed");
 
         if (logger is not null)
             LogDeployed(logger);

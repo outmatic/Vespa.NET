@@ -51,6 +51,54 @@ public class AdminOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task DeployAsync_OnErrorWithVespaErrorBody_CarriesParsedError()
+    {
+        // Admin error paths must parse the structured VespaError body like Documents does
+        const string errorJson = """{"code":3,"message":"Invalid application package: schema parse error"}""";
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(errorJson, Encoding.UTF8, "application/json")
+            });
+
+        using var package = new MemoryStream([1, 2, 3]);
+        var ex = await Assert.ThrowsAsync<VespaException>(() => _adminOps.DeployAsync(package));
+
+        Assert.Equal(400, ex.StatusCode);
+        Assert.NotNull(ex.Error);
+        Assert.Equal("Invalid application package: schema parse error", ex.Error!.Message);
+        Assert.Contains("Deploy failed", ex.Message);
+        Assert.Contains("schema parse error", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeployAsync_OnErrorWithNonJsonBody_StillThrowsVespaException()
+    {
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.BadGateway)
+            {
+                Content = new StringContent("<html>502 Bad Gateway</html>", Encoding.UTF8, "text/html")
+            });
+
+        using var package = new MemoryStream([1, 2, 3]);
+        var ex = await Assert.ThrowsAsync<VespaServerException>(() => _adminOps.DeployAsync(package));
+
+        Assert.Equal(502, ex.StatusCode);
+        Assert.Null(ex.Error);
+        Assert.Contains("502", ex.Message);
+    }
+
+    [Fact]
     public void Dispose_DoesNotDisposeInjectedHttpClient()
     {
         // AdminOperations is public - disposing a factory-managed client would kill it

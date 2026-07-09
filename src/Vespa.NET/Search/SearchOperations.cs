@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -30,7 +31,7 @@ public sealed partial class SearchOperations(
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Yql, nameof(request));
 
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.Search);
-        activity?.SetTag(VespaActivitySource.TagYql, request.Yql);
+        RecordYql(activity, request);
         activity?.SetTag(VespaActivitySource.TagHits, request.Hits);
 
         if (logger != null)
@@ -124,7 +125,7 @@ public sealed partial class SearchOperations(
             LogExecutingSearch(logger, request.Yql);
 
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.SearchGroup);
-        activity?.SetTag(VespaActivitySource.TagYql, request.Yql);
+        RecordYql(activity, request);
 
         return await ExecuteSearchRequestAsync(
             request,
@@ -159,7 +160,7 @@ public sealed partial class SearchOperations(
                     if (!child.TryGetProperty("id", out var idEl)) continue;
                     var id = idEl.GetString() ?? "";
 
-                    if (id.StartsWith("group:root:"))
+                    if (id.StartsWith("group:root:", StringComparison.Ordinal))
                     {
                         groupingResults.AddRange(ParseGroupLists<T>(child));
                         continuationTokens ??= ExtractContinuationTokens(child);
@@ -178,6 +179,16 @@ public sealed partial class SearchOperations(
                 return new GroupingSearchResponse<T>(hits, groupingResults, totalCount, timing, continuationTokens);
             },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// YQL frequently embeds user-supplied search terms — only export it to tracing
+    /// backends when explicitly opted in (<see cref="VespaClientOptions.RecordQueryTextInTraces"/>).
+    /// </summary>
+    private void RecordYql(Activity? activity, VespaSearchRequest request)
+    {
+        if (_options.RecordQueryTextInTraces)
+            activity?.SetTag(VespaActivitySource.TagYql, request.Yql);
     }
 
     private async Task<TResult> ExecuteSearchRequestAsync<TResult>(
@@ -214,12 +225,9 @@ public sealed partial class SearchOperations(
         if (response.IsSuccessStatusCode)
             return;
 
-        var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-        activity?.SetStatus(ActivityStatusCode.Error, errorContent);
-        throw VespaException.FromStatusCode(
-            (int)response.StatusCode,
-            $"Search failed with status {response.StatusCode}: {errorContent}",
-            retryAfter: VespaResponseHeaders.GetRetryAfter(response));
+        var exception = await VespaErrorResponse.CreateAsync(response, cancellationToken, context: "Search failed");
+        activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
+        throw exception;
     }
 
     private static double[] ExtractDenseValues(VespaTensor queryEmbedding)
@@ -247,11 +255,11 @@ public sealed partial class SearchOperations(
         var yqlBuilder = new StringBuilder($"select * from {documentType} where ");
 
         if (!string.IsNullOrWhiteSpace(filter))
-            yqlBuilder.Append($"({filter}) and ");
+            yqlBuilder.Append(CultureInfo.InvariantCulture, $"({filter}) and ");
 
         var queryTensorName = $"query_{embeddingField}";
         // totalTargetHits (hits over all content nodes) is the documented, preferred annotation
-        yqlBuilder.Append($"({{totalTargetHits: {topK}}}nearestNeighbor({embeddingField}, {queryTensorName}))");
+        yqlBuilder.Append(CultureInfo.InvariantCulture, $"({{totalTargetHits: {topK}}}nearestNeighbor({embeddingField}, {queryTensorName}))");
 
         return new VespaSearchRequest
         {
@@ -279,7 +287,7 @@ public sealed partial class SearchOperations(
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
 
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.SearchStream);
-        activity?.SetTag(VespaActivitySource.TagYql, request.Yql);
+        RecordYql(activity, request);
 
         await foreach (var page in this.SearchPagedAsync<T>(request, pageSize, cancellationToken))
             foreach (var hit in page.Root.Children)
@@ -292,7 +300,7 @@ public sealed partial class SearchOperations(
     /// <c>continuation.next</c> (recursively). Returns <see langword="null"/> when
     /// no list has a next page.
     /// </summary>
-    private static IReadOnlyList<string>? ExtractContinuationTokens(JsonElement groupRootNode)
+    private static List<string>? ExtractContinuationTokens(JsonElement groupRootNode)
     {
         var nextTokens = new List<string>();
         CollectNextTokens(groupRootNode, nextTokens);
@@ -312,7 +320,7 @@ public sealed partial class SearchOperations(
     private static void CollectNextTokens(JsonElement node, List<string> output)
     {
         if (node.TryGetProperty("id", out var idEl) &&
-            (idEl.GetString() ?? "").StartsWith("grouplist:") &&
+            (idEl.GetString() ?? "").StartsWith("grouplist:", StringComparison.Ordinal) &&
             node.TryGetProperty("continuation", out var contEl) &&
             contEl.TryGetProperty("next", out var nextEl) &&
             nextEl.GetString() is { Length: > 0 } token)
@@ -323,7 +331,7 @@ public sealed partial class SearchOperations(
                 CollectNextTokens(child, output);
     }
 
-    private static IReadOnlyList<VespaGroupList> ParseGroupLists<T>(JsonElement groupRootNode) where T : class
+    private static List<VespaGroupList> ParseGroupLists<T>(JsonElement groupRootNode) where T : class
     {
         var result = new List<VespaGroupList>();
         if (!groupRootNode.TryGetProperty("children", out var children)) return result;
@@ -332,7 +340,7 @@ public sealed partial class SearchOperations(
         {
             if (!child.TryGetProperty("id", out var idEl)) continue;
             var id = idEl.GetString() ?? "";
-            if (id.StartsWith("grouplist:"))
+            if (id.StartsWith("grouplist:", StringComparison.Ordinal))
                 result.Add(ParseSingleGroupList<T>(child, id["grouplist:".Length..]));
         }
         return result;
@@ -399,11 +407,11 @@ public sealed partial class SearchOperations(
             if (!child.TryGetProperty("id", out var idEl)) continue;
             var id = idEl.GetString() ?? "";
 
-            if (id.StartsWith("grouplist:"))
+            if (id.StartsWith("grouplist:", StringComparison.Ordinal))
             {
                 subGroups.Add(ParseSingleGroupList<T>(child, id["grouplist:".Length..]));
             }
-            else if (id.StartsWith("hitlist:") && child.TryGetProperty("children", out var hitChildren))
+            else if (id.StartsWith("hitlist:", StringComparison.Ordinal) && child.TryGetProperty("children", out var hitChildren))
             {
                 foreach (var hitNode in hitChildren.EnumerateArray())
                 {

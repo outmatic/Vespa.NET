@@ -155,6 +155,10 @@ public sealed class VespaClientOptions
     /// individual document operations that fail with HTTP 429 or 503. When both are active the
     /// handler retries first — each feed-level attempt may itself have been retried at the
     /// HTTP level.</para>
+    /// <para><b>IMPORTANT:</b> the HTTP-level retry pipeline exists only on clients registered
+    /// via <c>AddVespaClient</c>/<c>AddVespaClientWithResilienceStrategy</c>. A directly
+    /// constructed <see cref="VespaClient"/> has no Polly handler: only the feed-level
+    /// per-document retry applies there, and a warning is logged at construction.</para>
     /// </summary>
     public bool EnableRetry { get; init; } = true;
 
@@ -180,7 +184,11 @@ public sealed class VespaClientOptions
     public int FeedMaxRetainedErrors { get; init; } = Models.FeedResult.DefaultMaxRetainedErrors;
 
     /// <summary>
-    /// Enable circuit breaker pattern for fault tolerance
+    /// Enable circuit breaker pattern for fault tolerance.
+    /// <para><b>IMPORTANT:</b> the circuit breaker is installed by the DI registrations
+    /// (<c>AddVespaClient</c>/<c>AddVespaClientWithResilienceStrategy</c>) only. A directly
+    /// constructed <see cref="VespaClient"/> cannot honor this option — a warning is logged
+    /// at construction when it is set but unenforceable.</para>
     /// </summary>
     public bool EnableCircuitBreaker { get; init; } = true;
 
@@ -219,6 +227,25 @@ public sealed class VespaClientOptions
     public TimeSpan PooledConnectionIdleTimeout { get; init; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Honor the system/environment proxy for outgoing connections.
+    /// Defaults to <see langword="false"/>: Vespa endpoints are typically reached directly,
+    /// and skipping proxy resolution avoids surprising latency and traffic detours through
+    /// corporate proxies. Set to <see langword="true"/> to route requests through the
+    /// configured system proxy (e.g. <c>HTTPS_PROXY</c>).
+    /// </summary>
+    public bool UseProxy { get; init; }
+
+    /// <summary>
+    /// Record full query text (YQL) and document ids as tags on OpenTelemetry activities.
+    /// Defaults to <see langword="false"/>: queries and document ids frequently embed
+    /// user-supplied search terms or identifiers, and exporting them to tracing backends
+    /// can leak sensitive data. When disabled, the <c>vespa.yql</c> and
+    /// <c>vespa.document_id</c> tags are omitted; document type and namespace tags are
+    /// always recorded.
+    /// </summary>
+    public bool RecordQueryTextInTraces { get; init; }
+
+    /// <summary>
     /// Initial HTTP/2 stream window size in bytes.
     /// When <c>null</c> (default), the <see cref="System.Net.Http.SocketsHttpHandler"/> default is used.
     /// </summary>
@@ -236,12 +263,15 @@ public sealed class VespaClientOptions
     public void Validate()
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(Endpoint);
+        ThrowIfNotHttpUrl(Endpoint, nameof(Endpoint));
 
-        if (!Uri.TryCreate(Endpoint, UriKind.Absolute, out _))
-            throw new ArgumentException("Endpoint must be a valid URL", nameof(Endpoint));
+        if (ConfigServerEndpoint is not null)
+            ThrowIfNotHttpUrl(ConfigServerEndpoint, nameof(ConfigServerEndpoint));
 
-        // An empty namespace would produce malformed "//" segments in /document/v1 paths.
+        // An empty namespace would produce malformed "//" segments in /document/v1 paths,
+        // and an empty tenant the same in /application/v2 paths.
         ArgumentException.ThrowIfNullOrWhiteSpace(DefaultNamespace);
+        ArgumentException.ThrowIfNullOrWhiteSpace(Tenant);
 
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConnectionsPerServer);
         ArgumentOutOfRangeException.ThrowIfNegative(MaxRetryAttempts);
@@ -261,6 +291,16 @@ public sealed class VespaClientOptions
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(InitialHttp2StreamWindowSize.Value);
         if (ConnectTimeout.HasValue)
             ThrowIfTimeSpanZeroOrNegative(ConnectTimeout.Value, nameof(ConnectTimeout));
+    }
+
+    // Beware: bare "host:port" strings parse as absolute URIs with scheme "host",
+    // and nothing stops "ftp://" from parsing — restrict to what HttpClient can use.
+    private static void ThrowIfNotHttpUrl(string value, string paramName)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            throw new ArgumentException(
+                $"{paramName} must be an absolute http:// or https:// URL, got '{value}'.", paramName);
     }
 
     private static void ThrowIfTimeSpanZeroOrNegative(TimeSpan value, string paramName)

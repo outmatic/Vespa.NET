@@ -202,6 +202,8 @@ public sealed class YqlBuilder<T> where T : class
     /// // → select price, name from product where price &lt; 100;
     /// </code>
     /// </example>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1000:Do not declare static members on generic types",
+        Justification = "YqlBuilder<T>.Select(...) is the intended fluent entry point of the typed YQL DSL.")]
     public static YqlBuilder<T> Select(params Expression<Func<T, object?>>[] fields)
     {
         var fieldList = fields.Length == 0 ? "*" : string.Join(", ", fields.Select(VespaDocumentMeta.FieldName));

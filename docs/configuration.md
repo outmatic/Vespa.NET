@@ -43,9 +43,13 @@ var options = new VespaClientOptions
     // Performance
     UseConnectionPooling  = true,
     UseCompression        = true,
+    UseProxy              = false,             // opt in to the system/environment proxy
     PooledConnectionLifetime   = TimeSpan.FromMinutes(10),
     PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
     InitialHttp2StreamWindowSize = null,
+
+    // Observability
+    RecordQueryTextInTraces = false,           // opt in to YQL/document-id tags on OTel spans
 
     // Custom headers
     DefaultRequestHeaders = new Dictionary<string, string>
@@ -57,6 +61,10 @@ var options = new VespaClientOptions
 
 Notes:
 - `ApiKey`, `DefaultRequestHeaders`, timeout, compression, and mTLS settings apply to both the main query/document client and the admin config-server client.
+- `Endpoint` and `ConfigServerEndpoint` must be absolute `http://`/`https://` URLs; `DefaultNamespace` and `Tenant` must be non-empty.
+- `EnableRetry`/`EnableCircuitBreaker` install the HTTP resilience pipeline **only via the DI registrations** (`AddVespaClient`). A directly constructed `VespaClient` applies feed-level retry only and logs a warning. The options-only constructor `new VespaClient(options)` builds its own handler, so mTLS/compression/pooling work without DI; passing your own `HttpClient` together with certificate options throws.
+- `UseProxy` defaults to `false` (requests bypass the system proxy); set it to `true` to honor `HTTPS_PROXY` and friends.
+- `RecordQueryTextInTraces` defaults to `false`: full YQL text and document ids are omitted from OpenTelemetry span tags unless you opt in.
 - `ConnectTimeout` controls connection establishment time, not pooled-connection cleanup.
 - `UseConnectionPooling = false` disables connection reuse by expiring pooled connections immediately.
 

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Vespa.Models;
 
 /// <summary>
@@ -53,7 +55,7 @@ public sealed record DocumentRequestOptions
         if (Route is not null)
             yield return ("route", Route);
         if (TraceLevel.HasValue)
-            yield return ("tracelevel", TraceLevel.Value.ToString());
+            yield return ("tracelevel", TraceLevel.Value.ToString(CultureInfo.InvariantCulture));
         if (TensorFormat is not null)
             yield return ("format.tensors", TensorFormat);
         if (DryRun)

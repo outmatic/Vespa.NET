@@ -56,20 +56,73 @@ public class VespaClientTests : IDisposable
     [Fact]
     public void Constructor_DoesNotBuildAdminClient_UntilAdminIsAccessed()
     {
-        // Building the admin HttpClient loads the mTLS certificate from disk;
-        // with a missing file that throws — so constructing the client without
-        // touching Admin proves the config-server client is created lazily.
+        using var client = new VespaClient(_httpClient, _options);
+
+        var adminLazy = (Lazy<Vespa.Admin.AdminOperations>?)typeof(VespaClient)
+            .GetField("_admin", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client);
+
+        Assert.NotNull(adminLazy);
+        Assert.False(adminLazy!.IsValueCreated);
+
+        _ = client.Admin;
+
+        Assert.True(adminLazy.IsValueCreated);
+    }
+
+    [Fact]
+    public void Constructor_UserHttpClientWithCertificatePath_Throws()
+    {
+        // mTLS lives on the HTTP handler — it cannot be attached to a caller-built client.
         var options = new VespaClientOptions
         {
-            Endpoint = "http://localhost:8080",
+            Endpoint = "https://localhost:8080",
             DefaultNamespace = "test",
             CertificatePath = "/nonexistent/data-plane-cert.pem",
             ClientKeyPath = "/nonexistent/data-plane-key.pem"
         };
 
-        using var client = new VespaClient(_httpClient, options);
+        var ex = Assert.Throws<InvalidOperationException>(() => new VespaClient(_httpClient, options));
+        Assert.Contains("certificate", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 
-        Assert.ThrowsAny<Exception>(() => client.Admin);
+    [Fact]
+    public void Constructor_UserHttpClientWithClientCertificate_Throws()
+    {
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=test", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+
+        var options = new VespaClientOptions
+        {
+            Endpoint = "https://localhost:8080",
+            DefaultNamespace = "test",
+            ClientCertificate = cert
+        };
+
+        Assert.Throws<InvalidOperationException>(() => new VespaClient(_httpClient, options));
+    }
+
+    [Fact]
+    public void OptionsOnlyConstructor_BuildsAndOwnsHttpClient()
+    {
+        using var client = new VespaClient(_options);
+
+        var underlying = (HttpClient?)typeof(VespaClient)
+            .GetField("_httpClient", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client);
+
+        Assert.NotNull(underlying);
+        Assert.Equal(new Uri("http://localhost:8080"), underlying!.BaseAddress);
+        Assert.Equal(_options.Timeout, underlying.Timeout);
+    }
+
+    [Fact]
+    public void OptionsOnlyConstructor_WithNullOptions_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() => new VespaClient((VespaClientOptions)null!));
     }
 
     [Fact]
@@ -81,6 +134,39 @@ public class VespaClientTests : IDisposable
         client.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => client.Admin);
+    }
+
+    [Fact]
+    public void Admin_MaterializedThenDisposed_ThrowsOnNextAccessAndDisposeIsIdempotent()
+    {
+        var client = new VespaClient(_httpClient, _options);
+        _ = client.Admin;
+
+        client.Dispose();
+        client.Dispose(); // idempotent under the dispose lock
+
+        Assert.Throws<ObjectDisposedException>(() => client.Admin);
+    }
+
+    [Fact]
+    public async Task Admin_ConcurrentAccessAndDispose_NeverLeaksNorCrashes()
+    {
+        // Best-effort race check for the Admin/Dispose lock: every outcome must be
+        // either a materialized (and then disposed) admin or ObjectDisposedException.
+        for (var i = 0; i < 50; i++)
+        {
+            var client = new VespaClient(_httpClient, _options);
+            var access = Task.Run(() =>
+            {
+                try { _ = client.Admin; }
+                catch (ObjectDisposedException) { }
+            });
+            var dispose = Task.Run(client.Dispose);
+
+            await Task.WhenAll(access, dispose);
+
+            Assert.Throws<ObjectDisposedException>(() => client.Admin);
+        }
     }
 
     [Fact]
@@ -491,8 +577,10 @@ public class VespaClientTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_ApiKeyNotAppliedIfAuthorizationAlreadySet()
+    public void Constructor_ApiKeyWithPreexistingAuthorizationHeader_Throws()
     {
+        // Silently preferring either credential hides misconfiguration — the
+        // constructor refuses the ambiguity outright.
         using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
         http.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "existing-token");
@@ -500,12 +588,43 @@ public class VespaClientTests : IDisposable
         var opts = new VespaClientOptions
         {
             Endpoint = "http://localhost:8080",
-            ApiKey = "should-not-override"
+            ApiKey = "conflicting-key"
         };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => new VespaClient(http, opts));
+        Assert.Contains("Authorization", ex.Message);
+    }
+
+    [Fact]
+    public void Constructor_PreexistingAuthorizationWithoutApiKey_IsPreserved()
+    {
+        using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
+        http.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "existing-token");
+
+        var opts = new VespaClientOptions { Endpoint = "http://localhost:8080" };
 
         _ = new VespaClient(http, opts);
 
         Assert.Equal("existing-token", http.DefaultRequestHeaders.Authorization?.Parameter);
+    }
+
+    [Fact]
+    public void Constructor_InvalidDefaultRequestHeaderValue_Throws()
+    {
+        // Validated header add: a malformed value must fail at configuration time.
+        using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
+        var opts = new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            DefaultRequestHeaders = new Dictionary<string, string>
+            {
+                ["X-Bad-Header"] = "line1\r\nline2"
+            }
+        };
+
+        var ex = Assert.Throws<ArgumentException>(() => new VespaClient(http, opts));
+        Assert.Contains("X-Bad-Header", ex.Message);
     }
 
     [Fact]

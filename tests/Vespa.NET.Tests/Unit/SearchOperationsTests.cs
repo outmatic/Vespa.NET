@@ -108,6 +108,24 @@ public class SearchOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task SearchAsync_OnErrorWithVespaErrorBody_CarriesParsedError()
+    {
+        // Search error paths must parse the structured VespaError body like Documents does
+        var request = new VespaSearchRequest { Yql = "select * from testdoc", Hits = 10 };
+        const string errorJson = """{"code":4,"message":"Could not create query from YQL: syntax error"}""";
+        SetupErrorResponse(HttpStatusCode.BadRequest, errorJson);
+
+        var ex = await Assert.ThrowsAsync<VespaException>(() =>
+            _searchOps.SearchAsync<TestDocument>(request));
+
+        Assert.Equal(400, ex.StatusCode);
+        Assert.NotNull(ex.Error);
+        Assert.Equal("Could not create query from YQL: syntax error", ex.Error!.Message);
+        Assert.Contains("Search failed", ex.Message);
+        Assert.Contains("syntax error", ex.Message);
+    }
+
+    [Fact]
     public async Task SearchAsync_On429_PopulatesRetryAfterFromHeader()
     {
         // Arrange

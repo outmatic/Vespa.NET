@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Vespa.Models;
 
 /// <summary>
@@ -44,6 +46,6 @@ public sealed record SelectionRequestOptions
         if (Timeout.HasValue)
             yield return ("timeout", VespaQueryValues.ToMilliseconds(Timeout.Value));
         if (TraceLevel.HasValue)
-            yield return ("tracelevel", TraceLevel.Value.ToString());
+            yield return ("tracelevel", TraceLevel.Value.ToString(CultureInfo.InvariantCulture));
     }
 }

@@ -475,13 +475,7 @@ public class FeedOperationsTests
     public void FeedResult_SuccessRate_CalculatedCorrectly()
     {
         // Arrange
-        var result = new FeedResult { TotalDocuments = 10 };
-
-        // Simulate 7 successes, 3 failures
-        for (var i = 0; i < 7; i++)
-            result.IncrementSuccess();
-        for (var i = 0; i < 3; i++)
-            result.IncrementFailure();
+        var result = new FeedResult { TotalDocuments = 10, SuccessCount = 7, FailureCount = 3 };
 
         // Act
         var successRate = result.SuccessRate;
@@ -1150,13 +1144,14 @@ public class FeedOperationsTests
     [Fact]
     public void FeedResult_UnderCap_ErrorsTruncatedIsFalse()
     {
-        var result = new FeedResult(maxRetainedErrors: 5);
+        var accumulator = new FeedResultAccumulator(maxRetainedErrors: 5);
         for (var i = 0; i < 5; i++)
         {
-            result.IncrementFailure();
-            result.AddError(new FeedError { DocumentId = $"doc-{i}" });
+            accumulator.IncrementFailure();
+            accumulator.AddError(new FeedError { DocumentId = $"doc-{i}" });
         }
 
+        var result = accumulator.ToResult(TimeSpan.Zero);
         Assert.Equal(5, result.Errors.Count);
         Assert.False(result.ErrorsTruncated);
     }

@@ -174,7 +174,7 @@ public sealed partial class FeedOperations(
                 SingleWriter = true
             });
 
-        var result = new FeedResult(_options.FeedMaxRetainedErrors);
+        var accumulator = new FeedResultAccumulator(_options.FeedMaxRetainedErrors);
         var processedCount = 0;
         var stopwatch = Stopwatch.StartNew();
 
@@ -200,7 +200,7 @@ public sealed partial class FeedOperations(
             }
             finally
             {
-                result.TotalDocuments = count;
+                accumulator.SetTotalDocuments(count);
                 channel.Writer.Complete();
             }
         }
@@ -242,9 +242,9 @@ public sealed partial class FeedOperations(
                     try
                     {
                         var response = await ExecuteWithRetryAsync(doc);
-                        if (response.HadIgnoredFields && result.MarkIgnoredFields() && _logger != null)
+                        if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger != null)
                             LogIgnoredFields(_logger, doc.Id);
-                        result.IncrementSuccess();
+                        accumulator.IncrementSuccess();
                     }
                     catch (OperationCanceledException) when (pipelineToken.IsCancellationRequested)
                     {
@@ -252,8 +252,8 @@ public sealed partial class FeedOperations(
                     }
                     catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
                     {
-                        result.IncrementFailure();
-                        result.AddError(new FeedError
+                        accumulator.IncrementFailure();
+                        accumulator.AddError(new FeedError
                         {
                             DocumentId = doc.Id,
                             Message = ex.Message,
@@ -266,7 +266,7 @@ public sealed partial class FeedOperations(
                     // read *after* the increment so SuccessCount + FailureCount >= ProcessedCount
                     // holds within every snapshot and ProcessedCount is monotonic.
                     var processed = Interlocked.Increment(ref processedCount);
-                    onProgress?.Invoke(new FeedProgress(processed, result.SuccessCount, result.FailureCount, doc.Id));
+                    onProgress?.Invoke(new FeedProgress(processed, accumulator.SuccessCount, accumulator.FailureCount, doc.Id));
                 }
             }
             catch
@@ -289,7 +289,6 @@ public sealed partial class FeedOperations(
         catch (Exception whenAllException)
         {
             stopwatch.Stop();
-            result.Duration = stopwatch.Elapsed;
 
             // Caller cancellation always surfaces as OperationCanceledException.
             if (cancellationToken.IsCancellationRequested)
@@ -316,14 +315,15 @@ public sealed partial class FeedOperations(
                 _ => new AggregateException(realFaults)
             };
 
+            var partialResult = accumulator.ToResult(stopwatch.Elapsed);
             throw new VespaFeedException(
-                $"Feed pipeline faulted after {result.SuccessCount} succeeded and " +
-                $"{result.FailureCount} failed (see PartialResult): {cause.Message}",
-                result, cause);
+                $"Feed pipeline faulted after {partialResult.SuccessCount} succeeded and " +
+                $"{partialResult.FailureCount} failed (see PartialResult): {cause.Message}",
+                partialResult, cause);
         }
 
         stopwatch.Stop();
-        result.Duration = stopwatch.Elapsed;
+        var result = accumulator.ToResult(stopwatch.Elapsed);
         activity?.SetTag(VespaActivitySource.TagFeedCount, result.TotalDocuments);
         activity?.SetTag(VespaActivitySource.TagFeedSuccess, result.SuccessCount);
 

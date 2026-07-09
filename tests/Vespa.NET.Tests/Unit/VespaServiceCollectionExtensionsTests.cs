@@ -1,5 +1,7 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using Vespa;
 using Xunit;
 
@@ -316,6 +318,109 @@ public class VespaServiceCollectionExtensionsTests
                 null!,
                 (_, _) => { }
             ));
+    }
+
+    #endregion
+
+    #region Duplicate registration / options collision Tests
+
+    [Fact]
+    public void AddVespaClient_CalledTwiceUnnamed_Throws()
+    {
+        // Stacked unnamed registrations silently combine both configurations
+        var services = new ServiceCollection();
+        var options = new VespaClientOptions { Endpoint = "http://localhost:8080" };
+
+        services.AddVespaClient(options);
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            services.AddVespaClient(new VespaClientOptions { Endpoint = "http://other:8080" }));
+        Assert.Contains("named overload", ex.Message);
+    }
+
+    [Fact]
+    public void AddVespaClientWithResilienceStrategy_AfterAddVespaClient_Throws()
+    {
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://localhost:8080" });
+
+        Assert.Throws<InvalidOperationException>(() =>
+            services.AddVespaClientWithResilienceStrategy(
+                new VespaClientOptions { Endpoint = "http://other:8080" },
+                (_, _) => { }));
+    }
+
+    [Fact]
+    public void AddVespaClient_NamedRegistrations_AreNotAffectedByTheGuard()
+    {
+        var services = new ServiceCollection();
+        services.AddVespaClient("a", new VespaClientOptions { Endpoint = "http://a:8080" });
+        services.AddVespaClient("b", new VespaClientOptions { Endpoint = "http://b:8080" });
+
+        // Unnamed registration after named ones is still allowed
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://localhost:8080" });
+
+        var provider = services.BuildServiceProvider();
+        Assert.NotNull(provider.GetKeyedService<IVespaClient>("a"));
+        Assert.NotNull(provider.GetKeyedService<IVespaClient>("b"));
+        Assert.NotNull(provider.GetService<IVespaClient>());
+    }
+
+    [Fact]
+    public void AddVespaClient_DoesNotClobberConsumerRegisteredOptionsSingleton()
+    {
+        // The client factory captures the options in a closure; the container
+        // registration is diagnostics-only (TryAddSingleton) and never wins over
+        // a consumer's own VespaClientOptions singleton.
+        var services = new ServiceCollection();
+        var consumerOptions = new VespaClientOptions { Endpoint = "http://consumer:9999" };
+        services.AddSingleton(consumerOptions);
+
+        var vespaOptions = new VespaClientOptions { Endpoint = "http://localhost:8080" };
+        services.AddVespaClient(vespaOptions);
+
+        var provider = services.BuildServiceProvider();
+        Assert.Same(consumerOptions, provider.GetRequiredService<VespaClientOptions>());
+
+        var client = provider.GetRequiredService<IVespaClient>();
+        Assert.Equal(new Uri("http://localhost:8080"), GetUnderlyingHttpClient(client).BaseAddress);
+    }
+
+    #endregion
+
+    #region Health check registration Tests
+
+    [Fact]
+    public void AddVespa_WithClientName_ResolvesKeyedClient()
+    {
+        var services = new ServiceCollection();
+        services.AddVespaClient("orders", new VespaClientOptions { Endpoint = "http://localhost:8080" });
+        services.AddHealthChecks().AddVespa(clientName: "orders", name: "vespa-orders");
+
+        var provider = services.BuildServiceProvider();
+        var registrations = provider
+            .GetRequiredService<IOptions<HealthCheckServiceOptions>>()
+            .Value.Registrations;
+
+        // Materializing the health check resolves the keyed IVespaClient("orders")
+        var registration = Assert.Single(registrations, r => r.Name == "vespa-orders");
+        Assert.IsType<VespaHealthCheck>(registration.Factory(provider));
+    }
+
+    [Fact]
+    public void AddVespa_Unnamed_ResolvesDefaultClient()
+    {
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://localhost:8080" });
+        services.AddHealthChecks().AddVespa();
+
+        var provider = services.BuildServiceProvider();
+        var registrations = provider
+            .GetRequiredService<IOptions<HealthCheckServiceOptions>>()
+            .Value.Registrations;
+
+        var registration = Assert.Single(registrations, r => r.Name == "vespa");
+        Assert.IsType<VespaHealthCheck>(registration.Factory(provider));
     }
 
     #endregion

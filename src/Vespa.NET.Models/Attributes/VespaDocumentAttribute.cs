@@ -16,7 +16,7 @@ public class VespaDocumentAttribute : Attribute
     /// <summary>
     /// Whether this is a global document (replicated to all content nodes)
     /// </summary>
-    public bool Global { get; set; } = false;
+    public bool Global { get; set; }
 
     /// <summary>
     /// Namespace for this document type

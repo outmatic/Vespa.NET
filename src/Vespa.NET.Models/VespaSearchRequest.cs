@@ -288,9 +288,18 @@ public sealed class VespaSearchRequest
 
     /// <summary>
     /// Creates a shallow copy of this request suitable for pagination.
+    /// The <see cref="CustomParameters"/> and <see cref="Input"/> dictionaries are copied
+    /// so per-page mutations never bleed between clones; the values they hold (and other
+    /// reference-typed properties such as <see cref="Ranking"/>) are still shared.
     /// Cheaper than a JSON serialize→deserialize round-trip.
     /// </summary>
-    public VespaSearchRequest ShallowClone() => (VespaSearchRequest)MemberwiseClone();
+    public VespaSearchRequest ShallowClone()
+    {
+        var clone = (VespaSearchRequest)MemberwiseClone();
+        clone.CustomParameters = CustomParameters is null ? null : new(CustomParameters);
+        clone.Input = Input is null ? null : new(Input);
+        return clone;
+    }
 
     // ── Fluent helpers ─────────────────────────────────────────────────────────
 
