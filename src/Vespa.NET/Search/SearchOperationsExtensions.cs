@@ -8,7 +8,7 @@ namespace Vespa.Search;
 
 /// <summary>
 /// Extension methods on <see cref="ISearchOperations"/> that infer
-/// <c>documentType</c> and <c>@namespace</c> from <c>[VespaDocument]</c> on the model type.
+/// <c>documentType</c> from <c>[VespaDocument]</c> on the model type.
 /// </summary>
 public static class SearchOperationsExtensions
 {
@@ -30,6 +30,9 @@ public static class SearchOperationsExtensions
         VespaSearchRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
     {
+        ArgumentNullException.ThrowIfNull(ops);
+        ArgumentNullException.ThrowIfNull(request);
+
         IReadOnlyList<string>? tokens = null;
         while (true)
         {
@@ -53,6 +56,12 @@ public static class SearchOperationsExtensions
     /// <summary>
     /// Iterates search results page by page, yielding each full <see cref="VespaSearchResponse{T}"/>.
     /// Stops automatically when a page returns fewer hits than <paramref name="pageSize"/>.
+    /// <para>
+    /// <b>Server limits:</b> Vespa caps <c>hits</c> at <c>maxHits</c> (default 400) and
+    /// <c>offset</c> at <c>maxOffset</c> (default 1000) — deep pagination fails unless those
+    /// query-profile limits are raised. To export a full corpus, use document visiting
+    /// (<c>Documents.VisitAsync</c>/<c>VisitJsonlAsync</c>) instead.
+    /// </para>
     /// </summary>
     public static async IAsyncEnumerable<VespaSearchResponse<T>> SearchPagedAsync<T>(
         this ISearchOperations ops,
@@ -81,7 +90,7 @@ public static class SearchOperationsExtensions
     }
 
     /// <summary>
-    /// Nearest-neighbor search — document type and namespace inferred from <c>[VespaDocument]</c>.
+    /// Nearest-neighbor search — document type inferred from <c>[VespaDocument]</c>.
     /// </summary>
     public static Task<VespaSearchResponse<T>> NearestNeighborSearchAsync<T>(
         this ISearchOperations ops,
@@ -92,9 +101,9 @@ public static class SearchOperationsExtensions
         string? rankProfile = null,
         CancellationToken cancellationToken = default) where T : class
     {
-        var (docType, ns) = VespaDocumentMeta.For<T>();
+        var (docType, _) = VespaDocumentMeta.For<T>();
         return ops.NearestNeighborSearchAsync<T>(
-            queryEmbedding, embeddingField, docType, topK, filter, rankProfile, ns, cancellationToken);
+            queryEmbedding, embeddingField, docType, topK, filter, rankProfile, cancellationToken);
     }
 
     /// <summary>
@@ -116,9 +125,9 @@ public static class SearchOperationsExtensions
         string? rankProfile = null,
         CancellationToken cancellationToken = default) where T : class
     {
-        var (docType, ns) = VespaDocumentMeta.For<T>();
+        var (docType, _) = VespaDocumentMeta.For<T>();
         var fieldName = VespaDocumentMeta.FieldName(embeddingFieldSelector);
         return ops.NearestNeighborSearchAsync<T>(
-            queryEmbedding, fieldName, docType, topK, filter, rankProfile, ns, cancellationToken);
+            queryEmbedding, fieldName, docType, topK, filter, rankProfile, cancellationToken);
     }
 }

@@ -22,6 +22,10 @@ foreach (var hit in response.Root.Children)
 
 ## Nearest-Neighbor Search
 
+`NearestNeighborSearchAsync` generates `{totalTargetHits: topK}nearestNeighbor(...)`.
+The `filter` string is embedded verbatim in the YQL — never pass unvalidated
+end-user input; build it with `YqlBuilder` where possible.
+
 ```csharp
 // Lambda — resolves field name via [VespaTensor]
 var results = await client.Search.NearestNeighborSearchAsync<Product>(
@@ -35,12 +39,12 @@ var results2 = await client.Search.NearestNeighborSearchAsync<Product>(
     filter: "price < 500",
     rankProfile: "semantic");
 
-// Via YQL builder with annotations
+// Via YQL builder with annotations (totalTargetHits preferred over per-node targetHits)
 var yql = YqlBuilder<Product>
     .Select()
     .Where(w => w.NearestNeighbor(
         p => p.Embedding, "query_embedding",
-        targetHits: 100,
+        totalTargetHits: 100,
         approximate: true,
         distanceThreshold: 0.5,
         hnswExploreAdditionalHits: 200))
@@ -93,6 +97,11 @@ await foreach (var hit in client.Search.SearchStreamAsync<Product>(request, page
 await foreach (var page in client.Search.SearchPagedAsync<Product>(request, pageSize: 50))
     Console.WriteLine($"Page with {page.Root.Children.Count} hits");
 ```
+
+> **Server limits:** Vespa caps `hits` at `maxHits` (default 400) and `offset` at
+> `maxOffset` (default 1000) — deep pagination fails unless those query-profile
+> limits are raised. To export a full corpus, use document visiting
+> (`Documents.VisitAsync` / `VisitJsonlAsync`) instead of search pagination.
 
 ---
 

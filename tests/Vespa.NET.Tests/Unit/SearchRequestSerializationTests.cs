@@ -38,6 +38,68 @@ public class SearchRequestSerializationTests
         Assert.Equal(JsonValueKind.Object, hit.MatchFeatures!["closeness(field,embedding)"].ValueKind);
     }
 
+    // --- D19: new request parameters ---
+
+    [Fact]
+    public void ModelLanguage_Serializes()
+    {
+        var req = new VespaSearchRequest { Yql = "select * from music;", ModelLanguage = "en_US" };
+        var json = JsonSerializer.Serialize(req, JsonOpts);
+        Assert.Contains("\"model.language\":\"en_US\"", json);
+    }
+
+    [Fact]
+    public void ModelEncoding_Serializes()
+    {
+        var req = new VespaSearchRequest { Yql = "select * from music;", ModelEncoding = "utf-8" };
+        var json = JsonSerializer.Serialize(req, JsonOpts);
+        Assert.Contains("\"model.encoding\":\"utf-8\"", json);
+    }
+
+    [Fact]
+    public void CollapseSummary_Serializes()
+    {
+        var req = new VespaSearchRequest { Yql = "select * from music;", CollapseSummary = "compact" };
+        var json = JsonSerializer.Serialize(req, JsonOpts);
+        Assert.Contains("\"collapse.summary\":\"compact\"", json);
+    }
+
+    [Fact]
+    public void PresentationTemplate_Serializes()
+    {
+        var req = new VespaSearchRequest { Yql = "select * from music;", PresentationTemplate = "mypage" };
+        var json = JsonSerializer.Serialize(req, JsonOpts);
+        Assert.Contains("\"presentation.template\":\"mypage\"", json);
+    }
+
+    [Fact]
+    public void Timezone_Serializes()
+    {
+        var req = new VespaSearchRequest { Yql = "select * from music;", Timezone = "Europe/Oslo" };
+        var json = JsonSerializer.Serialize(req, JsonOpts);
+        Assert.Contains("\"timezone\":\"Europe/Oslo\"", json);
+    }
+
+    [Fact]
+    public void Select_Serializes()
+    {
+        var req = new VespaSearchRequest
+        {
+            Yql = "select * from music;",
+            Select = "all(group(category) each(output(count())))"
+        };
+        var json = JsonSerializer.Serialize(req, JsonOpts);
+        Assert.Contains("\"select\":\"all(group(category) each(output(count())))\"", json);
+    }
+
+    [Fact]
+    public void TraceQuery_Serializes()
+    {
+        var req = new VespaSearchRequest { Yql = "select * from music;", TraceQuery = false };
+        var json = JsonSerializer.Serialize(req, JsonOpts);
+        Assert.Contains("\"trace.query\":false", json);
+    }
+
     // --- Model parameters ---
 
     [Fact]

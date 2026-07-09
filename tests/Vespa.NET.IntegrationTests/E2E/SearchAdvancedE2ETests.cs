@@ -46,7 +46,7 @@ public class SearchAdvancedE2ETests(VespaFixture fixture)
             var queryTensor = VespaTensor.FromDenseValues(new float[] { 1, 0, 0, 0 });
             var result = await fixture.Client.Search.NearestNeighborSearchAsync<TestProduct>(
                 queryTensor, "embedding", "product",
-                topK: 3, rankProfile: "closeness_profile", @namespace: "test");
+                topK: 3, rankProfile: "closeness_profile");
 
             Assert.NotEmpty(result.Root.Children);
             // The closest document should be NN-A (exact match)

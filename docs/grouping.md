@@ -30,6 +30,10 @@ foreach (var group in groupList.Groups)
     Console.WriteLine($"{group.Value}: count={group.Aggregations["count()"]}");
 ```
 
+`VespaGroup.Aggregations` holds the numeric outputs; non-numeric outputs (e.g.
+`tostring(...)`/`toraw(...)`) are available as `JsonElement`s in
+`VespaGroup.RawAggregations`.
+
 ---
 
 ## Grouping Extensions
@@ -42,8 +46,47 @@ GroupingBuilder.All().GroupByFixedWidth("price", 100);
 
 ### Predefined buckets
 
+Tuple buckets are inclusive of `From`, exclusive of `To`; values outside every
+bucket land in the rest group. Use `GroupingBucket` for `inf` endpoints or
+open/closed bounds:
+
 ```csharp
-GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500), (500, double.MaxValue));
+GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500));
+// group(predefined(price, bucket[0,100), bucket[100,500)))
+
+GroupingBuilder.All().GroupByBuckets("price",
+    GroupingBucket.Numeric(null, 100),                      // bucket[-inf,100)
+    GroupingBucket.Numeric(100, 500, toInclusive: true),    // bucket[100,500]
+    GroupingBucket.Numeric(500, null));                     // bucket[500,inf)
+```
+
+### Filtering groups
+
+`filter(...)` / `keep(...)` restrict which values are collected when grouping on
+multivalue attributes (`where(true)` was removed from the grouping grammar):
+
+```csharp
+GroupingBuilder.All()
+    .Group("my_array")
+    .Filter(GroupingFilter.Regex("foo.*", "my_array"))
+    .Each(e => e.Output(GroupingAgg.Count()));
+// all(group(my_array) filter(regex("foo.*", my_array)) each(output(count())))
+
+// Composable: range, istrue, not/and/or
+GroupingFilter.Range(1990, 2012, "year", minInclusive: true, maxInclusive: true);
+GroupingFilter.IsTrue("my_bool").And(GroupingFilter.Not(GroupingFilter.Regex(".*foo", "f")));
+```
+
+### Labels, parallel each blocks, max(inf), multi-key order
+
+```csharp
+GroupingBuilder.All()
+    .Group("genre")
+    .MaxAll()                                       // max(inf) — all groups
+    .OrderByDescending(GroupingAgg.Count())
+    .OrderByAscending(GroupingAgg.Avg("price"))     // order(-count(), +avg(price))
+    .Each(e => e.Output(GroupingAgg.As(GroupingAgg.Count(), "n")).As("counts"))
+    .Each(e => e.Output(GroupingAgg.Avg("year")).As("avgs"));   // parallel each blocks
 ```
 
 ### Per-group document summaries
@@ -64,6 +107,9 @@ foreach (var group in response.GroupingResults[0].Groups)
 ```
 
 ### Nested grouping
+
+`SubGroup` may be called multiple times for parallel sub-groupings (label them
+with `.As("name")`):
 
 ```csharp
 GroupingBuilder.All().Group("category").Each(e => e
@@ -105,6 +151,8 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 | `Summary()` | Hits per group: `each(output(summary()))` |
 | `Summary("class", maxHits: 3)` | Hits per group with summary class and limit |
 
+Label any aggregator with `GroupingAgg.As(expr, "label")` → `expr as(label)`.
+
 ### Time Functions
 
 | Function | Description |
@@ -113,6 +161,8 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 | `TimeYear(field)` | Year component |
 | `TimeMonthOfYear(field)` | Month (1-12) |
 | `TimeDayOfMonth(field)` | Day (1-31) |
+| `TimeDayOfWeek(field)` | Day of week (0-6, Monday = 0) |
+| `TimeDayOfYear(field)` | Day of year (0-365) |
 | `TimeHourOfDay(field)` | Hour (0-23) |
 | `TimeMinuteOfHour(field)` | Minute (0-59) |
 | `TimeSecondOfMinute(field)` | Second (0-59) |
@@ -121,11 +171,29 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 
 | Function | Description |
 |---|---|
-| `MathFloor(expr)` | Floor |
 | `MathLog(expr)` | Natural logarithm |
 | `MathSqrt(expr)` | Square root |
-| `MathAbs(expr)` | Absolute value |
 | `MathPow(expr, n)` | Power |
+
+(The grouping grammar has no `math.floor`, `math.abs` or `cmp`.)
+
+### String / Conversion Functions
+
+| Function | Description |
+|---|---|
+| `StrLen(expr)` | Byte length of a string |
+| `StrCat(e1, e2, …)` | Concatenate expressions |
+| `ToStringValue(expr)` / `ToLong(expr)` / `ToDouble(expr)` / `ToRaw(expr)` | Type conversion |
+
+### List / Accessor Functions
+
+| Function | Description |
+|---|---|
+| `Size(expr)` | Element count |
+| `Sort(expr)` / `Reverse(expr)` | Sort / reverse a multivalue expression |
+| `At(attribute, index)` | `attribute.at(index)` array access |
+| `InterpolatedLookup(attribute, expr)` | Interpolated index lookup in a sorted array |
+| `GeoDistance(attribute, lat, lon, miles?)` | `geo_distance(attribute(f), lat, lon).km` |
 
 ### Composite Functions
 
@@ -134,6 +202,7 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 | `Cat(f1, f2)` | Concatenate |
 | `Md5(field, maxLength, bits)` | MD5 hash |
 | `Uca(field, "locale", "strength"?)` | Unicode collation |
+| `XorBit(expr, width)` | XOR over `width` bits |
 | `ZCurveX(field)` | Z-curve X coordinate |
 | `ZCurveY(field)` | Z-curve Y coordinate |
 | `DocIdNsSpecific()` | Namespace-specific document ID |
@@ -143,9 +212,9 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 | Function | Description |
 |---|---|
 | `Add(a, b)` | Addition |
+| `Sub(a, b)` | Subtraction |
 | `Mul(a, b)` | Multiplication |
 | `Div(a, b)` | Division |
 | `Mod(a, b)` | Modulo |
 | `Neg(expr)` | Negation |
-| `Cmp(a, b)` | Comparison (-1, 0, 1) |
 | `FixedWidth(field, width)` | Fixed-width bucketing |

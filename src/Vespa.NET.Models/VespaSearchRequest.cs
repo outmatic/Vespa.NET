@@ -50,16 +50,11 @@ public sealed class VespaSearchRequest
     public int? TraceLevel { get; set; }
 
     // ── Vespa streaming search mode ────────────────────────────────────────────
-
-    /// <summary>
-    /// Activate Vespa streaming search for this user ID.
-    /// Requires a content cluster configured with <c>streaming</c> mode.
-    /// </summary>
-    [JsonPropertyName("streaming.userid")]
-    public string? StreamingUserId { get; set; }
+    // streaming.userid is no longer part of the query API — use StreamingGroupName.
 
     /// <summary>
     /// Activate Vespa streaming search for this group name.
+    /// Requires a content cluster configured with <c>streaming</c> mode.
     /// </summary>
     [JsonPropertyName("streaming.groupname")]
     public string? StreamingGroupName { get; set; }
@@ -93,6 +88,13 @@ public sealed class VespaSearchRequest
     /// </summary>
     [JsonPropertyName("collapsesize")]
     public int? CollapseSize { get; set; }
+
+    /// <summary>
+    /// Document summary class used to fetch the fields needed for collapsing.
+    /// Equivalent to Vespa's <c>collapse.summary</c> parameter.
+    /// </summary>
+    [JsonPropertyName("collapse.summary")]
+    public string? CollapseSummary { get; set; }
 
     // ── Presentation / Highlighting ────────────────────────────────────────────
 
@@ -152,6 +154,17 @@ public sealed class VespaSearchRequest
     [JsonPropertyName("model.locale")]
     public string? ModelLocale { get; set; }
 
+    /// <summary>
+    /// RFC 5646 language tag (underscores allowed) — legacy alternative to
+    /// <see cref="ModelLocale"/>; also see the <c>language</c> query-term annotation.
+    /// </summary>
+    [JsonPropertyName("model.language")]
+    public string? ModelLanguage { get; set; }
+
+    /// <summary>Result encoding (IANA character-set name, default utf-8).</summary>
+    [JsonPropertyName("model.encoding")]
+    public string? ModelEncoding { get; set; }
+
     /// <summary>Simple query language query text.</summary>
     [JsonPropertyName("model.queryString")]
     public string? ModelQueryString { get; set; }
@@ -174,6 +187,13 @@ public sealed class VespaSearchRequest
     [JsonPropertyName("trace.timestamps")]
     public bool? TraceTimestamps { get; set; }
 
+    /// <summary>
+    /// Whether to include the query in trace messages (default true).
+    /// Set to false to avoid serializing very large queries into traces.
+    /// </summary>
+    [JsonPropertyName("trace.query")]
+    public bool? TraceQuery { get; set; }
+
     // ── Presentation extras ───────────────────────────────────────────────
 
     /// <summary>Include optional timing information in response.</summary>
@@ -183,6 +203,13 @@ public sealed class VespaSearchRequest
     /// <summary>Tensor rendering format: short, long, short-value, long-value, hex.</summary>
     [JsonPropertyName("presentation.format.tensors")]
     public string? PresentationFormatTensors { get; set; }
+
+    /// <summary>
+    /// Id of a deployed page template to use for this result
+    /// (used with the <c>page</c> result format).
+    /// </summary>
+    [JsonPropertyName("presentation.template")]
+    public string? PresentationTemplate { get; set; }
 
     // ── Grouping tuning ───────────────────────────────────────────────────
 
@@ -197,6 +224,21 @@ public sealed class VespaSearchRequest
     /// <summary>Global cost limit for grouping (default 10000).</summary>
     [JsonPropertyName("grouping.globalMaxGroups")]
     public int? GroupingGlobalMaxGroups { get; set; }
+
+    /// <summary>
+    /// Timezone used to offset all time-related expressions in grouping
+    /// (Java timezone id, default utc).
+    /// </summary>
+    [JsonPropertyName("timezone")]
+    public string? Timezone { get; set; }
+
+    /// <summary>
+    /// JSON grouping request (alternative to the YQL pipe syntax): multi-level
+    /// result-set statistics / hit groups to return, e.g.
+    /// <c>all(group(category) each(output(count())))</c>.
+    /// </summary>
+    [JsonPropertyName("select")]
+    public string? Select { get; set; }
 
     // ── Other ─────────────────────────────────────────────────────────────
 
@@ -310,10 +352,25 @@ public sealed class RankingConfig
     public Dictionary<string, object>? Properties { get; set; }
 
     /// <summary>
-    /// Number of top-N documents to consider for second-phase re-ranking
+    /// Number of top-N documents per node to consider for second-phase re-ranking
+    /// (<c>ranking.secondPhase.rerankCount</c>). Prefer <see cref="TotalRerankCount"/>.
     /// </summary>
-    [JsonPropertyName("rerankCount")]
+    [JsonPropertyName("secondPhase.rerankCount")]
     public int? RerankCount { get; set; }
+
+    /// <summary>
+    /// Number of documents to rank in the second phase in total over the queried
+    /// content nodes (<c>ranking.secondPhase.totalRerankCount</c>); 0 disables second phase.
+    /// </summary>
+    [JsonPropertyName("secondPhase.totalRerankCount")]
+    public int? TotalRerankCount { get; set; }
+
+    /// <summary>
+    /// Minimum rank score to remain a hit after second-phase reranking
+    /// (<c>ranking.secondPhase.rankScoreDropLimit</c>).
+    /// </summary>
+    [JsonPropertyName("secondPhase.rankScoreDropLimit")]
+    public double? SecondPhaseRankScoreDropLimit { get; set; }
 
     /// <summary>Return all computed rank features per hit (useful for debugging)</summary>
     [JsonPropertyName("listFeatures")]
@@ -339,17 +396,34 @@ public sealed class RankingConfig
     [JsonPropertyName("queryCache")]
     public bool? QueryCache { get; set; }
 
-    /// <summary>Documents keeping rank value after match phase.</summary>
+    /// <summary>
+    /// Hits keeping their rank score after first phase, per node
+    /// (<c>ranking.keepRankCount</c>). Prefer <see cref="TotalKeepRankCount"/>.
+    /// </summary>
     [JsonPropertyName("keepRankCount")]
     public int? KeepRankCount { get; set; }
+
+    /// <summary>
+    /// Hits keeping their rank score after first phase, in total over the nodes
+    /// participating in the query (<c>ranking.totalKeepRankCount</c>).
+    /// </summary>
+    [JsonPropertyName("totalKeepRankCount")]
+    public int? TotalKeepRankCount { get; set; }
 
     /// <summary>Minimum first-phase score threshold. Documents scoring below are dropped.</summary>
     [JsonPropertyName("rankScoreDropLimit")]
     public double? RankScoreDropLimit { get; set; }
 
-    /// <summary>Global phase rerank count.</summary>
+    /// <summary>Global phase rerank count; 0 disables global-phase reranking.</summary>
     [JsonPropertyName("globalPhase.rerankCount")]
     public int? GlobalPhaseRerankCount { get; set; }
+
+    /// <summary>
+    /// Minimum rank score to remain a hit after global-phase reranking
+    /// (<c>ranking.globalPhase.rankScoreDropLimit</c>).
+    /// </summary>
+    [JsonPropertyName("globalPhase.rankScoreDropLimit")]
+    public double? GlobalPhaseRankScoreDropLimit { get; set; }
 
     // ── Match phase (early termination) ───────────────────────────────────
 
@@ -357,9 +431,16 @@ public sealed class RankingConfig
     [JsonPropertyName("matchPhase.attribute")]
     public string? MatchPhaseAttribute { get; set; }
 
-    /// <summary>Maximum hits during match phase.</summary>
+    /// <summary>Maximum hits per node during match phase. Prefer <see cref="MatchPhaseTotalMaxHits"/>.</summary>
     [JsonPropertyName("matchPhase.maxHits")]
     public long? MatchPhaseMaxHits { get; set; }
+
+    /// <summary>
+    /// Maximum hits generated in total over the content nodes during the match phase
+    /// (<c>ranking.matchPhase.totalMaxHits</c>); 0 disables match-phase early termination.
+    /// </summary>
+    [JsonPropertyName("matchPhase.totalMaxHits")]
+    public long? MatchPhaseTotalMaxHits { get; set; }
 
     /// <summary>Keep lowest values (true) or highest (false, default).</summary>
     [JsonPropertyName("matchPhase.ascending")]

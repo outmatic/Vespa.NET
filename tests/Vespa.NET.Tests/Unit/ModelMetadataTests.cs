@@ -522,14 +522,14 @@ public class ModelMetadataTests
 
         var mock = new Mock<ISearchOperations>();
         mock.Setup(m => m.NearestNeighborSearchAsync<Music>(
-                embedding, "my_field", "music", 10, null, null, "mynamespace",
+                embedding, "my_field", "music", 10, null, null,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaSearchResponse<Music>());
 
         await mock.Object.NearestNeighborSearchAsync<Music>(embedding, "my_field");
 
         mock.Verify(m => m.NearestNeighborSearchAsync<Music>(
-            embedding, "my_field", "music", 10, null, null, "mynamespace",
+            embedding, "my_field", "music", 10, null, null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -540,7 +540,7 @@ public class ModelMetadataTests
 
         var mock = new Mock<ISearchOperations>();
         mock.Setup(m => m.NearestNeighborSearchAsync<Music>(
-                embedding, "embedding", "music", 5, null, null, "mynamespace",
+                embedding, "embedding", "music", 5, null, null,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaSearchResponse<Music>());
 
@@ -548,7 +548,7 @@ public class ModelMetadataTests
         await mock.Object.NearestNeighborSearchAsync<Music>(embedding, m => m.Embedding, topK: 5);
 
         mock.Verify(m => m.NearestNeighborSearchAsync<Music>(
-            embedding, "embedding", "music", 5, null, null, "mynamespace",
+            embedding, "embedding", "music", 5, null, null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -559,7 +559,7 @@ public class ModelMetadataTests
 
         var mock = new Mock<ISearchOperations>();
         mock.Setup(m => m.NearestNeighborSearchAsync<Music>(
-                embedding, "artist_name", "music", 10, null, null, "mynamespace",
+                embedding, "artist_name", "music", 10, null, null,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaSearchResponse<Music>());
 
@@ -567,7 +567,7 @@ public class ModelMetadataTests
         await mock.Object.NearestNeighborSearchAsync<Music>(embedding, m => m.ArtistName);
 
         mock.Verify(m => m.NearestNeighborSearchAsync<Music>(
-            embedding, "artist_name", "music", 10, null, null, "mynamespace",
+            embedding, "artist_name", "music", 10, null, null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 }

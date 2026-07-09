@@ -62,7 +62,6 @@ public sealed partial class SearchOperations(
         int topK = 10,
         string? filter = null,
         string? rankProfile = null,
-        string? @namespace = null,
         CancellationToken cancellationToken = default) where T : class
     {
         ArgumentNullException.ThrowIfNull(queryEmbedding);
@@ -84,7 +83,6 @@ public sealed partial class SearchOperations(
 
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.NearestNeighbor);
         activity?.SetTag(VespaActivitySource.TagDocType, documentType);
-        activity?.SetTag(VespaActivitySource.TagNamespace, @namespace ?? _options.DefaultNamespace);
         activity?.SetTag(VespaActivitySource.TagEmbeddingField, embeddingField);
         activity?.SetTag(VespaActivitySource.TagTopK, topK);
 
@@ -190,7 +188,14 @@ public sealed partial class SearchOperations(
     {
         try
         {
-            using var response = await _httpClient.PostAsJsonAsync(VespaPaths.Search, request, VespaJsonOptions.Default, cancellationToken);
+            // ResponseHeadersRead lets large result sets stream into the JSON parser
+            // instead of buffering the whole body first. The error path is safe: it
+            // reads the (unbuffered) body to a string exactly once.
+            var httpRequest = new HttpRequestMessage(HttpMethod.Post, VespaPaths.Search)
+            {
+                Content = JsonContent.Create(request, options: VespaJsonOptions.Default)
+            };
+            using var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             await EnsureSearchSuccessAsync(response, activity, cancellationToken);
             return await parseResponse(response);
         }
@@ -245,7 +250,8 @@ public sealed partial class SearchOperations(
             yqlBuilder.Append($"({filter}) and ");
 
         var queryTensorName = $"query_{embeddingField}";
-        yqlBuilder.Append($"({{targetHits: {topK}}}nearestNeighbor({embeddingField}, {queryTensorName}))");
+        // totalTargetHits (hits over all content nodes) is the documented, preferred annotation
+        yqlBuilder.Append($"({{totalTargetHits: {topK}}}nearestNeighbor({embeddingField}, {queryTensorName}))");
 
         return new VespaSearchRequest
         {
@@ -275,25 +281,9 @@ public sealed partial class SearchOperations(
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.SearchStream);
         activity?.SetTag(VespaActivitySource.TagYql, request.Yql);
 
-        var offset = request.Offset;
-
-        while (true)
-        {
-            var page = request.ShallowClone();
-            page.Hits = pageSize;
-            page.Offset = offset;
-
-            var response = await SearchAsync<T>(page, cancellationToken);
-            var hits = response.Root.Children;
-
-            foreach (var hit in hits)
+        await foreach (var page in this.SearchPagedAsync<T>(request, pageSize, cancellationToken))
+            foreach (var hit in page.Root.Children)
                 yield return hit;
-
-            if (hits.Count < pageSize)
-                yield break;
-
-            offset += hits.Count;
-        }
     }
 
     /// <summary>
@@ -367,18 +357,27 @@ public sealed partial class SearchOperations(
                     : ParseBucketId(groupId);
 
                 var aggregations = new Dictionary<string, double>();
+                var rawAggregations = new Dictionary<string, JsonElement>();
 
                 if (groupNode.TryGetProperty("fields", out var aggFields))
                     foreach (var field in aggFields.EnumerateObject())
-                        if (field.Value.TryGetDouble(out var d))
+                    {
+                        // Clone detaches the element from the JsonDocument disposed after parsing
+                        rawAggregations[field.Name] = field.Value.Clone();
+                        if (field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetDouble(out var d))
                             aggregations[field.Name] = d;
+                    }
 
                 var subGroups = (IReadOnlyList<VespaGroupList>)[];
                 var hits = (IReadOnlyList<object>)[];
                 if (groupNode.TryGetProperty("children", out var subChildren))
                     (subGroups, hits) = ParseGroupChildren<T>(subChildren);
 
-                groups.Add(new VespaGroup(value, aggregations, subGroups) { Hits = hits });
+                groups.Add(new VespaGroup(value, aggregations, subGroups)
+                {
+                    Hits = hits,
+                    RawAggregations = rawAggregations
+                });
             }
         }
 

@@ -992,12 +992,10 @@ public class GroupingBuilderTests : IDisposable
     [Fact] public void GroupingAgg_TimeMinuteOfHour() => Assert.Equal("time.minuteofhour(timestamp)", GroupingAgg.TimeMinuteOfHour("timestamp"));
     [Fact] public void GroupingAgg_TimeSecondOfMinute() => Assert.Equal("time.secondofminute(timestamp)", GroupingAgg.TimeSecondOfMinute("timestamp"));
 
-    // --- M10: Math functions ---
+    // --- M10: Math functions (the grammar has no math.floor/math.abs) ---
 
-    [Fact] public void GroupingAgg_MathFloor() => Assert.Equal("math.floor(price)", GroupingAgg.MathFloor("price"));
     [Fact] public void GroupingAgg_MathLog() => Assert.Equal("math.log(score)", GroupingAgg.MathLog("score"));
     [Fact] public void GroupingAgg_MathSqrt() => Assert.Equal("math.sqrt(variance)", GroupingAgg.MathSqrt("variance"));
-    [Fact] public void GroupingAgg_MathAbs() => Assert.Equal("math.abs(delta)", GroupingAgg.MathAbs("delta"));
     [Fact] public void GroupingAgg_MathPow() => Assert.Equal("math.pow(score, 2)", GroupingAgg.MathPow("score", 2));
 
     // --- M10: Composite expressions ---
@@ -1030,28 +1028,98 @@ public class GroupingBuilderTests : IDisposable
     }
 
     [Fact]
-    public void Build_GroupByMathFloor_ProducesCorrectYql()
+    public void Build_GroupByToLong_ProducesCorrectYql()
     {
         var g = GroupingBuilder.All()
-            .Group(GroupingAgg.MathFloor("price"))
+            .Group(GroupingAgg.ToLong("price"))
             .Each(e => e.Output(GroupingAgg.Count(), GroupingAgg.Avg("price")))
             .Build();
 
-        Assert.Contains("group(math.floor(price))", g);
+        Assert.Contains("group(tolong(price))", g);
     }
 
-    // --- M10: where(true) ---
+    // --- filter/keep (where(true) was removed from the grouping grammar) ---
 
     [Fact]
-    public void Build_WhereTrue_IncludesWhereClause()
+    public void Build_FilterRegex_ProducesFilterClause()
     {
         var g = GroupingBuilder.All()
-            .Group("genre")
-            .WhereTrue()
+            .Group("my_array")
+            .Filter(GroupingFilter.Regex("foo.*", "my_array"))
             .Each(e => e.Output(GroupingAgg.Count()))
             .Build();
 
-        Assert.Contains("where(true)", g);
+        Assert.Equal("""all(group(my_array) filter(regex("foo.*", my_array)) each(output(count())))""", g);
+    }
+
+    [Fact]
+    public void Build_FilterRange_DefaultBounds_OmitsBooleans()
+    {
+        // Default: lower inclusive, upper exclusive → no boolean pair
+        var g = GroupingBuilder.All()
+            .Group("some_field")
+            .Filter(GroupingFilter.Range(1990, 2012, "year"))
+            .Build();
+
+        Assert.Contains("filter(range(1990, 2012, year))", g);
+    }
+
+    [Fact]
+    public void Build_FilterRange_BothInclusive_EmitsBooleans()
+    {
+        var g = GroupingBuilder.All()
+            .Group("some_field")
+            .Filter(GroupingFilter.Range(1990, 2012, "year", minInclusive: true, maxInclusive: true))
+            .Build();
+
+        Assert.Contains("filter(range(1990, 2012, year, true, true))", g);
+    }
+
+    [Fact]
+    public void Build_FilterIsTrue_ProducesIsTrueClause()
+    {
+        var g = GroupingBuilder.All()
+            .Group("some_field")
+            .Filter(GroupingFilter.IsTrue("my_bool_attribute"))
+            .Build();
+
+        Assert.Contains("filter(istrue(my_bool_attribute))", g);
+    }
+
+    [Fact]
+    public void Build_FilterNotAndOr_Compose()
+    {
+        var filter = GroupingFilter.Regex("bar.*", "some_field")
+            .Or(GroupingFilter.Regex("baz.*", "other_field"))
+            .And(GroupingFilter.Not(GroupingFilter.Regex(".*foo", "some_field")));
+
+        var g = GroupingBuilder.All().Group("my_field").Filter(filter).Build();
+
+        Assert.Contains(
+            """filter((regex("bar.*", some_field) or regex("baz.*", other_field)) and not regex(".*foo", some_field))""",
+            g);
+    }
+
+    [Fact]
+    public void Build_Keep_ProducesKeepClause()
+    {
+        var g = GroupingBuilder.All()
+            .Group("my_field")
+            .Keep(GroupingFilter.Regex("a.*", "my_field"))
+            .Build();
+
+        Assert.Contains("keep(regex(\"a.*\", my_field))", g);
+    }
+
+    [Fact]
+    public void Build_FilterRegex_EscapesQuotes()
+    {
+        var g = GroupingBuilder.All()
+            .Group("f")
+            .Filter(GroupingFilter.Regex("a\"b", "f"))
+            .Build();
+
+        Assert.Contains("""filter(regex("a\"b", f))""", g);
     }
 
     // --- M10: alias ---
@@ -1132,10 +1200,6 @@ public class GroupingBuilderTests : IDisposable
         Assert.DoesNotContain("customParameters", json);
     }
 
-    // --- M13: cmp() aggregation comparison ---
-
-    [Fact] public void GroupingAgg_Cmp() => Assert.Equal("cmp(price, cost)", GroupingAgg.Cmp("price", "cost"));
-
     // --- M13: fixedwidth() expression helper ---
 
     [Fact] public void GroupingAgg_FixedWidth() => Assert.Equal("fixedwidth(price, 100)", GroupingAgg.FixedWidth("price", 100));
@@ -1143,6 +1207,224 @@ public class GroupingBuilderTests : IDisposable
     [Fact]
     public void GroupingAgg_FixedWidth_FloatWidth_UsesInvariantCulture()
         => Assert.Equal("fixedwidth(score, 0.25)", GroupingAgg.FixedWidth("score", 0.25));
+
+    // --- D18: expression functions ---
+
+    [Fact] public void GroupingAgg_StrLen() => Assert.Equal("strlen(name)", GroupingAgg.StrLen("name"));
+    [Fact] public void GroupingAgg_StrCat() => Assert.Equal("strcat(first, last)", GroupingAgg.StrCat("first", "last"));
+    [Fact] public void GroupingAgg_ToStringValue() => Assert.Equal("tostring(year)", GroupingAgg.ToStringValue("year"));
+    [Fact] public void GroupingAgg_ToLong() => Assert.Equal("tolong(price)", GroupingAgg.ToLong("price"));
+    [Fact] public void GroupingAgg_ToDouble() => Assert.Equal("todouble(price)", GroupingAgg.ToDouble("price"));
+    [Fact] public void GroupingAgg_ToRaw() => Assert.Equal("toraw(id)", GroupingAgg.ToRaw("id"));
+    [Fact] public void GroupingAgg_Size() => Assert.Equal("size(tags)", GroupingAgg.Size("tags"));
+    [Fact] public void GroupingAgg_Sort() => Assert.Equal("sort(tags)", GroupingAgg.Sort("tags"));
+    [Fact] public void GroupingAgg_Reverse() => Assert.Equal("reverse(tags)", GroupingAgg.Reverse("tags"));
+    [Fact] public void GroupingAgg_At() => Assert.Equal("myarray.at(0)", GroupingAgg.At("myarray", 0));
+    [Fact] public void GroupingAgg_InterpolatedLookup() => Assert.Equal("interpolatedlookup(myarray, 4.2)", GroupingAgg.InterpolatedLookup("myarray", "4.2"));
+    [Fact] public void GroupingAgg_Sub() => Assert.Equal("sub(max(price), min(price))", GroupingAgg.Sub("max(price)", "min(price)"));
+    [Fact] public void GroupingAgg_XorBit() => Assert.Equal("xorbit(id, 64)", GroupingAgg.XorBit("id", 64));
+    [Fact] public void GroupingAgg_TimeDayOfWeek() => Assert.Equal("time.dayofweek(ts)", GroupingAgg.TimeDayOfWeek("ts"));
+    [Fact] public void GroupingAgg_TimeDayOfYear() => Assert.Equal("time.dayofyear(ts)", GroupingAgg.TimeDayOfYear("ts"));
+
+    [Fact]
+    public void GroupingAgg_GeoDistance_EmitsAttributeAndUnit()
+    {
+        Assert.Equal("geo_distance(attribute(location), 63.4, 10.4).km",
+            GroupingAgg.GeoDistance("location", 63.4, 10.4));
+        Assert.Equal("geo_distance(attribute(location), 63.4, 10.4).miles",
+            GroupingAgg.GeoDistance("location", 63.4, 10.4, miles: true));
+    }
+
+    // --- D18: as(label) ---
+
+    [Fact]
+    public void GroupingAgg_As_LabelsAggregator()
+        => Assert.Equal("count() as(n)", GroupingAgg.As(GroupingAgg.Count(), "n"));
+
+    [Fact]
+    public void GroupingAgg_As_InvalidLabel_Throws()
+        => Assert.ThrowsAny<ArgumentException>(() => GroupingAgg.As("count()", "n) each("));
+
+    [Fact]
+    public void Build_EachWithAs_LabelsEachBlock()
+    {
+        // all(group(year) each(output(count())) as(by_year))
+        var g = GroupingBuilder.All()
+            .Group("year")
+            .Each(e => e.Output(GroupingAgg.Count()).As("by_year"))
+            .Build();
+
+        Assert.Equal("all(group(year) each(output(count())) as(by_year))", g);
+    }
+
+    [Fact]
+    public void Build_SubGroupWithAs_LabelsAllBlock()
+    {
+        var g = GroupingBuilder.All()
+            .Group("genre")
+            .Each(e => e.SubGroup(GroupingBuilder.All()
+                .Group("year")
+                .Each(inner => inner.Output(GroupingAgg.Count()))
+                .As("by_year")))
+            .Build();
+
+        Assert.Equal("all(group(genre) each(all(group(year) each(output(count()))) as(by_year)))", g);
+    }
+
+    // --- D18: parallel each blocks + multiple sub-groupings ---
+
+    [Fact]
+    public void Build_ParallelEachBlocks_EmittedInOrder()
+    {
+        var g = GroupingBuilder.All()
+            .Group("genre")
+            .Each(e => e.Output(GroupingAgg.Count()).As("counts"))
+            .Each(e => e.Output(GroupingAgg.Avg("year")).As("avgs"))
+            .Build();
+
+        Assert.Equal("all(group(genre) each(output(count())) as(counts) each(output(avg(year))) as(avgs))", g);
+    }
+
+    [Fact]
+    public void Build_MultipleSubGroups_AllEmitted()
+    {
+        var g = GroupingBuilder.All()
+            .Group("genre")
+            .Each(e => e
+                .Output(GroupingAgg.Count())
+                .SubGroup(GroupingBuilder.All().Group("year").Each(i => i.Output(GroupingAgg.Count())))
+                .SubGroup(GroupingBuilder.All().Group("artist").Each(i => i.Output(GroupingAgg.Count()))))
+            .Build();
+
+        Assert.Equal(
+            "all(group(genre) each(output(count()) all(group(year) each(output(count()))) all(group(artist) each(output(count())))))",
+            g);
+    }
+
+    // --- D18: max(inf) + multi-key order ---
+
+    [Fact]
+    public void Build_MaxAll_EmitsMaxInf()
+    {
+        var g = GroupingBuilder.All().Group("genre").MaxAll().Build();
+        Assert.Equal("all(group(genre) max(inf))", g);
+    }
+
+    [Fact]
+    public void Build_MultiKeyOrder_EmitsCommaSeparatedKeys()
+    {
+        var g = GroupingBuilder.All()
+            .Group("genre")
+            .OrderByDescending(GroupingAgg.Count())
+            .OrderByAscending(GroupingAgg.Avg("price"))
+            .Build();
+
+        Assert.Equal("all(group(genre) order(-count(), +avg(price)))", g);
+    }
+
+    // --- D14: bucket variants (inf endpoints, open/closed bounds) ---
+
+    [Fact]
+    public void Build_GroupingBucket_InfEndpoints()
+    {
+        var g = GroupingBuilder.All()
+            .GroupByBuckets("price",
+                GroupingBucket.Numeric(null, 100),
+                GroupingBucket.Numeric(100, 500),
+                GroupingBucket.Numeric(500, null))
+            .Build();
+
+        Assert.Equal("all(group(predefined(price, bucket[-inf,100), bucket[100,500), bucket[500,inf))))", g);
+    }
+
+    [Fact]
+    public void Build_GroupingBucket_BoundVariants()
+    {
+        Assert.Equal("bucket[0,100)", GroupingBucket.Numeric(0, 100).Build());
+        Assert.Equal("bucket[0,100]", GroupingBucket.Numeric(0, 100, toInclusive: true).Build());
+        Assert.Equal("bucket(0,100)", GroupingBucket.Numeric(0, 100, fromInclusive: false).Build());
+        Assert.Equal("bucket(0,100]", GroupingBucket.Numeric(0, 100, fromInclusive: false, toInclusive: true).Build());
+    }
+
+    [Fact]
+    public void Build_GroupingBucket_TextWithInf()
+    {
+        var g = GroupingBuilder.All()
+            .GroupByBuckets("name",
+                GroupingBucket.Text(null, "m"),
+                GroupingBucket.Text("m", null))
+            .Build();
+
+        Assert.Equal("""all(group(predefined(name, bucket[-inf,"m"), bucket["m",inf))))""", g);
+    }
+
+    // --- D10: continuation splice ignores pipes inside string literals ---
+
+    [Fact]
+    public void ApplyContinuations_PipeInsideStringLiteral_IsSkipped()
+    {
+        var yql = """select * from music where title contains "a|b" | all(group(genre) each(output(count())))""";
+
+        var result = GroupingContinuations.Apply(yql, ["tok"]);
+
+        Assert.Equal(
+            """select * from music where title contains "a|b" | { 'continuations':['tok'] }all(group(genre) each(output(count())))""",
+            result);
+    }
+
+    [Fact]
+    public void ApplyContinuations_OnlyPipesInsideLiterals_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            GroupingContinuations.Apply("""select * from music where title contains "a|b" """, ["t"]));
+    }
+
+    // --- D27: non-numeric aggregation outputs are kept in RawAggregations ---
+
+    [Fact]
+    public async Task GroupByAsync_NonNumericAggregations_KeptInRawAggregations()
+    {
+        var json = """
+        {
+          "root": {
+            "id": "toplevel",
+            "relevance": 1.0,
+            "fields": {"totalCount": 10},
+            "children": [
+              {
+                "id": "group:root:0",
+                "children": [
+                  {
+                    "id": "grouplist:genre",
+                    "children": [
+                      {
+                        "id": "group:string:rock",
+                        "value": "rock",
+                        "fields": {"count()": 5.0, "tostring(year)": "2020"}
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """;
+
+        _mockHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json)
+        });
+
+        var response = await _searchOps.GroupByAsync<MusicDoc>(
+            new VespaSearchRequest { Yql = "select * from music | all(group(genre) each(output(count(), tostring(year))))" });
+
+        var group = response.GroupingResults[0].Groups[0];
+        Assert.Equal(5.0, group.Aggregations["count()"]);
+        Assert.False(group.Aggregations.ContainsKey("tostring(year)")); // not numeric
+        Assert.Equal("2020", group.RawAggregations["tostring(year)"].GetString());
+        Assert.Equal(5.0, group.RawAggregations["count()"].GetDouble());
+    }
 
     private class MusicDoc
     {

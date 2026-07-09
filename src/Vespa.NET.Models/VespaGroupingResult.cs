@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Vespa.Models;
 
 /// <summary>
@@ -9,13 +11,24 @@ public sealed record VespaGroupList(
     IReadOnlyList<VespaGroup> Groups);
 
 /// <summary>
-/// A single group bucket in a Vespa grouping result
+/// A single group bucket in a Vespa grouping result.
+/// <see cref="Aggregations"/> holds the numeric aggregation outputs; non-numeric
+/// outputs (e.g. <c>toraw</c>/<c>tostring</c> expressions) are only available in
+/// <see cref="RawAggregations"/>.
 /// </summary>
 public sealed record VespaGroup(
     string Value,
     IReadOnlyDictionary<string, double> Aggregations,
     IReadOnlyList<VespaGroupList> SubGroups)
 {
+    /// <summary>
+    /// All aggregation outputs of this group as raw JSON values, keyed by the
+    /// aggregation expression (or its <c>as(label)</c>). Includes non-numeric
+    /// outputs that <see cref="Aggregations"/> cannot represent.
+    /// </summary>
+    public IReadOnlyDictionary<string, JsonElement> RawAggregations { get; init; } =
+        new Dictionary<string, JsonElement>();
+
     /// <summary>
     /// Document summaries returned inside this group when the grouping expression
     /// requests them via <c>each(output(summary()))</c> (<c>hitlist:*</c> children).

@@ -8,6 +8,18 @@ public static class GroupingAgg
     /// <summary>count() — number of documents in the group</summary>
     public static string Count() => "count()";
 
+    /// <summary>
+    /// expr as(label) — labels an aggregator inside <c>output(...)</c>; the label
+    /// replaces the expression string as the aggregation key in the response.
+    /// </summary>
+    /// <example><code>e.Output(GroupingAgg.As(GroupingAgg.Count(), "n"))  // count() as(n)</code></example>
+    public static string As(string expression, string label)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+        YqlIdentifier.Validate(label, nameof(label));
+        return $"{expression} as({label})";
+    }
+
     /// <summary>sum(field) — sum of the field values</summary>
     public static string Sum(string field) => $"sum({field})";
 
@@ -64,6 +76,12 @@ public static class GroupingAgg
     /// <summary>time.date(field) — date part of a timestamp (YYYY-MM-DD as integer)</summary>
     public static string TimeDate(string field) => $"time.date({field})";
 
+    /// <summary>time.dayofweek(field) — day of week (0-6), Monday being 0</summary>
+    public static string TimeDayOfWeek(string field) => $"time.dayofweek({field})";
+
+    /// <summary>time.dayofyear(field) — day of year (0-365)</summary>
+    public static string TimeDayOfYear(string field) => $"time.dayofyear({field})";
+
     /// <summary>time.year(field) — year part of a timestamp</summary>
     public static string TimeYear(string field) => $"time.year({field})";
 
@@ -83,18 +101,13 @@ public static class GroupingAgg
     public static string TimeSecondOfMinute(string field) => $"time.secondofminute({field})";
 
     // --- Math functions ---
-
-    /// <summary>math.floor(expr) — floor of the expression</summary>
-    public static string MathFloor(string expr) => $"math.floor({expr})";
+    // The grouping grammar has no math.floor/math.abs/cmp — only the functions below.
 
     /// <summary>math.log(expr) — natural logarithm</summary>
     public static string MathLog(string expr) => $"math.log({expr})";
 
     /// <summary>math.sqrt(expr) — square root</summary>
     public static string MathSqrt(string expr) => $"math.sqrt({expr})";
-
-    /// <summary>math.abs(expr) — absolute value</summary>
-    public static string MathAbs(string expr) => $"math.abs({expr})";
 
     /// <summary>math.pow(expr, n) — raise to a power</summary>
     public static string MathPow(string expr, double n) =>
@@ -129,6 +142,75 @@ public static class GroupingAgg
     /// <summary>docidnsspecific() — document ID namespace-specific part (streaming search)</summary>
     public static string DocIdNsSpecific() => "docidnsspecific()";
 
+    // --- String / conversion functions ---
+
+    /// <summary>strlen(expr) — number of bytes in the string</summary>
+    public static string StrLen(string expr) => $"strlen({expr})";
+
+    /// <summary>strcat(e1, e2, …) — string concatenation</summary>
+    public static string StrCat(params string[] expressions)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(expressions.Length, nameof(expressions));
+        return $"strcat({string.Join(", ", expressions)})";
+    }
+
+    /// <summary>tostring(expr) — convert to string</summary>
+    public static string ToStringValue(string expr) => $"tostring({expr})";
+
+    /// <summary>tolong(expr) — convert to integer</summary>
+    public static string ToLong(string expr) => $"tolong({expr})";
+
+    /// <summary>todouble(expr) — convert to double</summary>
+    public static string ToDouble(string expr) => $"todouble({expr})";
+
+    /// <summary>toraw(expr) — convert to raw bytes</summary>
+    public static string ToRaw(string expr) => $"toraw({expr})";
+
+    // --- List functions ---
+
+    /// <summary>size(expr) — number of elements (1 for scalars)</summary>
+    public static string Size(string expr) => $"size({expr})";
+
+    /// <summary>sort(expr) — sort the elements of a multivalue expression ascending</summary>
+    public static string Sort(string expr) => $"sort({expr})";
+
+    /// <summary>reverse(expr) — reverse the elements of a multivalue expression</summary>
+    public static string Reverse(string expr) => $"reverse({expr})";
+
+    // --- Accessor / lookup functions ---
+
+    /// <summary>attribute.at(index) — array element access on an attribute</summary>
+    public static string At(string attributeName, int index)
+    {
+        YqlIdentifier.Validate(attributeName, nameof(attributeName));
+        return $"{attributeName}.at({index})";
+    }
+
+    /// <summary>
+    /// interpolatedlookup(attribute, expr) — index of the first element ≥ the lookup
+    /// value in a sorted numeric array, with linear interpolation between elements.
+    /// </summary>
+    public static string InterpolatedLookup(string attributeName, string lookupExpression)
+    {
+        YqlIdentifier.Validate(attributeName, nameof(attributeName));
+        return $"interpolatedlookup({attributeName}, {lookupExpression})";
+    }
+
+    /// <summary>
+    /// geo_distance(attribute(field), lat, lon).km|miles — distance from a position
+    /// attribute to the given coordinates, e.g. for fixed-width distance bucketing.
+    /// </summary>
+    /// <param name="attributeName">The position attribute name.</param>
+    /// <param name="latitude">Latitude in degrees.</param>
+    /// <param name="longitude">Longitude in degrees.</param>
+    /// <param name="miles">Return miles instead of kilometres.</param>
+    public static string GeoDistance(string attributeName, double latitude, double longitude, bool miles = false)
+    {
+        YqlIdentifier.Validate(attributeName, nameof(attributeName));
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        return $"geo_distance(attribute({attributeName}), {latitude.ToString(inv)}, {longitude.ToString(inv)}).{(miles ? "miles" : "km")}";
+    }
+
     // --- Aggregation math ---
 
     /// <summary>add(a, b) — sum of two aggregation expressions</summary>
@@ -143,11 +225,17 @@ public static class GroupingAgg
     /// <summary>mod(a, b) — modulo of two aggregation expressions</summary>
     public static string Mod(string a, string b) => $"mod({a}, {b})";
 
+    /// <summary>sub(a, b) — difference of two aggregation expressions</summary>
+    public static string Sub(string a, string b) => $"sub({a}, {b})";
+
     /// <summary>neg(expr) — negation of an aggregation expression</summary>
     public static string Neg(string expr) => $"neg({expr})";
 
-    /// <summary>cmp(f1, f2) — comparison of two expressions (-1, 0, or 1)</summary>
-    public static string Cmp(string field1, string field2) => $"cmp({field1}, {field2})";
+    /// <summary>
+    /// xorbit(expr, width) — XOR of <paramref name="width"/> bits over the binary
+    /// representation of the argument (width rounded up to a multiple of 8).
+    /// </summary>
+    public static string XorBit(string expr, int width) => $"xorbit({expr}, {width})";
 
     /// <summary>fixedwidth(field, width) — fixed-width numeric bucket expression for use in group()</summary>
     public static string FixedWidth(string field, double width) =>

@@ -36,7 +36,15 @@ public sealed class YqlBuilder
 
     public YqlBuilder From(string documentType)
     {
-        _from = documentType;
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        var value = documentType.Trim();
+        if (value != "sources *")
+        {
+            var body = value.StartsWith("sources ", StringComparison.Ordinal) ? value["sources ".Length..] : value;
+            foreach (var token in body.Split(','))
+                YqlIdentifier.Validate(token.Trim(), nameof(documentType));
+        }
+        _from = value;
         return this;
     }
 
@@ -76,14 +84,22 @@ public sealed class YqlBuilder
         return this;
     }
 
+    /// <summary>
+    /// Sets the page size. In the generated YQL the <c>limit</c> keyword is a cap on
+    /// the total result-set index, so <see cref="Build()"/> emits
+    /// <c>limit (limit + offset)</c> when an offset is set — both <c>Build()</c> and
+    /// <c>ToSearchRequest()</c> (which maps to <c>hits</c>/<c>offset</c>) return the same page.
+    /// </summary>
     public YqlBuilder Limit(int limit)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(limit);
         _limit = limit;
         return this;
     }
 
     public YqlBuilder Offset(int offset)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
         _offset = offset;
         return this;
     }
@@ -123,8 +139,11 @@ public sealed class YqlBuilder
 
         if (includeLimitOffset && _limit.HasValue)
         {
+            // YQL's limit caps the total result-set index (not the page size):
+            // "limit L offset O" returns rows [O, L) — so a page of _limit rows
+            // starting at _offset needs limit = _limit + _offset.
             sb.Append(" limit ");
-            sb.Append(_limit.Value);
+            sb.Append(_limit.Value + (_offset ?? 0));
         }
 
         if (includeLimitOffset && _offset.HasValue)

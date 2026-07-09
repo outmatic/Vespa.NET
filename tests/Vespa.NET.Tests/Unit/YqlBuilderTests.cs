@@ -426,11 +426,36 @@ public class YqlBuilderTests
     }
 
     [Fact]
-    public void Build_WithLimitAndOffset()
+    public void Build_WithLimitAndOffset_TranslatesLimitToTotalCap()
     {
+        // YQL's limit caps the result-set index, not the page size: "limit L offset O"
+        // returns rows [O, L). A page of 10 rows starting at 20 needs limit 30.
         var yql = YqlBuilder.Select().From("music").Limit(10).Offset(20).Build();
-        Assert.Contains("limit 10", yql);
+        Assert.Contains("limit 30", yql);
         Assert.Contains("offset 20", yql);
+    }
+
+    [Fact]
+    public void BuildAndToSearchRequest_ReturnTheSamePage()
+    {
+        // Both paths must select rows [20, 30): the YQL path via limit 30 offset 20,
+        // the request path via hits=10 offset=20.
+        var builder = YqlBuilder.Select().From("music").Limit(10).Offset(20);
+
+        Assert.EndsWith("limit 30 offset 20", builder.Build());
+
+        var request = builder.ToSearchRequest();
+        Assert.Equal(10, request.Hits);
+        Assert.Equal(20, request.Offset);
+        Assert.DoesNotContain("limit", request.Yql);
+        Assert.DoesNotContain("offset", request.Yql);
+    }
+
+    [Fact]
+    public void Build_NegativeLimitOrOffset_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => YqlBuilder.Select().From("music").Limit(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => YqlBuilder.Select().From("music").Offset(-1));
     }
 
     // --- Full complex query ---
@@ -910,19 +935,33 @@ public class YqlBuilderTests
     // --- GeoBoundingBox ---
 
     [Fact]
-    public void Build_GeoBoundingBox_ProducesCorrectSyntax()
+    public void Build_GeoBoundingBox_ProducesPositionalSyntax()
     {
+        // Documented form: geoBoundingBox(field, s, w, n, e) — 5 positional args,
+        // south-western corner first (query-language-reference.html)
         var yql = YqlBuilder.Select().From("venue")
             .Where(w => w.GeoBoundingBox("location", 37.0, -123.0, 38.0, -122.0))
             .Build();
 
-        Assert.Contains("southWest:", yql);
-        Assert.Contains("northEast:", yql);
-        Assert.Contains("geoBoundingBox(location)", yql);
-        Assert.Contains("lat: 37", yql);
-        Assert.Contains("lng: -123", yql);
-        Assert.Contains("lat: 38", yql);
-        Assert.Contains("lng: -122", yql);
+        Assert.Equal("select * from venue where geoBoundingBox(location, 37, -123, 38, -122)", yql);
+    }
+
+    [Fact]
+    public void Build_GeoBoundingBox_UsesInvariantCulture()
+    {
+        var yql = YqlBuilder.Select().From("venue")
+            .Where(w => w.GeoBoundingBox("location", 37.5, -123.25, 38.5, -122.75))
+            .Build();
+
+        Assert.Contains("geoBoundingBox(location, 37.5, -123.25, 38.5, -122.75)", yql);
+    }
+
+    [Fact]
+    public void GeoBoundingBox_InvalidField_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("venue")
+                .Where(w => w.GeoBoundingBox("loc) or true", 1, 2, 3, 4)));
     }
 
     // --- False ---
@@ -1076,8 +1115,9 @@ public class YqlBuilderTests
         Assert.Contains("\"age\": 25L", yql);
     }
 
-    // --- Uri ---
+    // --- Uri (deprecated upstream — kept for existing schemas) ---
 
+#pragma warning disable CS0618 // Uri is [Obsolete]: the uri field type is deprecated upstream
     [Fact]
     public void Build_Uri_ProducesUriContains()
     {
@@ -1099,6 +1139,7 @@ public class YqlBuilderTests
         Assert.Contains("endAnchor: false", yql);
         Assert.Contains("""uri("example.com")""", yql);
     }
+#pragma warning restore CS0618
 
     // --- Typed builders for new operators ---
 
@@ -1132,7 +1173,7 @@ public class YqlBuilderTests
             .Where(w => w.GeoBoundingBox(v => v.Location, 37.0, -123.0, 38.0, -122.0))
             .Build();
 
-        Assert.Contains("geoBoundingBox(geo_location)", yql);
+        Assert.Contains("geoBoundingBox(geo_location, 37, -123, 38, -122)", yql);
     }
 
     [Fact]
@@ -1515,6 +1556,440 @@ public class YqlBuilderTests
             YqlBuilder.Select().From("doc")
                 .Where(w => w.HybridSearch(field, tensor, param))
                 .Build());
+    }
+
+    // --- Not (negation) ---
+
+    [Fact]
+    public void Build_Not_WrapsInBangParens()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w
+                .Field("title").Contains("madonna")
+                .Not(n => n.Field("title").Contains("saint")))
+            .Build();
+
+        Assert.Equal("""select * from music where title contains "madonna" and !(title contains "saint")""", yql);
+    }
+
+    [Fact]
+    public void Build_Not_MultiplePredicates_AndsBeforeNegation()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Not(n =>
+            {
+                n.Field("a").EqualTo(1);
+                n.Field("b").EqualTo(2);
+            }))
+            .Build();
+
+        Assert.Equal("select * from music where !(a = 1 and b = 2)", yql);
+    }
+
+    [Fact]
+    public void Build_TypedNot_Works()
+    {
+        var yql = YqlBuilder<MusicModel>.Select()
+            .Where(w => w.Not(n => n.Field(m => m.Year).EqualTo(1999)))
+            .Build();
+
+        Assert.Contains("!(year = 1999)", yql);
+    }
+
+    // --- Raw escape hatch ---
+
+    [Fact]
+    public void Build_Raw_EmbedsFragmentVerbatim()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Raw("""title contains ({distance: 2}near("a", "b"))"""))
+            .Build();
+
+        Assert.Equal("""select * from music where title contains ({distance: 2}near("a", "b"))""", yql);
+    }
+
+    [Fact]
+    public void Raw_EmptyFragment_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.Raw(" ")));
+    }
+
+    // --- In: validation + parameter substitution ---
+
+    [Fact]
+    public void In_WithZeroValues_Throws()
+    {
+        // "field in ()" is invalid YQL
+        Assert.Throws<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.Field("genre").In()));
+    }
+
+    [Fact]
+    public void Build_InParameter_ProducesAtReference()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("year").InParameter("years"))
+            .Build();
+
+        Assert.Equal("select * from music where year in (@years)", yql);
+    }
+
+    [Fact]
+    public void InParameter_InvalidParamName_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.Field("year").InParameter("p) or true")));
+    }
+
+    // --- Term annotations (weight, prefix, suffix, substring, significance, ranked, language, nfkc, implicitTransforms) ---
+
+    [Fact]
+    public void Build_ContainsAnnotated_Weight_ProducesAnnotation()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("title").ContainsAnnotated("rock", weight: 200))
+            .Build();
+
+        Assert.Contains("""title contains ({weight: 200}"rock")""", yql);
+    }
+
+    [Fact]
+    public void Build_ContainsAnnotated_PrefixSuffixSubstring()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w
+                .Field("a").ContainsAnnotated("pre", prefix: true)
+                .Field("b").ContainsAnnotated("suf", suffix: true)
+                .Field("c").ContainsAnnotated("sub", substring: true))
+            .Build();
+
+        Assert.Contains("{prefix: true}", yql);
+        Assert.Contains("{suffix: true}", yql);
+        Assert.Contains("{substring: true}", yql);
+    }
+
+    [Fact]
+    public void Build_ContainsAnnotated_SignificanceAndRanked()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("title").ContainsAnnotated("rock", significance: 0.75, ranked: false))
+            .Build();
+
+        Assert.Contains("significance: 0.75", yql);
+        Assert.Contains("ranked: false", yql);
+    }
+
+    [Fact]
+    public void Build_ContainsAnnotated_LanguageNfkcImplicitTransforms()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("title").ContainsAnnotated("rock",
+                language: "en-US", nfkc: false, implicitTransforms: false))
+            .Build();
+
+        Assert.Contains("""language: "en-US" """.Trim(), yql);
+        Assert.Contains("nfkc: false", yql);
+        Assert.Contains("implicitTransforms: false", yql);
+    }
+
+    // --- Text with language annotation ---
+
+    [Fact]
+    public void Build_Text_WithLanguage_ProducesAnnotation()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("title").Text("running shoes", language: "en"))
+            .Build();
+
+        Assert.Contains("""title contains ({language: "en"}text("running shoes"))""", yql);
+    }
+
+    // --- Near / ONear negated terms ---
+
+    [Fact]
+    public void Build_Near_WithExcludedTerms_EmitsNegatedTermsLast()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("text").Near(["sql", "database"], excludedTerms: ["nosql"]))
+            .Build();
+
+        Assert.Contains("""text contains near("sql", "database", !"nosql")""", yql);
+    }
+
+    [Fact]
+    public void Build_Near_WithExclusionDistance_ProducesAnnotation()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("text").Near(["a", "b"], distance: 5, excludedTerms: ["c"], exclusionDistance: 3))
+            .Build();
+
+        Assert.Contains("""({distance: 5, exclusionDistance: 3}near("a", "b", !"c"))""", yql);
+    }
+
+    [Fact]
+    public void Build_ONear_WithExcludedTerms_EmitsNegatedTermsLast()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("text").ONear(["java", "tutorial"], excludedTerms: ["script"]))
+            .Build();
+
+        Assert.Contains("""text contains onear("java", "tutorial", !"script")""", yql);
+    }
+
+    // --- SameElement: elementFilter, bare terms, operator allow-list ---
+
+    [Fact]
+    public void Build_SameElement_WithElementFilter_ProducesAnnotation()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("my_numbers").SameElement(se => se.Term("42"), elementFilter: [0, 2, 5]))
+            .Build();
+
+        Assert.Contains("""my_numbers contains ({elementFilter:[0, 2, 5]}sameElement("42"))""", yql);
+    }
+
+    [Fact]
+    public void Build_SameElement_BareTermsJoinedWithAnd()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("chunks").SameElement(se => se.Term("one").NotTerm("two")))
+            .Build();
+
+        Assert.Contains("""chunks contains sameElement("one" and !"two")""", yql);
+    }
+
+    [Fact]
+    public void SameElement_InvalidOperator_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            YqlBuilder.Select().From("music")
+                .Where(w => w.Field("persons").SameElement(se =>
+                    se.Field("last_name", "; drop", "Smith"))));
+    }
+
+    [Fact]
+    public void SameElement_InvalidSubField_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music")
+                .Where(w => w.Field("persons").SameElement(se =>
+                    se.Contains("name) or true", "Joe"))));
+    }
+
+    [Fact]
+    public void Build_SameElement_DottedSubField_IsAllowed()
+    {
+        // Map search: sameElement(key contains 'father', value.first_name contains 'Joe')
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("identities").SameElement(se => se
+                .Contains("key", "father")
+                .Contains("value.first_name", "Joe")))
+            .Build();
+
+        Assert.Contains("""identities contains sameElement(key contains "father", value.first_name contains "Joe")""", yql);
+    }
+
+    // --- Predicate: empty maps emit 0 ---
+
+    [Fact]
+    public void Build_Predicate_EmptyRangeMap_EmitsZero()
+    {
+        // "Due to a quirk in YQL-parsing, one cannot specify an empty map, use the number 0 instead"
+        var attrs = new Dictionary<string, string> { ["gender"] = "female" };
+        var yql = YqlBuilder.Select().From("ad")
+            .Where(w => w.Predicate("target", attrs))
+            .Build();
+
+        Assert.Contains("""predicate(target, {"gender": "female"}, 0)""", yql);
+    }
+
+    [Fact]
+    public void Build_Predicate_EmptyAttributeMap_EmitsZero()
+    {
+        var ranges = new Dictionary<string, long> { ["age"] = 20 };
+        var yql = YqlBuilder.Select().From("ad")
+            .Where(w => w.Predicate("target", new Dictionary<string, string>(), ranges))
+            .Build();
+
+        Assert.Contains("""predicate(target, 0, {"age": 20L})""", yql);
+    }
+
+    // --- totalTargetHits / minTargetHits ---
+
+    [Fact]
+    public void Build_NearestNeighbor_TotalTargetHits_ReplacesTargetHits()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.NearestNeighbor("embedding", "q", totalTargetHits: 100))
+            .Build();
+
+        Assert.Contains("{totalTargetHits:100}nearestNeighbor(embedding, q)", yql);
+        Assert.DoesNotContain("{targetHits", yql);
+    }
+
+    [Fact]
+    public void Build_NearestNeighbor_MinTargetHits_ProducesAnnotation()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.NearestNeighbor("embedding", "q", totalTargetHits: 100, minTargetHits: 10))
+            .Build();
+
+        Assert.Contains("totalTargetHits:100", yql);
+        Assert.Contains("minTargetHits:10", yql);
+    }
+
+    [Fact]
+    public void Build_WeakAnd_TotalTargetHits_ProducesAnnotation()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.WeakAnd(s => s
+                .Field("a").Contains("x")
+                .Field("b").Contains("y"),
+                totalTargetHits: 200))
+            .Build();
+
+        Assert.Contains("{totalTargetHits:200}weakAnd(", yql);
+    }
+
+    [Fact]
+    public void Build_Wand_TotalTargetHits_ReplacesTargetHits()
+    {
+        var terms = new Dictionary<string, int> { ["a"] = 1 };
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Wand("tags", terms, totalTargetHits: 7, scoreThreshold: 0.13))
+            .Build();
+
+        Assert.Contains("{totalTargetHits:7, scoreThreshold:0.13}wand(tags,", yql);
+        Assert.DoesNotContain("targetHits:100", yql);
+    }
+
+    [Fact]
+    public void Build_HybridSearch_TotalTargetHits_ProducesAnnotation()
+    {
+        var yql = YqlBuilder.Select().From("memory")
+            .Where(w => w.HybridSearch("embedding", "q", "userQuery", totalTargetHits: 30))
+            .Build();
+
+        Assert.Equal(
+            "select * from memory where rank(({totalTargetHits:30}nearestNeighbor(embedding, q)), userInput(@userQuery))",
+            yql);
+    }
+
+    // --- Identifier validation on remaining entry points (injection surface) ---
+
+    [Fact]
+    public void Wand_InvalidField_Throws()
+    {
+        var terms = new Dictionary<string, int> { ["a"] = 1 };
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.Wand("tags) or true", terms)));
+    }
+
+    [Fact]
+    public void DotProduct_InvalidField_Throws()
+    {
+        var terms = new Dictionary<string, int> { ["a"] = 1 };
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.DotProduct("t; drop", terms)));
+    }
+
+    [Fact]
+    public void GeoLocation_InvalidField_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("venue").Where(w => w.GeoLocation("loc) or true", 1, 2, 3)));
+    }
+
+    [Fact]
+    public void WeightedSet_InvalidField_Throws()
+    {
+        var tokens = new Dictionary<string, int> { ["a"] = 1 };
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.WeightedSet("tags\"", tokens)));
+    }
+
+    [Fact]
+    public void Predicate_InvalidField_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("ad").Where(w =>
+                w.Predicate("t) or true", new Dictionary<string, string>())));
+    }
+
+    [Fact]
+    public void UserInput_InvalidParamName_Throws()
+    {
+        // A crafted param name would rewrite the query around @param
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music").Where(w => w.UserInput("q), userInput(@x")));
+    }
+
+    [Fact]
+    public void HybridSearch_InvalidNames_Throw()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("doc").Where(w => w.HybridSearch("emb) or true", "q", "p")));
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("doc").Where(w => w.HybridSearch("emb", "q)", "p")));
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("doc").Where(w => w.HybridSearch("emb", "q", "p) or true")));
+    }
+
+    [Fact]
+    public void From_InvalidDocumentType_Throws()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+            YqlBuilder.Select().From("music where true; drop"));
+    }
+
+    [Fact]
+    public void From_SourcesStarAndLists_AreAllowed()
+    {
+        Assert.Contains("from sources *", YqlBuilder.Select().From("sources *").Build());
+        Assert.Contains("from sources music, books", YqlBuilder.Select().From("sources music, books").Build());
+        Assert.Contains("from music, books", YqlBuilder.Select().From("music, books").Build());
+    }
+
+    // --- Literal formatting edge cases ---
+
+    [Fact]
+    public void Build_UlongAboveLongMax_Throws()
+    {
+        // YQL numbers are signed 64-bit; the L-suffixed literal would overflow
+        var builder = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("ts").GreaterThan(ulong.MaxValue));
+
+        Assert.Throws<NotSupportedException>(() => builder.Build());
+    }
+
+    [Fact]
+    public void Build_UlongWithinLongRange_AppendsLSuffix()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("ts").GreaterThan(5_000_000_000UL))
+            .Build();
+
+        Assert.Contains("ts > 5000000000L", yql);
+    }
+
+    [Fact]
+    public void Build_CharValue_QuotedAsString()
+    {
+        var yql = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("grade").In('a', 'b'))
+            .Build();
+
+        Assert.Contains("""grade in ("a", "b")""", yql);
+    }
+
+    [Fact]
+    public void Build_NonFormattableValue_Throws()
+    {
+        var builder = YqlBuilder.Select().From("music")
+            .Where(w => w.Field("data").In(new object()));
+
+        Assert.Throws<NotSupportedException>(() => builder.Build());
     }
 
     [VespaDocument("embedding_doc")]

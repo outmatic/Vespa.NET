@@ -198,6 +198,28 @@ public class RankingBuilderTests
         Assert.Same(request, returned);
     }
 
+    // --- WithRankFeature normalization (symmetry with RankingBuilder.Feature) ---
+
+    [Fact]
+    public void WithRankFeature_BareName_WrapsInQuery()
+    {
+        var request = new VespaSearchRequest { Yql = "select * from music;" };
+        request.WithRankFeature("threshold", 0.8);
+
+        Assert.True(request.Ranking!.Features!.ContainsKey("query(threshold)"));
+    }
+
+    [Fact]
+    public void WithRankFeature_FullFeatureReference_UsedAsIs()
+    {
+        // "query(x)" must not become "query(query(x))"
+        var request = new VespaSearchRequest { Yql = "select * from music;" };
+        request.WithRankFeature("query(threshold)", 0.8);
+
+        Assert.True(request.Ranking!.Features!.ContainsKey("query(threshold)"));
+        Assert.Single(request.Ranking.Features);
+    }
+
     // --- JSON serialization ---
 
     [Fact]
@@ -214,11 +236,52 @@ public class RankingBuilderTests
     }
 
     [Fact]
-    public void Serialization_RerankCount_EmitsField()
+    public void Serialization_RerankCount_EmitsSecondPhaseField()
     {
+        // Documented parameter is ranking.secondPhase.rerankCount (bare rerankCount is not)
         var config = RankingBuilder.Create().RerankCount(200).Build();
         var json = JsonSerializer.Serialize(config, JsonOpts);
-        Assert.Contains(@"""rerankCount"":200", json);
+        Assert.Contains(@"""secondPhase.rerankCount"":200", json);
+    }
+
+    [Fact]
+    public void Serialization_TotalRerankCount_EmitsSecondPhaseField()
+    {
+        var config = RankingBuilder.Create().TotalRerankCount(500).Build();
+        var json = JsonSerializer.Serialize(config, JsonOpts);
+        Assert.Contains(@"""secondPhase.totalRerankCount"":500", json);
+    }
+
+    [Fact]
+    public void Serialization_SecondPhaseRankScoreDropLimit_EmitsDottedKey()
+    {
+        var config = RankingBuilder.Create().SecondPhaseRankScoreDropLimit(0.5).Build();
+        var json = JsonSerializer.Serialize(config, JsonOpts);
+        Assert.Contains(@"""secondPhase.rankScoreDropLimit"":0.5", json);
+    }
+
+    [Fact]
+    public void Serialization_GlobalPhaseRankScoreDropLimit_EmitsDottedKey()
+    {
+        var config = RankingBuilder.Create().GlobalPhaseRankScoreDropLimit(0.25).Build();
+        var json = JsonSerializer.Serialize(config, JsonOpts);
+        Assert.Contains(@"""globalPhase.rankScoreDropLimit"":0.25", json);
+    }
+
+    [Fact]
+    public void Serialization_TotalKeepRankCount_EmitsField()
+    {
+        var config = RankingBuilder.Create().TotalKeepRankCount(4000).Build();
+        var json = JsonSerializer.Serialize(config, JsonOpts);
+        Assert.Contains(@"""totalKeepRankCount"":4000", json);
+    }
+
+    [Fact]
+    public void Serialization_MatchPhaseTotalMaxHits_EmitsDottedKey()
+    {
+        var config = RankingBuilder.Create().MatchPhase("popularity", totalMaxHits: 10000).Build();
+        var json = JsonSerializer.Serialize(config, JsonOpts);
+        Assert.Contains(@"""matchPhase.totalMaxHits"":10000", json);
     }
 
     [Fact]

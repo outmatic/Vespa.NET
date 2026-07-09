@@ -80,6 +80,33 @@ public sealed class YqlWhereClause
         return this;
     }
 
+    /// <summary>
+    /// <c>!(expr)</c> — logical negation of the sub-expression: matches documents
+    /// that do <em>not</em> satisfy it. Multiple predicates in the callback are
+    /// AND'd before negation.
+    /// </summary>
+    public YqlWhereClause Not(Action<YqlWhereClause> subClause)
+    {
+        _andPredicates.Add(new YqlPredicate.Not(BuildSubClause(subClause).BuildPredicate()));
+        return this;
+    }
+
+    /// <summary>
+    /// Embeds a raw YQL predicate fragment verbatim.
+    /// <para>
+    /// <b>Warning:</b> the fragment is <em>not</em> validated or escaped — passing
+    /// unvalidated end-user input here is a YQL injection risk. Use the typed
+    /// predicate methods whenever possible; reserve this for operators or
+    /// annotations the builder does not cover.
+    /// </para>
+    /// </summary>
+    public YqlWhereClause Raw(string yqlPredicate)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(yqlPredicate);
+        _andPredicates.Add(new YqlPredicate.RawPredicate(yqlPredicate));
+        return this;
+    }
+
     /// <summary>Match all documents</summary>
     public YqlWhereClause True()
     {
@@ -87,15 +114,20 @@ public sealed class YqlWhereClause
         return this;
     }
 
-    /// <summary>Nearest-neighbor predicate with optional annotations</summary>
+    /// <summary>
+    /// Nearest-neighbor predicate with optional annotations.
+    /// Prefer <paramref name="totalTargetHits"/> (hits over all content nodes) over the
+    /// per-node <paramref name="targetHits"/>; when set, it replaces the targetHits annotation.
+    /// </summary>
     public YqlWhereClause NearestNeighbor(
         string field, string queryTensor, int targetHits = 10,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null)
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null, int? minTargetHits = null)
     {
         YqlIdentifier.Validate(field, nameof(field));
         YqlIdentifier.Validate(queryTensor, nameof(queryTensor));
-        _andPredicates.Add(new YqlPredicate.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits));
+        _andPredicates.Add(new YqlPredicate.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits));
         return this;
     }
 
@@ -108,32 +140,37 @@ public sealed class YqlWhereClause
         string queryTensor,
         int targetHits = 10,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null) where T : class
-        => NearestNeighbor(VespaDocumentMeta.FieldName(fieldSelector), queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits);
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null, int? minTargetHits = null) where T : class
+        => NearestNeighbor(VespaDocumentMeta.FieldName(fieldSelector), queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
 
     /// <summary>
     /// <c>[{targetHits:N}]weakAnd(pred1, pred2, ...)</c> — scores documents by weakly combining
     /// all matching sub-predicates; only the top hits are returned.
     /// </summary>
     /// <param name="configure">Callback that builds the sub-predicates.</param>
-    /// <param name="targetHits">Optional optimizer hint controlling how many candidates weakAnd retrieves before ranking.</param>
-    public YqlWhereClause WeakAnd(Action<YqlWhereClause> configure, int? targetHits = null)
+    /// <param name="targetHits">Optional per-node optimizer hint; prefer <paramref name="totalTargetHits"/>.</param>
+    /// <param name="totalTargetHits">Wanted hits over all content nodes (preferred); replaces <paramref name="targetHits"/> when set.</param>
+    public YqlWhereClause WeakAnd(Action<YqlWhereClause> configure, int? targetHits = null, int? totalTargetHits = null)
     {
         var sub = BuildSubClause(configure);
         var predicates = sub.GetPredicates();
         if (predicates.Count == 0)
             throw new ArgumentException("weakAnd requires at least one predicate.", nameof(configure));
-        _andPredicates.Add(new YqlPredicate.WeakAnd(predicates, targetHits));
+        _andPredicates.Add(new YqlPredicate.WeakAnd(predicates, targetHits, totalTargetHits));
         return this;
     }
 
     /// <summary>
     /// <c>{targetHits:N}wand(field, {{"term": weight}})</c> — retrieves the top
     /// <paramref name="targetHits"/> documents by weighted term-set dot product.
+    /// Prefer <paramref name="totalTargetHits"/> (over all content nodes); when set,
+    /// it replaces the per-node targetHits annotation.
     /// </summary>
-    public YqlWhereClause Wand(string field, IReadOnlyDictionary<string, int> terms, int targetHits = 100, double? scoreThreshold = null)
+    public YqlWhereClause Wand(string field, IReadOnlyDictionary<string, int> terms, int targetHits = 100, double? scoreThreshold = null, int? totalTargetHits = null)
     {
-        _andPredicates.Add(new YqlPredicate.Wand(field, terms, targetHits, scoreThreshold));
+        YqlIdentifier.Validate(field, nameof(field));
+        _andPredicates.Add(new YqlPredicate.Wand(field, terms, targetHits, scoreThreshold, totalTargetHits));
         return this;
     }
 
@@ -143,6 +180,7 @@ public sealed class YqlWhereClause
     /// </summary>
     public YqlWhereClause DotProduct(string field, IReadOnlyDictionary<string, int> terms)
     {
+        YqlIdentifier.Validate(field, nameof(field));
         _andPredicates.Add(new YqlPredicate.DotProduct(field, terms));
         return this;
     }
@@ -154,6 +192,7 @@ public sealed class YqlWhereClause
     /// </summary>
     public YqlWhereClause GeoLocation(string field, double latitude, double longitude, double radiusKm)
     {
+        YqlIdentifier.Validate(field, nameof(field));
         _andPredicates.Add(new YqlPredicate.GeoLocation(field, latitude, longitude, radiusKm));
         return this;
     }
@@ -182,6 +221,7 @@ public sealed class YqlWhereClause
     /// </summary>
     public YqlWhereClause UserInput(string paramName, string? grammar = null, string? defaultIndex = null, string? language = null, bool? allowEmpty = null)
     {
+        YqlIdentifier.Validate(paramName, nameof(paramName));
         _andPredicates.Add(new YqlPredicate.UserInput(paramName, grammar, defaultIndex, language, allowEmpty));
         return this;
     }
@@ -194,21 +234,23 @@ public sealed class YqlWhereClause
     /// <param name="vectorField">The tensor field to search (e.g. "embedding").</param>
     /// <param name="queryTensor">The query tensor name (e.g. "q").</param>
     /// <param name="userInputParam">The userInput parameter name (without @).</param>
-    /// <param name="targetHits">Target number of nearest-neighbor hits.</param>
+    /// <param name="targetHits">Target number of nearest-neighbor hits per node; prefer <paramref name="totalTargetHits"/>.</param>
     /// <param name="label">Optional label for the nearest-neighbor operator.</param>
     /// <param name="approximate">Whether to use approximate nearest-neighbor search.</param>
     /// <param name="distanceThreshold">Maximum distance threshold.</param>
     /// <param name="hnswExploreAdditionalHits">Extra HNSW exploration hits.</param>
+    /// <param name="totalTargetHits">Wanted hits over all content nodes (preferred); replaces <paramref name="targetHits"/> when set.</param>
     public YqlWhereClause HybridSearch(
         string vectorField, string queryTensor, string userInputParam,
         int targetHits = 100,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null)
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(vectorField);
-        ArgumentException.ThrowIfNullOrWhiteSpace(queryTensor);
-        ArgumentException.ThrowIfNullOrWhiteSpace(userInputParam);
-        var nn = new YqlPredicate.NearestNeighbor(vectorField, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits);
+        YqlIdentifier.Validate(vectorField, nameof(vectorField));
+        YqlIdentifier.Validate(queryTensor, nameof(queryTensor));
+        YqlIdentifier.Validate(userInputParam, nameof(userInputParam));
+        var nn = new YqlPredicate.NearestNeighbor(vectorField, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
         var ui = new YqlPredicate.UserInput(userInputParam);
         _andPredicates.Add(new YqlPredicate.HybridSearch(nn, ui));
         return this;
@@ -249,10 +291,13 @@ public sealed class YqlWhereClause
     }
 
     /// <summary>
-    /// <c>{southWest:{lat:S,lng:W},northEast:{lat:N,lng:E}}geoBoundingBox(field)</c>
+    /// <c>geoBoundingBox(field, south, west, north, east)</c> — position inside a
+    /// geographical rectangle: south-western corner (minimum latitude/longitude)
+    /// first, then north-eastern corner.
     /// </summary>
     public YqlWhereClause GeoBoundingBox(string field, double south, double west, double north, double east)
     {
+        YqlIdentifier.Validate(field, nameof(field));
         _andPredicates.Add(new YqlPredicate.GeoBoundingBox(field, south, west, north, east));
         return this;
     }
@@ -263,15 +308,18 @@ public sealed class YqlWhereClause
     /// </summary>
     public YqlWhereClause WeightedSet(string field, IReadOnlyDictionary<string, int> tokens)
     {
+        YqlIdentifier.Validate(field, nameof(field));
         _andPredicates.Add(new YqlPredicate.WeightedSet(field, tokens));
         return this;
     }
 
     /// <summary>
     /// <c>predicate(field, attributes, ranges)</c> — queries a predicate field.
+    /// Empty attribute/range maps are emitted as <c>0</c> (YQL cannot parse an empty map).
     /// </summary>
     public YqlWhereClause Predicate(string field, IReadOnlyDictionary<string, string> attributes, IReadOnlyDictionary<string, long>? rangeAttributes = null)
     {
+        YqlIdentifier.Validate(field, nameof(field));
         _andPredicates.Add(new YqlPredicate.Predicate(field, attributes, rangeAttributes));
         return this;
     }
@@ -313,20 +361,37 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     /// <param name="normalizeCase">Override case normalization for this term.</param>
     /// <param name="accentDrop">Override accent removal for this term.</param>
     /// <param name="usePositionData">Override position data usage for this term.</param>
+    /// <param name="weight">Term weight for ranking (default 100).</param>
+    /// <param name="prefix">Prefix matching ("word*").</param>
+    /// <param name="suffix">Suffix matching ("*word").</param>
+    /// <param name="substring">Substring matching ("*word*", streaming search only).</param>
+    /// <param name="significance">Significance value for text ranking features.</param>
+    /// <param name="ranked">Include this term in ranking calculation (false speeds up evaluation).</param>
+    /// <param name="language">RFC 3066 language code for linguistics handling of this term.</param>
+    /// <param name="nfkc">NFKC normalization.</param>
+    /// <param name="implicitTransforms">Master switch for schema-driven term transforms (stemming, normalization, …).</param>
     public YqlWhereClause ContainsAnnotated(string value,
         bool? filter = null, int? termId = null, double? connectivityWeight = null,
-        bool? stem = null, bool? normalizeCase = null, bool? accentDrop = null, bool? usePositionData = null)
+        bool? stem = null, bool? normalizeCase = null, bool? accentDrop = null, bool? usePositionData = null,
+        int? weight = null, bool? prefix = null, bool? suffix = null, bool? substring = null,
+        double? significance = null, bool? ranked = null, string? language = null,
+        bool? nfkc = null, bool? implicitTransforms = null)
     {
-        parent.AddPredicate(new YqlPredicate.Contains(fieldName, value, filter, termId, connectivityWeight, stem, normalizeCase, accentDrop, usePositionData));
+        var annotations = new TermAnnotations(
+            filter, termId, connectivityWeight, stem, normalizeCase, accentDrop, usePositionData,
+            weight, prefix, suffix, substring, significance, ranked, language, nfkc, implicitTransforms);
+        parent.AddPredicate(new YqlPredicate.Contains(fieldName, value, annotations));
         return parent;
     }
 
     /// <summary>
     /// <c>field contains text("value")</c> — linguistics-based text matching with tokenization and stemming.
     /// </summary>
-    public YqlWhereClause Text(string value)
+    /// <param name="value">The text to match.</param>
+    /// <param name="language">Optional RFC 3066 language code annotation (<c>{language: "…"}</c>).</param>
+    public YqlWhereClause Text(string value, string? language = null)
     {
-        parent.AddPredicate(new YqlPredicate.Text(fieldName, value));
+        parent.AddPredicate(new YqlPredicate.Text(fieldName, value, language));
         return parent;
     }
 
@@ -381,13 +446,30 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     /// <summary>
     /// <c>field in ("a", "b")</c> — matches documents whose field value is one of the given values.
     /// <para>
-    /// <b>Important:</b> The field must have <c>indexing: index</c> (or <c>index | attribute | summary</c>).
-    /// Attribute-only fields do not support <c>in</c> and will result in a <c>400 Bad Request</c> from Vespa.
+    /// Supported for attribute or index fields of type <c>byte</c>, <c>int</c>, <c>long</c>
+    /// or <c>string</c>. String fields must have <c>match: word</c> or <c>match: exact</c> —
+    /// with the default <c>match: text</c> the field contents are tokenized at indexing time
+    /// while <c>in</c> values are not, causing recall issues.
     /// </para>
     /// </summary>
     public YqlWhereClause In(params object[] values)
     {
+        if (values.Length == 0)
+            throw new ArgumentException("in requires at least one value — 'field in ()' is invalid YQL.", nameof(values));
         parent.AddPredicate(new YqlPredicate.In(fieldName, values));
+        return parent;
+    }
+
+    /// <summary>
+    /// <c>field in (@param)</c> — set membership with parameter substitution.
+    /// Pass the comma-separated values as a request parameter at query time
+    /// (e.g. <c>request.WithParameter("param", "10,20,30")</c>). Recommended over
+    /// inline values for large sets: faster query parsing, no YQL quoting.
+    /// </summary>
+    public YqlWhereClause InParameter(string paramName)
+    {
+        YqlIdentifier.Validate(paramName, nameof(paramName));
+        parent.AddPredicate(new YqlPredicate.InParameter(fieldName, paramName));
         return parent;
     }
 
@@ -413,20 +495,24 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     }
 
     /// <summary>
-    /// <c>field contains near("t1", "t2")</c> — terms within <paramref name="distance"/> positions, any order.
+    /// <c>field contains near("t1", "t2", !"t3")</c> — terms within <paramref name="distance"/>
+    /// positions, any order. Terms in <paramref name="excludedTerms"/> are emitted negated
+    /// (<c>!"term"</c>): documents match only when those terms do not occur within the
+    /// exclusion zone (default <c>(distance+1)/2</c>, override with <paramref name="exclusionDistance"/>).
     /// </summary>
-    public YqlWhereClause Near(string[] terms, int? distance = null)
+    public YqlWhereClause Near(string[] terms, int? distance = null, string[]? excludedTerms = null, int? exclusionDistance = null)
     {
-        parent.AddPredicate(new YqlPredicate.Near(fieldName, terms, distance));
+        parent.AddPredicate(new YqlPredicate.Near(fieldName, terms, distance, excludedTerms, exclusionDistance));
         return parent;
     }
 
     /// <summary>
-    /// <c>field contains onear("t1", "t2")</c> — ordered near; terms must appear in query sequence.
+    /// <c>field contains onear("t1", "t2", !"t3")</c> — ordered near; positive terms must
+    /// appear in query sequence. See <see cref="Near"/> for the negated-term semantics.
     /// </summary>
-    public YqlWhereClause ONear(string[] terms, int? distance = null)
+    public YqlWhereClause ONear(string[] terms, int? distance = null, string[]? excludedTerms = null, int? exclusionDistance = null)
     {
-        parent.AddPredicate(new YqlPredicate.ONear(fieldName, terms, distance));
+        parent.AddPredicate(new YqlPredicate.Near(fieldName, terms, distance, excludedTerms, exclusionDistance, ordered: true));
         return parent;
     }
 
@@ -443,17 +529,23 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     /// <c>field contains sameElement(...)</c> — conditions must match within the same
     /// struct element or array element.
     /// </summary>
-    public YqlWhereClause SameElement(Action<SameElementClause> configure)
+    /// <param name="configure">Builds the conditions that must match in the same element.</param>
+    /// <param name="elementFilter">
+    /// Optional element indices: <c>{elementFilter:[…]}sameElement(…)</c> restricts
+    /// matching to those positions in the array field.
+    /// </param>
+    public YqlWhereClause SameElement(Action<SameElementClause> configure, int[]? elementFilter = null)
     {
         var clause = new SameElementClause();
         configure(clause);
-        parent.AddPredicate(new YqlPredicate.SameElement(fieldName, clause.GetPredicates()));
+        parent.AddPredicate(new YqlPredicate.SameElement(fieldName, clause.GetPredicates(), elementFilter));
         return parent;
     }
 
     /// <summary>
     /// <c>field contains uri("value")</c> — URL component matching.
     /// </summary>
+    [Obsolete("The Vespa uri field type (and the uri query operator) is deprecated upstream.")]
     public YqlWhereClause Uri(string value, bool? startAnchor = null, bool? endAnchor = null)
     {
         parent.AddPredicate(new YqlPredicate.Uri(fieldName, value, startAnchor, endAnchor));
@@ -466,17 +558,53 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
 /// </summary>
 public sealed class SameElementClause
 {
+    private static readonly string[] AllowedOperators =
+        ["contains", "=", ">", ">=", "<", "<=", "!=", "matches"];
+
     private readonly List<YqlPredicate> _predicates = [];
 
+    /// <summary>
+    /// Adds a <c>subField op value</c> condition. <paramref name="op"/> must be one of
+    /// <c>contains</c>, <c>=</c>, <c>&gt;</c>, <c>&gt;=</c>, <c>&lt;</c>, <c>&lt;=</c>,
+    /// <c>!=</c> or <c>matches</c>.
+    /// </summary>
     public SameElementClause Field(string subField, string op, object value)
     {
+        YqlIdentifier.Validate(subField, nameof(subField));
+        if (!AllowedOperators.Contains(op))
+            throw new ArgumentException(
+                $"'{op}' is not a valid sameElement operator. Allowed: {string.Join(", ", AllowedOperators)}.",
+                nameof(op));
         _predicates.Add(new YqlPredicate.Comparison(subField, op, value));
         return this;
     }
 
     public SameElementClause Contains(string subField, string value)
     {
+        YqlIdentifier.Validate(subField, nameof(subField));
         _predicates.Add(new YqlPredicate.Contains(subField, value));
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a bare term for array-of-string fields: <c>sameElement("term" and …)</c>.
+    /// When bare terms are present, all conditions are combined with <c>and</c>.
+    /// </summary>
+    public SameElementClause Term(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        _predicates.Add(new YqlPredicate.BareTerm(value));
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a negated bare term for array-of-string fields:
+    /// <c>sameElement("one" and !"two")</c> — the element must not contain the term.
+    /// </summary>
+    public SameElementClause NotTerm(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        _predicates.Add(new YqlPredicate.BareTerm(value, negated: true));
         return this;
     }
 
@@ -504,9 +632,10 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
     public TypedYqlWhereClause<T> NearestNeighbor(
         string field, string queryTensor, int targetHits = 10,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null)
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null, int? minTargetHits = null)
     {
-        inner.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits);
+        inner.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
         return this;
     }
 
@@ -516,9 +645,10 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         string queryTensor,
         int targetHits = 10,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null)
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null, int? minTargetHits = null)
     {
-        inner.NearestNeighbor(fieldSelector, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits);
+        inner.NearestNeighbor(fieldSelector, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
         return this;
     }
 
@@ -535,6 +665,22 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
     }
 
     /// <summary>
+    /// <c>!(expr)</c> — logical negation of the sub-expression.
+    /// </summary>
+    public TypedYqlWhereClause<T> Not(Action<TypedYqlWhereClause<T>> subClause)
+    {
+        inner.Not(w => subClause(new TypedYqlWhereClause<T>(w)));
+        return this;
+    }
+
+    /// <inheritdoc cref="YqlWhereClause.Raw"/>
+    public TypedYqlWhereClause<T> Raw(string yqlPredicate)
+    {
+        inner.Raw(yqlPredicate);
+        return this;
+    }
+
+    /// <summary>
     /// <c>pred1 or pred2 or pred3</c> — matches documents satisfying any of the given predicates.
     /// </summary>
     public TypedYqlWhereClause<T> AnyOf(params Action<TypedYqlWhereClause<T>>[] predicates)
@@ -543,15 +689,15 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         return this;
     }
 
-    public TypedYqlWhereClause<T> WeakAnd(Action<TypedYqlWhereClause<T>> configure, int? targetHits = null)
+    public TypedYqlWhereClause<T> WeakAnd(Action<TypedYqlWhereClause<T>> configure, int? targetHits = null, int? totalTargetHits = null)
     {
-        inner.WeakAnd(w => configure(new TypedYqlWhereClause<T>(w)), targetHits);
+        inner.WeakAnd(w => configure(new TypedYqlWhereClause<T>(w)), targetHits, totalTargetHits);
         return this;
     }
 
-    public TypedYqlWhereClause<T> Wand(string field, IReadOnlyDictionary<string, int> terms, int targetHits = 100, double? scoreThreshold = null)
+    public TypedYqlWhereClause<T> Wand(string field, IReadOnlyDictionary<string, int> terms, int targetHits = 100, double? scoreThreshold = null, int? totalTargetHits = null)
     {
-        inner.Wand(field, terms, targetHits, scoreThreshold);
+        inner.Wand(field, terms, targetHits, scoreThreshold, totalTargetHits);
         return this;
     }
 
@@ -596,9 +742,10 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         string vectorField, string queryTensor, string userInputParam,
         int targetHits = 100,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null)
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null)
     {
-        inner.HybridSearch(vectorField, queryTensor, userInputParam, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits);
+        inner.HybridSearch(vectorField, queryTensor, userInputParam, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
         return this;
     }
 
@@ -610,9 +757,10 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         string queryTensor, string userInputParam,
         int targetHits = 100,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null)
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null)
     {
-        inner.HybridSearch(VespaDocumentMeta.FieldName(vectorFieldSelector), queryTensor, userInputParam, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits);
+        inner.HybridSearch(VespaDocumentMeta.FieldName(vectorFieldSelector), queryTensor, userInputParam, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
         return this;
     }
 

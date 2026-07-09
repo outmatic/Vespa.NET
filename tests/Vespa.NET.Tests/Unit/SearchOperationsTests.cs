@@ -315,7 +315,7 @@ public class SearchOperationsTests : IDisposable
     }
 
     [Fact]
-    public async Task NearestNeighborSearchAsync_BuildsCorrectYqlWithTargetHits()
+    public async Task NearestNeighborSearchAsync_BuildsCorrectYqlWithTotalTargetHits()
     {
         // Arrange
         var tensor = VespaTensor.FromDenseValues([1.0, 2.0]);
@@ -329,8 +329,8 @@ public class SearchOperationsTests : IDisposable
             tensor, "embedding", "testdoc", topK: 20
         );
 
-        // Assert - Verify YQL contains targetHits: 20
-        await VerifySearchRequestContainsYql("targetHits: 20");
+        // Assert - Verify YQL uses the preferred totalTargetHits annotation
+        await VerifySearchRequestContainsYql("{totalTargetHits: 20}");
         await VerifySearchRequestContainsYql("nearestNeighbor(embedding, query_embedding)");
     }
 

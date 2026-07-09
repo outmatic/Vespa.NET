@@ -1,4 +1,35 @@
+using System.Globalization;
+
 namespace Vespa.Query;
+
+/// <summary>
+/// Optional per-term annotations for <c>contains</c> predicates
+/// (docs.vespa.ai/en/reference/query-language-reference.html, "Annotations").
+/// </summary>
+internal sealed record TermAnnotations(
+    bool? Filter = null,
+    int? TermId = null,
+    double? ConnectivityWeight = null,
+    bool? Stem = null,
+    bool? NormalizeCase = null,
+    bool? AccentDrop = null,
+    bool? UsePositionData = null,
+    int? Weight = null,
+    bool? Prefix = null,
+    bool? Suffix = null,
+    bool? Substring = null,
+    double? Significance = null,
+    bool? Ranked = null,
+    string? Language = null,
+    bool? Nfkc = null,
+    bool? ImplicitTransforms = null)
+{
+    public bool IsEmpty =>
+        Filter is null && TermId is null && ConnectivityWeight is null && Stem is null &&
+        NormalizeCase is null && AccentDrop is null && UsePositionData is null && Weight is null &&
+        Prefix is null && Suffix is null && Substring is null && Significance is null &&
+        Ranked is null && Language is null && Nfkc is null && ImplicitTransforms is null;
+}
 
 /// <summary>
 /// Represents an atomic YQL predicate or a composite (AND/OR) expression
@@ -9,14 +40,13 @@ internal abstract class YqlPredicate
 
     // --- Atomic predicates ---
 
-    internal sealed class Contains(string field, string value, bool? filter = null, int? termId = null, double? connectivityWeight = null, bool? stem = null, bool? normalizeCase = null, bool? accentDrop = null, bool? usePositionData = null) : YqlPredicate
+    internal sealed class Contains(string field, string value, TermAnnotations? annotations = null) : YqlPredicate
     {
         public override string Build()
         {
-            var annotations = BuildTermAnnotations(filter, termId, connectivityWeight, stem, normalizeCase, accentDrop, usePositionData);
-            if (annotations.Count > 0)
+            if (annotations is { IsEmpty: false })
             {
-                var prefix = $"{{{string.Join(", ", annotations)}}}";
+                var prefix = $"{{{string.Join(", ", BuildTermAnnotations(annotations))}}}";
                 return $"{field} contains ({prefix}\"{Escape(value)}\")";
             }
             return $"""{field} contains "{Escape(value)}" """.TrimEnd();
@@ -48,14 +78,21 @@ internal abstract class YqlPredicate
     internal sealed class NearestNeighbor(
         string field, string queryTensor, int targetHits,
         string? label = null, bool? approximate = null,
-        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null) : YqlPredicate
+        double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
+        int? totalTargetHits = null, int? minTargetHits = null) : YqlPredicate
     {
         public override string Build()
         {
-            var annotations = new List<string> { $"targetHits:{targetHits}" };
+            // totalTargetHits is the documented, preferred annotation; when set it
+            // replaces the per-node targetHits.
+            var annotations = new List<string>
+            {
+                totalTargetHits.HasValue ? $"totalTargetHits:{totalTargetHits.Value}" : $"targetHits:{targetHits}"
+            };
+            if (minTargetHits.HasValue) annotations.Add($"minTargetHits:{minTargetHits.Value}");
             if (label is not null) annotations.Add($"label:\"{Escape(label)}\"");
             if (approximate.HasValue) annotations.Add($"approximate:{(approximate.Value ? "true" : "false")}");
-            if (distanceThreshold.HasValue) annotations.Add($"distanceThreshold:{distanceThreshold.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            if (distanceThreshold.HasValue) annotations.Add($"distanceThreshold:{distanceThreshold.Value.ToString(CultureInfo.InvariantCulture)}");
             if (hnswExploreAdditionalHits.HasValue) annotations.Add($"hnsw.exploreAdditionalHits:{hnswExploreAdditionalHits.Value}");
             return $"({{{string.Join(", ", annotations)}}}nearestNeighbor({field}, {queryTensor}))";
         }
@@ -71,6 +108,15 @@ internal abstract class YqlPredicate
             var list = string.Join(", ", values.Select(FormatValue));
             return $"{field} in ({list})";
         }
+    }
+
+    /// <summary>
+    /// <c>field in (@param)</c> — parameter-substituted set membership; the values
+    /// travel as a separate request parameter (recommended for large sets).
+    /// </summary>
+    internal sealed class InParameter(string field, string paramName) : YqlPredicate
+    {
+        public override string Build() => $"{field} in (@{paramName})";
     }
 
     /// <summary>
@@ -110,7 +156,7 @@ internal abstract class YqlPredicate
     internal sealed class GeoLocation(string field, double latitude, double longitude, double radiusKm) : YqlPredicate
     {
         public override string Build() =>
-            $"geoLocation({field}, {latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}, \"{radiusKm.ToString(System.Globalization.CultureInfo.InvariantCulture)}km\")";
+            $"geoLocation({field}, {latitude.ToString(CultureInfo.InvariantCulture)}, {longitude.ToString(CultureInfo.InvariantCulture)}, \"{radiusKm.ToString(CultureInfo.InvariantCulture)}km\")";
     }
 
     /// <summary>
@@ -151,25 +197,41 @@ internal abstract class YqlPredicate
         public override string Build() => "false";
     }
 
-    // --- Proximity / synonym operators ---
-
-    internal sealed class Near(string field, IReadOnlyList<string> terms, int? distance) : YqlPredicate
+    /// <summary>
+    /// <c>!(expr)</c> — logical negation
+    /// (docs.vespa.ai/en/reference/query-language-reference.html, "not").
+    /// </summary>
+    internal sealed class Not(YqlPredicate inner) : YqlPredicate
     {
-        public override string Build()
-        {
-            var quoted = string.Join(", ", terms.Select(t => $"\"{Escape(t)}\""));
-            var annotation = distance.HasValue ? $"({{distance: {distance.Value}}}near({quoted}))" : $"near({quoted})";
-            return $"{field} contains {annotation}";
-        }
+        public override string Build() => $"!({inner.Build()})";
     }
 
-    internal sealed class ONear(string field, IReadOnlyList<string> terms, int? distance) : YqlPredicate
+    /// <summary>
+    /// Raw YQL fragment embedded verbatim — the caller is responsible for its validity.
+    /// </summary>
+    internal sealed class RawPredicate(string yql) : YqlPredicate
+    {
+        public override string Build() => yql;
+    }
+
+    // --- Proximity / synonym operators ---
+
+    internal sealed class Near(string field, IReadOnlyList<string> terms, int? distance,
+        IReadOnlyList<string>? excludedTerms = null, int? exclusionDistance = null, bool ordered = false) : YqlPredicate
     {
         public override string Build()
         {
-            var quoted = string.Join(", ", terms.Select(t => $"\"{Escape(t)}\""));
-            var annotation = distance.HasValue ? $"({{distance: {distance.Value}}}onear({quoted}))" : $"onear({quoted})";
-            return $"{field} contains {annotation}";
+            // Negative terms (!"term") must come after all positive terms
+            var args = terms.Select(t => $"\"{Escape(t)}\"")
+                .Concat((excludedTerms ?? []).Select(t => $"!\"{Escape(t)}\""));
+            var name = ordered ? "onear" : "near";
+            var call = $"{name}({string.Join(", ", args)})";
+
+            var annotations = new List<string>();
+            if (distance.HasValue) annotations.Add($"distance: {distance.Value}");
+            if (exclusionDistance.HasValue) annotations.Add($"exclusionDistance: {exclusionDistance.Value}");
+            var annotated = annotations.Count > 0 ? $"({{{string.Join(", ", annotations)}}}{call})" : call;
+            return $"{field} contains {annotated}";
         }
     }
 
@@ -182,12 +244,27 @@ internal abstract class YqlPredicate
         }
     }
 
-    internal sealed class SameElement(string field, IReadOnlyList<YqlPredicate> conditions) : YqlPredicate
+    /// <summary>
+    /// A bare (optionally negated) term inside <c>sameElement()</c>, used for
+    /// array-of-string fields: <c>sameElement("one" and !"two")</c>.
+    /// </summary>
+    internal sealed class BareTerm(string value, bool negated = false) : YqlPredicate
+    {
+        public override string Build() => $"{(negated ? "!" : "")}\"{Escape(value)}\"";
+    }
+
+    internal sealed class SameElement(string field, IReadOnlyList<YqlPredicate> conditions, IReadOnlyList<int>? elementFilter = null) : YqlPredicate
     {
         public override string Build()
         {
-            var parts = string.Join(", ", conditions.Select(p => p.Build()));
-            return $"{field} contains sameElement({parts})";
+            // Bare-term conditions use the documented "a and !b" form; struct-field
+            // conditions use the comma form (both combine with AND semantics).
+            var separator = conditions.Any(p => p is BareTerm) ? " and " : ", ";
+            var parts = string.Join(separator, conditions.Select(p => p.Build()));
+            var call = $"sameElement({parts})";
+            if (elementFilter is { Count: > 0 })
+                return $"{field} contains ({{elementFilter:[{string.Join(", ", elementFilter)}]}}{call})";
+            return $"{field} contains {call}";
         }
     }
 
@@ -224,11 +301,16 @@ internal abstract class YqlPredicate
         public override string Build() => $"nonEmpty({inner.Build()})";
     }
 
+    /// <summary>
+    /// <c>geoBoundingBox(field, s, w, n, e)</c> — position inside a geographical
+    /// rectangle; 5 positional arguments, south-western corner first
+    /// (docs.vespa.ai/en/reference/query-language-reference.html, "geoBoundingBox").
+    /// </summary>
     internal sealed class GeoBoundingBox(string field, double south, double west, double north, double east) : YqlPredicate
     {
-        private static string Fmt(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        private static string Fmt(double v) => v.ToString(CultureInfo.InvariantCulture);
         public override string Build() =>
-            $"{{southWest: {{lat: {Fmt(south)}, lng: {Fmt(west)}}}, northEast: {{lat: {Fmt(north)}, lng: {Fmt(east)}}}}}geoBoundingBox({field})";
+            $"geoBoundingBox({field}, {Fmt(south)}, {Fmt(west)}, {Fmt(north)}, {Fmt(east)})";
     }
 
     internal sealed class Uri(string field, string value, bool? startAnchor, bool? endAnchor) : YqlPredicate
@@ -247,14 +329,14 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            var attrEntries = string.Join(", ", attributes.Select(kv => $"\"{Escape(kv.Key)}\": \"{Escape(kv.Value)}\""));
-            var attrMap = $"{{{attrEntries}}}";
-            if (rangeAttributes is not null && rangeAttributes.Count > 0)
-            {
-                var rangeEntries = string.Join(", ", rangeAttributes.Select(kv => $"\"{Escape(kv.Key)}\": {kv.Value}L"));
-                return $"predicate({field}, {attrMap}, {{{rangeEntries}}})";
-            }
-            return $"predicate({field}, {attrMap}, {{}})";
+            // YQL cannot parse an empty map — the documented placeholder is the number 0
+            var attrMap = attributes.Count > 0
+                ? $"{{{string.Join(", ", attributes.Select(kv => $"\"{Escape(kv.Key)}\": \"{Escape(kv.Value)}\""))}}}"
+                : "0";
+            var rangeMap = rangeAttributes is { Count: > 0 }
+                ? $"{{{string.Join(", ", rangeAttributes.Select(kv => $"\"{Escape(kv.Key)}\": {kv.Value}L"))}}}"
+                : "0";
+            return $"predicate({field}, {attrMap}, {rangeMap})";
         }
     }
 
@@ -264,13 +346,16 @@ internal abstract class YqlPredicate
     /// <c>[{targetHits:N}]weakAnd(pred1, pred2, ...)</c> — retrieves documents matching at least one
     /// sub-predicate and scores them by weakly combining all matches.
     /// </summary>
-    internal sealed class WeakAnd(IReadOnlyList<YqlPredicate> operands, int? targetHits = null) : YqlPredicate
+    internal sealed class WeakAnd(IReadOnlyList<YqlPredicate> operands, int? targetHits = null, int? totalTargetHits = null) : YqlPredicate
     {
         public override string Build()
         {
             var parts = string.Join(", ", operands.Select(p => p.Build()));
-            return targetHits.HasValue
-                ? $"({{targetHits:{targetHits.Value}}}weakAnd({parts}))"
+            var annotations = new List<string>();
+            if (totalTargetHits.HasValue) annotations.Add($"totalTargetHits:{totalTargetHits.Value}");
+            else if (targetHits.HasValue) annotations.Add($"targetHits:{targetHits.Value}");
+            return annotations.Count > 0
+                ? $"({{{string.Join(", ", annotations)}}}weakAnd({parts}))"
                 : $"weakAnd({parts})";
         }
     }
@@ -279,14 +364,17 @@ internal abstract class YqlPredicate
     /// <c>{targetHits:N}wand(field, {{"term": weight, ...}})</c> — Weighted AND: returns
     /// the top-<paramref name="targetHits"/> documents by term-weight dot product.
     /// </summary>
-    internal sealed class Wand(string field, IReadOnlyDictionary<string, int> terms, int targetHits, double? scoreThreshold = null) : YqlPredicate
+    internal sealed class Wand(string field, IReadOnlyDictionary<string, int> terms, int targetHits, double? scoreThreshold = null, int? totalTargetHits = null) : YqlPredicate
     {
         public override string Build()
         {
             var entries = string.Join(", ", terms.Select(kv => $"\"{Escape(kv.Key)}\": {kv.Value}"));
-            var annotations = new List<string> { $"targetHits:{targetHits}" };
+            var annotations = new List<string>
+            {
+                totalTargetHits.HasValue ? $"totalTargetHits:{totalTargetHits.Value}" : $"targetHits:{targetHits}"
+            };
             if (scoreThreshold.HasValue)
-                annotations.Add($"scoreThreshold:{scoreThreshold.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                annotations.Add($"scoreThreshold:{scoreThreshold.Value.ToString(CultureInfo.InvariantCulture)}");
             return $"({{{string.Join(", ", annotations)}}}wand({field}, {{{entries}}}))";
         }
     }
@@ -329,9 +417,15 @@ internal abstract class YqlPredicate
     /// <summary>
     /// <c>field contains text("value")</c> — linguistics-based text matching with tokenization and stemming.
     /// </summary>
-    internal sealed class Text(string field, string value) : YqlPredicate
+    internal sealed class Text(string field, string value, string? language = null) : YqlPredicate
     {
-        public override string Build() => $"""{field} contains text("{Escape(value)}")""";
+        public override string Build()
+        {
+            var call = $"text(\"{Escape(value)}\")";
+            return language is not null
+                ? $"{field} contains ({{language: \"{Escape(language)}\"}}{call})"
+                : $"{field} contains {call}";
+        }
     }
 
     // --- Helpers ---
@@ -342,34 +436,48 @@ internal abstract class YqlPredicate
     {
         string s => $"\"{Escape(s)}\"",
         bool b => b ? "true" : "false",
-        float f => f.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        double d => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        decimal m => m.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        char c => $"\"{Escape(c.ToString())}\"",
+        float f => f.ToString(CultureInfo.InvariantCulture),
+        double d => d.ToString(CultureInfo.InvariantCulture),
+        decimal m => m.ToString(CultureInfo.InvariantCulture),
         // YQL requires the L suffix for 64-bit signed numbers
-        long l => l.ToString(System.Globalization.CultureInfo.InvariantCulture) + "L",
-        ulong ul => ul.ToString(System.Globalization.CultureInfo.InvariantCulture) + "L",
+        long l => l.ToString(CultureInfo.InvariantCulture) + "L",
+        ulong ul => ul <= long.MaxValue
+            ? ul.ToString(CultureInfo.InvariantCulture) + "L"
+            : throw new NotSupportedException(
+                $"Value {ul} exceeds long.MaxValue — YQL numbers are signed 64-bit."),
         DateTime or DateTimeOffset => throw new NotSupportedException(
             "DateTime values cannot be expressed in YQL — convert to epoch milliseconds (long) to match the field's stored representation."),
-        IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
-        _ => value.ToString()!
+        IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+        _ => throw new NotSupportedException(
+            $"Values of type {value.GetType()} cannot be expressed as YQL literals — use string, bool, or a numeric type.")
     };
 
     private static string Parenthesize(YqlPredicate p) => p is And or Or ? $"({p.Build()})" : p.Build();
 
-    private static List<string> BuildTermAnnotations(
-        bool? filter, int? termId, double? connectivityWeight,
-        bool? stem, bool? normalizeCase, bool? accentDrop, bool? usePositionData)
+    private static List<string> BuildTermAnnotations(TermAnnotations a)
     {
         var annotations = new List<string>();
-        if (filter.HasValue) annotations.Add($"filter: {(filter.Value ? "true" : "false")}");
-        if (termId.HasValue && connectivityWeight.HasValue)
-            annotations.Add($"connectivity: {{id: {termId.Value}, weight: {connectivityWeight.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}");
-        else if (termId.HasValue)
-            annotations.Add($"id: {termId.Value}");
-        if (stem.HasValue) annotations.Add($"stem: {(stem.Value ? "true" : "false")}");
-        if (normalizeCase.HasValue) annotations.Add($"normalizeCase: {(normalizeCase.Value ? "true" : "false")}");
-        if (accentDrop.HasValue) annotations.Add($"accentDrop: {(accentDrop.Value ? "true" : "false")}");
-        if (usePositionData.HasValue) annotations.Add($"usePositionData: {(usePositionData.Value ? "true" : "false")}");
+        if (a.Filter.HasValue) annotations.Add($"filter: {Bool(a.Filter.Value)}");
+        if (a.TermId.HasValue && a.ConnectivityWeight.HasValue)
+            annotations.Add($"connectivity: {{id: {a.TermId.Value}, weight: {a.ConnectivityWeight.Value.ToString(CultureInfo.InvariantCulture)}}}");
+        else if (a.TermId.HasValue)
+            annotations.Add($"id: {a.TermId.Value}");
+        if (a.Weight.HasValue) annotations.Add($"weight: {a.Weight.Value}");
+        if (a.Stem.HasValue) annotations.Add($"stem: {Bool(a.Stem.Value)}");
+        if (a.NormalizeCase.HasValue) annotations.Add($"normalizeCase: {Bool(a.NormalizeCase.Value)}");
+        if (a.AccentDrop.HasValue) annotations.Add($"accentDrop: {Bool(a.AccentDrop.Value)}");
+        if (a.UsePositionData.HasValue) annotations.Add($"usePositionData: {Bool(a.UsePositionData.Value)}");
+        if (a.Prefix.HasValue) annotations.Add($"prefix: {Bool(a.Prefix.Value)}");
+        if (a.Suffix.HasValue) annotations.Add($"suffix: {Bool(a.Suffix.Value)}");
+        if (a.Substring.HasValue) annotations.Add($"substring: {Bool(a.Substring.Value)}");
+        if (a.Significance.HasValue) annotations.Add($"significance: {a.Significance.Value.ToString(CultureInfo.InvariantCulture)}");
+        if (a.Ranked.HasValue) annotations.Add($"ranked: {Bool(a.Ranked.Value)}");
+        if (a.Language is not null) annotations.Add($"language: \"{Escape(a.Language)}\"");
+        if (a.Nfkc.HasValue) annotations.Add($"nfkc: {Bool(a.Nfkc.Value)}");
+        if (a.ImplicitTransforms.HasValue) annotations.Add($"implicitTransforms: {Bool(a.ImplicitTransforms.Value)}");
         return annotations;
+
+        static string Bool(bool v) => v ? "true" : "false";
     }
 }

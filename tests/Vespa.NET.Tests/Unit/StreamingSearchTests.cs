@@ -37,19 +37,8 @@ public class StreamingSearchTests : IDisposable
     public void Dispose() => _httpClient.Dispose();
 
     // ── Vespa streaming search parameters ─────────────────────────────────────
-
-    [Fact]
-    public void VespaSearchRequest_StreamingUserId_SerializesWithDotKey()
-    {
-        var request = new VespaSearchRequest
-        {
-            Yql = "select * from email;",
-            StreamingUserId = "alice@example.com"
-        };
-        var json = JsonSerializer.Serialize(request, JsonOpts);
-        Assert.Contains(@"""streaming.userid""", json);
-        Assert.Contains("alice@example.com", json);
-    }
+    // streaming.userid is no longer part of the Vespa query API — only groupname,
+    // selection and maxbucketspervisitor remain.
 
     [Fact]
     public void VespaSearchRequest_StreamingGroupName_SerializesWithDotKey()
@@ -211,7 +200,7 @@ public class StreamingSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task SearchStreamAsync_PropagatesStreamingUserId()
+    public async Task SearchStreamAsync_PropagatesStreamingGroupName()
     {
         EnqueuePage(["a"]);
 
@@ -220,11 +209,11 @@ public class StreamingSearchTests : IDisposable
                 new VespaSearchRequest
                 {
                     Yql = "select * from email;",
-                    StreamingUserId = "bob@example.com"
+                    StreamingGroupName = "team-bob"
                 }, pageSize: 10));
 
         var body = await ReadBodyAsync(_mockHandler.Requests[0]);
-        Assert.Contains("bob@example.com", body);
+        Assert.Contains("team-bob", body);
     }
 
     [Fact]

@@ -21,7 +21,7 @@ public static class GroupingContinuations
         ArgumentNullException.ThrowIfNull(tokens);
         ArgumentOutOfRangeException.ThrowIfZero(tokens.Count, nameof(tokens));
 
-        var pipeIdx = yql.IndexOf('|');
+        var pipeIdx = FindPipeOutsideStringLiterals(yql);
         if (pipeIdx < 0)
             throw new ArgumentException(
                 "The YQL contains no grouping expression ('|' pipe) to attach continuation tokens to.",
@@ -37,5 +37,30 @@ public static class GroupingContinuations
 
         var annotation = $"{{ 'continuations':[{string.Join(", ", tokens.Select(t => $"'{t}'"))}] }}";
         return yql.Insert(insertAt, annotation);
+    }
+
+    /// <summary>
+    /// Index of the first <c>|</c> outside single/double-quoted string literals —
+    /// a pipe inside e.g. <c>title contains "a|b"</c> is not the grouping separator.
+    /// </summary>
+    private static int FindPipeOutsideStringLiterals(string yql)
+    {
+        char? quote = null;
+        for (var i = 0; i < yql.Length; i++)
+        {
+            var c = yql[i];
+            if (quote is { } q)
+            {
+                if (c == '\\')
+                    i++; // skip the escaped character
+                else if (c == q)
+                    quote = null;
+            }
+            else if (c is '"' or '\'')
+                quote = c;
+            else if (c == '|')
+                return i;
+        }
+        return -1;
     }
 }

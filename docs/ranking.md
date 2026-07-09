@@ -70,9 +70,13 @@ obsolete — it cannot express expressions containing `:` or `;`.)
 |---|---|
 | `.WithProfile(name)` | Ranking profile name |
 | `.Feature(name, value)` | Query feature (tensor or scalar) |
-| `.RerankCount(n)` | Second-phase rerank count |
+| `.RerankCount(n)` | Second-phase rerank count per node (`ranking.secondPhase.rerankCount`) |
+| `.TotalRerankCount(n)` | Second-phase rerank count over all content nodes (preferred) |
+| `.SecondPhaseRankScoreDropLimit(x)` | Second-phase score drop limit |
+| `.KeepRankCount(n)` / `.TotalKeepRankCount(n)` | Hits keeping their rank score after first phase |
 | `.SoftTimeout(enable, factor)` | Soft timeout with coverage factor |
-| `.MatchPhase(field, maxHits)` | Match-phase with attribute field |
+| `.MatchPhase(field, maxHits, ascending, totalMaxHits)` | Match-phase early termination (prefer `totalMaxHits`) |
 | `.MatchPhaseDiversity(field, minGroups)` | Diversity on match-phase |
 | `.GlobalPhaseRerankCount(n)` | Global-phase rerank count |
+| `.GlobalPhaseRankScoreDropLimit(x)` | Global-phase score drop limit |
 | `.Matching(numThreadsPerSearch)` | Matching thread configuration |

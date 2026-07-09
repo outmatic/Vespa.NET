@@ -22,6 +22,8 @@ public sealed class RankingBuilder
     private readonly Dictionary<string, object> _features = [];
     private readonly Dictionary<string, object> _properties = [];
     private int? _rerankCount;
+    private int? _totalRerankCount;
+    private double? _secondPhaseRankScoreDropLimit;
     private bool? _listFeatures;
     private string? _sorting;
     private bool? _softTimeoutEnable;
@@ -29,10 +31,13 @@ public sealed class RankingBuilder
     private string? _freshness;
     private bool? _queryCache;
     private int? _keepRankCount;
+    private int? _totalKeepRankCount;
     private double? _rankScoreDropLimit;
     private int? _globalPhaseRerankCount;
+    private double? _globalPhaseRankScoreDropLimit;
     private string? _matchPhaseAttribute;
     private long? _matchPhaseMaxHits;
+    private long? _matchPhaseTotalMaxHits;
     private bool? _matchPhaseAscending;
     private string? _matchPhaseDiversityAttribute;
     private int? _matchPhaseDiversityMinGroups;
@@ -69,11 +74,29 @@ public sealed class RankingBuilder
     }
 
     /// <summary>
-    /// Set the number of top-N first-phase documents to pass to second-phase re-ranking
+    /// Set the number of top-N first-phase documents per node to pass to second-phase
+    /// re-ranking (<c>ranking.secondPhase.rerankCount</c>). Prefer <see cref="TotalRerankCount"/>.
     /// </summary>
     public RankingBuilder RerankCount(int count)
     {
         _rerankCount = count;
+        return this;
+    }
+
+    /// <summary>
+    /// Number of documents ranked in the second phase in total over the queried
+    /// content nodes (<c>ranking.secondPhase.totalRerankCount</c>); 0 disables second phase.
+    /// </summary>
+    public RankingBuilder TotalRerankCount(int count)
+    {
+        _totalRerankCount = count;
+        return this;
+    }
+
+    /// <summary>Minimum rank score to remain a hit after second-phase reranking</summary>
+    public RankingBuilder SecondPhaseRankScoreDropLimit(double limit)
+    {
+        _secondPhaseRankScoreDropLimit = limit;
         return this;
     }
 
@@ -111,8 +134,11 @@ public sealed class RankingBuilder
     /// <summary>Cache the query between ranking phases</summary>
     public RankingBuilder QueryCache(bool enable = true) { _queryCache = enable; return this; }
 
-    /// <summary>Documents keeping rank value after match phase</summary>
+    /// <summary>Hits keeping their rank score after first phase, per node. Prefer <see cref="TotalKeepRankCount"/>.</summary>
     public RankingBuilder KeepRankCount(int count) { _keepRankCount = count; return this; }
+
+    /// <summary>Hits keeping their rank score after first phase, in total over the queried nodes</summary>
+    public RankingBuilder TotalKeepRankCount(int count) { _totalKeepRankCount = count; return this; }
 
     /// <summary>Minimum first-phase score threshold</summary>
     public RankingBuilder RankScoreDropLimit(double limit) { _rankScoreDropLimit = limit; return this; }
@@ -120,12 +146,20 @@ public sealed class RankingBuilder
     /// <summary>Global phase rerank count</summary>
     public RankingBuilder GlobalPhaseRerankCount(int count) { _globalPhaseRerankCount = count; return this; }
 
-    /// <summary>Configure match-phase early termination</summary>
-    public RankingBuilder MatchPhase(string attribute, long? maxHits = null, bool? ascending = null)
+    /// <summary>Minimum rank score to remain a hit after global-phase reranking</summary>
+    public RankingBuilder GlobalPhaseRankScoreDropLimit(double limit) { _globalPhaseRankScoreDropLimit = limit; return this; }
+
+    /// <summary>
+    /// Configure match-phase early termination.
+    /// Prefer <paramref name="totalMaxHits"/> (over all content nodes) to the per-node
+    /// <paramref name="maxHits"/>.
+    /// </summary>
+    public RankingBuilder MatchPhase(string attribute, long? maxHits = null, bool? ascending = null, long? totalMaxHits = null)
     {
         _matchPhaseAttribute = attribute;
         _matchPhaseMaxHits = maxHits;
         _matchPhaseAscending = ascending;
+        _matchPhaseTotalMaxHits = totalMaxHits;
         return this;
     }
 
@@ -160,6 +194,8 @@ public sealed class RankingBuilder
         Profile = _profile,
         Features = _features.Count > 0 ? new Dictionary<string, object>(_features) : null,
         RerankCount = _rerankCount,
+        TotalRerankCount = _totalRerankCount,
+        SecondPhaseRankScoreDropLimit = _secondPhaseRankScoreDropLimit,
         ListFeatures = _listFeatures,
         Properties = _properties.Count > 0 ? new Dictionary<string, object>(_properties) : null,
         Sorting = _sorting,
@@ -168,10 +204,13 @@ public sealed class RankingBuilder
         Freshness = _freshness,
         QueryCache = _queryCache,
         KeepRankCount = _keepRankCount,
+        TotalKeepRankCount = _totalKeepRankCount,
         RankScoreDropLimit = _rankScoreDropLimit,
         GlobalPhaseRerankCount = _globalPhaseRerankCount,
+        GlobalPhaseRankScoreDropLimit = _globalPhaseRankScoreDropLimit,
         MatchPhaseAttribute = _matchPhaseAttribute,
         MatchPhaseMaxHits = _matchPhaseMaxHits,
+        MatchPhaseTotalMaxHits = _matchPhaseTotalMaxHits,
         MatchPhaseAscending = _matchPhaseAscending,
         MatchPhaseDiversityAttribute = _matchPhaseDiversityAttribute,
         MatchPhaseDiversityMinGroups = _matchPhaseDiversityMinGroups,

@@ -103,12 +103,16 @@ public static class YqlExtensions
 
     /// <summary>
     /// Set a rank feature: <c>Ranking.Features["query({name})"] = value</c>.
+    /// A bare name is wrapped as <c>query(name)</c>; a full feature reference that
+    /// already contains parentheses (e.g. <c>"query(x)"</c>, the form
+    /// <c>RankingBuilder.Feature</c> takes) is used as-is.
     /// </summary>
     public static VespaSearchRequest WithRankFeature(this VespaSearchRequest request, string name, object value)
     {
         request.Ranking ??= new RankingConfig();
         request.Ranking.Features ??= [];
-        request.Ranking.Features[$"query({name})"] = value;
+        var key = name.Contains('(') ? name : $"query({name})";
+        request.Ranking.Features[key] = value;
         return request;
     }
 }

@@ -17,8 +17,21 @@ public interface ISearchOperations
     ) where T : class;
 
     /// <summary>
-    /// Execute a nearest neighbor search using embeddings
+    /// Execute a nearest neighbor search using embeddings.
+    /// The generated YQL uses the <c>totalTargetHits</c> annotation with
+    /// <paramref name="topK"/> as its value.
     /// </summary>
+    /// <param name="queryEmbedding">Dense query vector.</param>
+    /// <param name="embeddingField">Tensor field to search.</param>
+    /// <param name="documentType">Document type to search.</param>
+    /// <param name="topK">Number of neighbors to retrieve and return.</param>
+    /// <param name="filter">
+    /// Optional raw YQL predicate AND'ed with the nearest-neighbor operator.
+    /// <b>Warning:</b> embedded verbatim without validation or escaping — do not pass
+    /// unvalidated end-user input; build it with <c>YqlBuilder</c> where possible.
+    /// </param>
+    /// <param name="rankProfile">Optional rank profile name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<VespaSearchResponse<T>> NearestNeighborSearchAsync<T>(
         VespaTensor queryEmbedding,
         string embeddingField,
@@ -26,7 +39,6 @@ public interface ISearchOperations
         int topK = 10,
         string? filter = null,
         string? rankProfile = null,
-        string? @namespace = null,
         CancellationToken cancellationToken = default
     ) where T : class;
 
@@ -56,6 +68,13 @@ public interface ISearchOperations
     /// <summary>
     /// Stream all matching hits by transparently paginating through the result set.
     /// Each page is fetched lazily as the caller iterates.
+    /// <para>
+    /// <b>Server limits:</b> Vespa caps <c>hits</c> at <c>maxHits</c> (default 400 —
+    /// a larger <paramref name="pageSize"/> is a 400 error) and <c>offset</c> at
+    /// <c>maxOffset</c> (default 1000), so deep pagination fails unless those query-profile
+    /// limits are raised. To export a full corpus, use document visiting
+    /// (<c>Documents.VisitAsync</c>/<c>VisitJsonlAsync</c>) instead of search pagination.
+    /// </para>
     /// </summary>
     /// <param name="request">
     /// Template request. <c>Hits</c> is overridden by <paramref name="pageSize"/>;

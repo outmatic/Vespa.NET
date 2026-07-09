@@ -56,34 +56,44 @@ var yql = YqlBuilder
 | `.GreaterThan(n)` / `.LessThan(n)` | `field > n` / `field < n` |
 | `.GreaterOrEqual(n)` / `.LessOrEqual(n)` | `field >= n` / `field <= n` |
 | `.Range(from, to)` | `range(field, from, to)` |
-| `.In("a", "b")` | `field in ("a", "b")` |
+| `.In("a", "b")` | `field in ("a", "b")` — throws on zero values |
+| `.InParameter("param")` | `field in (@param)` — values sent as a request parameter |
 | `.Phrase("w1", "w2")` | `field contains phrase("w1", "w2")` |
 | `.Fuzzy("term", maxEditDistance: 2)` | `field contains ({maxEditDistance:2}fuzzy("term"))` |
 | `.Near(["t1", "t2"], distance: 3)` | `field contains ({distance: 3}near("t1", "t2"))` |
+| `.Near(["t1"], excludedTerms: ["t2"])` | `field contains near("t1", !"t2")` |
 | `.ONear(["t1", "t2"])` | `field contains onear("t1", "t2")` |
 | `.Equiv("t1", "t2")` | `field contains equiv("t1", "t2")` |
-| `.SameElement(...)` | `field contains sameElement(...)` |
-| `.Uri("vespa.ai")` | `field contains uri("vespa.ai")` |
+| `.SameElement(...)` | `field contains sameElement(...)` — `elementFilter: [0, 2]` adds `{elementFilter:[0, 2]}` |
+| `.Uri("vespa.ai")` | `field contains uri("vespa.ai")` (deprecated upstream) |
+
+`ContainsAnnotated` supports the full set of term annotations: `filter`, `weight`,
+`prefix`/`suffix`/`substring`, `significance`, `ranked`, `language`, `nfkc`,
+`implicitTransforms`, `stem`, `normalizeCase`, `accentDrop`, `usePositionData`
+and connectivity (`termId` + `connectivityWeight`).
 
 ## Clause-Level Predicates
 
 | Method | YQL Output |
 |---|---|
 | `w.NearestNeighbor("emb", "q", 10)` | `{targetHits:10}nearestNeighbor(emb, q)` |
-| `w.WeakAnd(s => ...)` | `weakAnd(...)` |
-| `w.Wand("f", terms, targetHits: 100)` | `{targetHits:100}wand(f, {...})` |
+| `w.NearestNeighbor("emb", "q", totalTargetHits: 100)` | `{totalTargetHits:100}nearestNeighbor(emb, q)` (preferred; `minTargetHits` also supported) |
+| `w.WeakAnd(s => ..., totalTargetHits: 100)` | `{totalTargetHits:100}weakAnd(...)` |
+| `w.Wand("f", terms, targetHits: 100)` | `{targetHits:100}wand(f, {...})` — `totalTargetHits` supported |
 | `w.DotProduct("f", terms)` | `dotProduct(f, {...})` |
 | `w.WeightedSet("f", tokens)` | `weightedSet(f, {...})` |
 | `w.GeoLocation("pos", lat, lon, 10.0)` | `geoLocation(pos, lat, lon, "10km")` |
-| `w.GeoBoundingBox("pos", s, w, n, e)` | `{southWest:..., northEast:...}geoBoundingBox(pos)` |
+| `w.GeoBoundingBox("pos", s, w, n, e)` | `geoBoundingBox(pos, s, w, n, e)` |
 | `w.UserQuery("free text")` | `userQuery()` — the text travels in `model.queryString`, set by `ToSearchRequest()`/`WithYql()` |
 | `w.UserInput("param")` | `userInput(@param)` |
 | `w.Rank(...)` | `rank(...)` |
+| `w.Not(n => ...)` | `!( ... )` |
 | `w.NonEmpty(...)` | `nonEmpty(...)` |
 | `w.Or(or => { or.A(); or.B(); })` | `A or B` |
 | `w.AnyOf(p => p.A(), p => p.B())` | `A or B` |
 | `w.HybridSearch("emb", "q", "param", 100)` | `rank({targetHits:100}nearestNeighbor(emb, q), userInput(@param))` |
-| `w.Predicate("f", attrs, ranges)` | `predicate(f, {...}, {...})` |
+| `w.Predicate("f", attrs, ranges)` | `predicate(f, {...}, {...})` — empty maps emit `0` |
+| `w.Raw("...")` | embedded verbatim — **unvalidated**, YQL-injection risk with user input |
 
 ---
 
@@ -186,6 +196,12 @@ The builder validates at build time:
 | `HybridSearch(...)` | Non-empty field, tensor, and parameter names |
 | `Field(...)`, `OrderBy(...)`, `Select(...)` | Names must match the YQL identifier grammar (dot-separated `[A-Za-z_][A-Za-z0-9_]*` segments, optional `field{"key"}` map suffix) — use `OrderByRaw(...)` for annotated order-by expressions |
 | `EqualTo(...)` | Numeric/boolean only — YQL's `=` rejects strings; use `Contains(...)` or `In(...)` |
-| Literals | `bool` → lowercase, 64-bit integers get the `L` suffix, `decimal` invariant; `DateTime` throws — convert to epoch milliseconds |
+| Literals | `bool` → lowercase, 64-bit integers get the `L` suffix, `decimal` invariant; `DateTime` throws — convert to epoch milliseconds; `ulong` above `long.MaxValue` throws (YQL is signed 64-bit) |
+
+### Limit / Offset
+
+YQL's `limit` keyword caps the total result-set index (not the page size), so
+`Build()` translates: `.Limit(10).Offset(20)` emits `limit 30 offset 20` — the
+same page (rows 20–29) that `ToSearchRequest()` selects via `hits=10&offset=20`.
 
 The query tensor name is derived automatically: for a field named `embedding`, the query input is `query(query_embedding)`.
