@@ -448,7 +448,7 @@ public class VespaSchemaBuilderTests
     {
         // Legacy string DSL — obsolete but still honored
         var schema = VespaSchemaBuilder.GenerateSchema<RankProfileFuncDoc>();
-        Assert.Contains("function freshness {", schema);
+        Assert.Contains("function freshness() {", schema);
         Assert.Contains("expression: now - attribute(timestamp)", schema);
     }
 
@@ -456,7 +456,7 @@ public class VespaSchemaBuilderTests
     public void GenerateSchema_RankProfileFunctions_MultipleFunctions()
     {
         var schema = VespaSchemaBuilder.GenerateSchema<RankProfileMultiFuncDoc>();
-        Assert.Contains("function freshness {", schema);
+        Assert.Contains("function freshness() {", schema);
         Assert.Contains("function myScore(a,b) {", schema);
     }
 
@@ -474,7 +474,7 @@ public class VespaSchemaBuilderTests
     public void GenerateSchema_RankFunctionAttribute_SingleProfile_EmitsFunction()
     {
         var schema = VespaSchemaBuilder.GenerateSchema<RankFunctionAttrDoc>();
-        Assert.Contains("function freshness {", schema);
+        Assert.Contains("function freshness() {", schema);
         Assert.Contains("expression: now - attribute(timestamp)", schema);
         // Expressions containing ':' (impossible in the string DSL) work
         Assert.Contains("function scaled(x) {", schema);
@@ -488,7 +488,7 @@ public class VespaSchemaBuilderTests
 
         var profileA = schema.IndexOf("rank-profile profile_a", StringComparison.Ordinal);
         var profileB = schema.IndexOf("rank-profile profile_b", StringComparison.Ordinal);
-        var funcIdx = schema.IndexOf("function only_in_b {", StringComparison.Ordinal);
+        var funcIdx = schema.IndexOf("function only_in_b() {", StringComparison.Ordinal);
         Assert.True(funcIdx > profileB && profileB > profileA);
     }
 

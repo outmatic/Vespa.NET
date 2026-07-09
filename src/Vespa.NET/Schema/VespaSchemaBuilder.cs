@@ -307,7 +307,12 @@ public static class VespaSchemaBuilder
 
         foreach (var function in profile.Functions)
         {
-            w.Open($"function {function.Signature}");
+            // Vespa's schema grammar requires a parameter list even for zero-argument
+            // functions ("function name() { … }") — a bare name fails deployment.
+            var signature = function.Signature.Contains('(')
+                ? function.Signature
+                : $"{function.Signature}()";
+            w.Open($"function {signature}");
             w.Line($"expression: {function.Expression}");
             w.Close();
         }

@@ -23,6 +23,12 @@ public sealed partial class DocumentOperations(
     private const string QueryParamCluster = "cluster";
     private const string QueryParamCondition = "condition";
     private const string QueryParamContinuation = "continuation";
+
+    /// <summary>
+    /// Consecutive zero-progress selection chunks (same continuation token, zero
+    /// documents) tolerated before the internal continuation loop gives up.
+    /// </summary>
+    private const int MaxStalledSelectionChunks = 64;
     private const string QueryParamCreate = "create";
     private const string QueryParamFieldSet = "fieldSet";
     private const string QueryParamSelection = "selection";
@@ -403,6 +409,7 @@ public sealed partial class DocumentOperations(
         var hadIgnoredFields = false;
         SelectionPageResult page;
         string? continuation = null;
+        var stalledChunks = 0;
 
         do
         {
@@ -413,6 +420,23 @@ public sealed partial class DocumentOperations(
                 extraParams, requestOptions, continuation, contentFactory, cancellationToken);
             totalDocumentCount += page.DocumentCount;
             hadIgnoredFields |= page.HadIgnoredFields;
+
+            // Livelock guard: with a too-small timeChunk Vespa can return the exact
+            // continuation token it was given, having processed zero documents — the
+            // position never advances and this loop would hammer the server forever.
+            if (page.Continuation is not null && page.Continuation == continuation && page.DocumentCount == 0)
+            {
+                if (++stalledChunks >= MaxStalledSelectionChunks)
+                    throw new VespaException(
+                        $"Selection operation made no progress over {MaxStalledSelectionChunks} consecutive chunks " +
+                        "(Vespa returned the same continuation token with documentCount 0). " +
+                        "Increase SelectionRequestOptions.TimeChunk so the server can complete at least one bucket per chunk.");
+            }
+            else
+            {
+                stalledChunks = 0;
+            }
+
             continuation = page.Continuation;
         }
         while (continuation is not null);

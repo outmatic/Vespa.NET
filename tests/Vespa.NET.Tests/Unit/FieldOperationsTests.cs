@@ -565,6 +565,33 @@ public class FieldOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateBySelectionAsync_WhenServerNeverProgresses_ThrowsInsteadOfLoopingForever()
+    {
+        // A too-small timeChunk can make Vespa return the identical continuation
+        // token with documentCount 0 on every chunk (observed against a real server).
+        // The internal loop must detect the livelock and throw instead of hammering
+        // the server indefinitely.
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"documentCount": 0, "continuation": "stuck"}""")
+            });
+
+        var ex = await Assert.ThrowsAsync<VespaException>(() => _documentOps.UpdateBySelectionAsync(
+            "music.year < 2000",
+            new Dictionary<string, FieldOperation> { ["status"] = FieldOp.Assign("archived") },
+            "music", cluster: "content"));
+
+        Assert.Contains("no progress", ex.Message);
+        Assert.Contains("TimeChunk", ex.Message);
+    }
+
+    [Fact]
     public async Task UpdateBySelectionAsync_WithContinuation_SendsReadableBodyOnEveryChunk()
     {
         // A real HTTP handler reads the request body on every chunk — a content

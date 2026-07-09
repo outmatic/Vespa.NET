@@ -17,6 +17,22 @@ public sealed class VespaFixture : IAsyncLifetime
     public static bool IntegrationEnabled =>
         Environment.GetEnvironmentVariable("VESPA_INTEGRATION_TESTS") == "1";
 
+    /// <summary>
+    /// Every document type in the deployed application package. Tests that redeploy
+    /// must use this full list: a package missing any of these schemas is rejected
+    /// by the config server's schema-removal validation (data-loss protection).
+    /// </summary>
+    public static readonly Type[] SchemaTypes =
+    [
+        typeof(TestProduct),
+        typeof(BaseItem),
+        typeof(SpecialItem),
+        typeof(ComplexItem),
+        typeof(TargetItem),
+        typeof(ExpiringItem),
+        typeof(TestEvent)
+    ];
+
     private VespaContainer? _vespa;
     private HttpClient? _http;
 
@@ -51,7 +67,10 @@ public sealed class VespaFixture : IAsyncLifetime
             (Client, _http) = _vespa.CreateClientWithHttp("test");
         }
 
-        await Client.Admin.DeploySchemaAsync<TestProduct>();
+        // One application package with every document type — a single deploy validates
+        // the whole schema-generation matrix (inheritance, complex fields, predicate,
+        // GC selection, streaming mode) while the existing product tests keep working.
+        await Client.Admin.DeploySchemaAsync(SchemaTypes);
         await WaitForReadyAsync();
     }
 
@@ -125,7 +144,33 @@ public sealed record TestProduct
     [VespaField(Name = "tag", IndexingMode = IndexingMode.AttributeSummary)]
     public string Tag { get; init; } = "";
 
+    /// <summary>weightedset&lt;string&gt; — exercises wand/weightedSet operators.</summary>
+    [VespaField(Name = "term_weights", IndexingMode = IndexingMode.AttributeSummary)]
+    public Dictionary<string, int>? TermWeights { get; init; }
+
+    /// <summary><c>match: gram</c> index field — substring matching in indexed mode.</summary>
+    [VespaField(Name = "gram_text", IndexingMode = IndexingMode.SummaryIndex, MatchMode = MatchMode.Gram)]
+    public string GramText { get; init; } = "";
+
     [VespaField(Name = "embedding", IndexingMode = IndexingMode.AttributeSummary)]
     [VespaTensor("tensor<float>(x[4])", EnableIndex = true, DistanceMetric = DistanceMetric.Euclidean)]
     public VespaTensor? Embedding { get; init; }
+
+    /// <summary>Mapped tensor — exercises tensor field-update ops and mapped round-trips.</summary>
+    [VespaField(Name = "weights")]
+    [VespaTensor("tensor<float>(cat{})", IncludeInSummary = true,
+        IndexType = TensorIndexType.None, DistanceMetric = DistanceMetric.None)]
+    public VespaTensor? Weights { get; init; }
+
+    /// <summary>Dense double tensor — hex-value renders without a type, decoding as double.</summary>
+    [VespaField(Name = "dense_double")]
+    [VespaTensor("tensor<double>(x[3])", IncludeInSummary = true,
+        IndexType = TensorIndexType.None, DistanceMetric = DistanceMetric.None)]
+    public VespaTensor? DenseDouble { get; init; }
+
+    /// <summary>Mixed tensor with two mapped dimensions — exercises the blocks form.</summary>
+    [VespaField(Name = "block_weights")]
+    [VespaTensor("tensor<float>(a{},b{},x[2])", IncludeInSummary = true,
+        IndexType = TensorIndexType.None, DistanceMetric = DistanceMetric.None)]
+    public VespaTensor? BlockWeights { get; init; }
 }
