@@ -390,19 +390,44 @@ public class VespaSchemaBuilderTests
     // --- M14: Schema inherits ---
 
     [Fact]
-    public void GenerateSchema_Inherits_IncludesSchemaInherits()
+    public void GenerateSchema_Inherits_IncludesSchemaAndDocumentInherits()
     {
+        // Vespa requires the document type to redeclare the inheritance;
+        // `schema X inherits Y` alone is rejected at deployment.
         var schema = VespaSchemaBuilder.GenerateSchema<InheritingDoc>();
         Assert.Contains("schema child_doc inherits base_doc {", schema);
+        Assert.Contains("document child_doc inherits base_doc {", schema);
     }
 
     // --- M14: Document expiry ---
 
     [Fact]
-    public void GenerateSchema_Selection_IncludesDocumentSelection()
+    public void GenerateSchema_Selection_NotEmittedInSchema()
     {
+        // `selection:` inside the document block is invalid — it belongs in services.xml
         var schema = VespaSchemaBuilder.GenerateSchema<ExpiryDoc>();
-        Assert.Contains("selection: expiry_doc.timestamp > now() - 86400", schema);
+        Assert.DoesNotContain("selection", schema);
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_Selection_EmitsSelectionAndGarbageCollectionInServicesXml()
+    {
+        var bytes = GeneratePackageBytes<ExpiryDoc>();
+        var servicesXml = ReadServicesXml(bytes);
+
+        Assert.Contains("<documents garbage-collection=\"true\">", servicesXml);
+        // XML-escaped selection expression on the <document> element
+        Assert.Contains(
+            "selection=\"expiry_doc.timestamp &gt; now() - 86400\"",
+            servicesXml);
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_NoSelection_OmitsGarbageCollection()
+    {
+        var servicesXml = ReadServicesXml(GeneratePackageBytes<MusicDoc>());
+        Assert.DoesNotContain("garbage-collection", servicesXml);
+        Assert.DoesNotContain("selection=", servicesXml);
     }
 
     // --- M14: Rank profile diversity ---
@@ -421,6 +446,7 @@ public class VespaSchemaBuilderTests
     [Fact]
     public void GenerateSchema_RankProfileFunctions_IncludesFunctionBlock()
     {
+        // Legacy string DSL — obsolete but still honored
         var schema = VespaSchemaBuilder.GenerateSchema<RankProfileFuncDoc>();
         Assert.Contains("function freshness {", schema);
         Assert.Contains("expression: now - attribute(timestamp)", schema);
@@ -432,6 +458,62 @@ public class VespaSchemaBuilderTests
         var schema = VespaSchemaBuilder.GenerateSchema<RankProfileMultiFuncDoc>();
         Assert.Contains("function freshness {", schema);
         Assert.Contains("function myScore(a,b) {", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_RankProfileFunctions_MissingColon_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<RankProfileBadFuncDoc>());
+        Assert.Contains("signature: expression", ex.Message);
+    }
+
+    // --- [VespaRankFunction] attribute ---
+
+    [Fact]
+    public void GenerateSchema_RankFunctionAttribute_SingleProfile_EmitsFunction()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<RankFunctionAttrDoc>();
+        Assert.Contains("function freshness {", schema);
+        Assert.Contains("expression: now - attribute(timestamp)", schema);
+        // Expressions containing ':' (impossible in the string DSL) work
+        Assert.Contains("function scaled(x) {", schema);
+        Assert.Contains("expression: if (x > 0, x, 0)", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_RankFunctionAttribute_ExplicitProfile_TargetsProfile()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<RankFunctionMultiProfileDoc>();
+
+        var profileA = schema.IndexOf("rank-profile profile_a", StringComparison.Ordinal);
+        var profileB = schema.IndexOf("rank-profile profile_b", StringComparison.Ordinal);
+        var funcIdx = schema.IndexOf("function only_in_b {", StringComparison.Ordinal);
+        Assert.True(funcIdx > profileB && profileB > profileA);
+    }
+
+    [Fact]
+    public void GenerateSchema_RankFunctionAttribute_AmbiguousProfile_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<RankFunctionAmbiguousDoc>());
+        Assert.Contains("ambiguous", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_RankFunctionAttribute_UnknownProfile_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<RankFunctionUnknownProfileDoc>());
+        Assert.Contains("not declared", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_RankFunctionAttribute_NoProfile_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<RankFunctionNoProfileDoc>());
+        Assert.Contains("requires a rank profile", ex.Message);
     }
 
     // --- M16: Struct field types ---
@@ -459,6 +541,98 @@ public class VespaSchemaBuilderTests
         var schema = VespaSchemaBuilder.GenerateSchema<ArrayStructDoc>();
         Assert.Contains("struct address {", schema);
         Assert.Contains("field addresses type array<address> {", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_SingleStructField_AttributeMode_Throws()
+    {
+        // Vespa's ComplexFieldsWithStructFieldAttributesValidator rejects struct-field
+        // attributes on single struct fields (only array-of-struct and map are supported),
+        // so the default AttributeSummary must throw instead of generating an
+        // undeployable schema.
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<StructAttributeDoc>());
+        Assert.Contains("single struct fields", ex.Message);
+        Assert.Contains("IndexingMode.Summary", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_ArrayOfStruct_DefaultAttributeSummary_EmitsSummaryAndStructFields()
+    {
+        // The default IndexingMode (AttributeSummary) must not produce the invalid
+        // `indexing: attribute | summary` on an array-of-struct field; Attribute
+        // translates to struct-field attribute blocks for primitive members instead.
+        var schema = VespaSchemaBuilder.GenerateSchema<ArrayStructAttributeDoc>();
+
+        Assert.Contains("field addresses type array<address> {", schema);
+        Assert.Contains("indexing: summary", schema);
+        Assert.DoesNotContain("attribute | summary", schema);
+        Assert.Contains("struct-field street { indexing: attribute }", schema);
+        Assert.Contains("struct-field city { indexing: attribute }", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_StructField_IndexMode_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<StructIndexDoc>());
+        Assert.Contains("IndexingMode.Index is not supported for struct fields", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_MapField_EmitsSummaryAndKeyValueStructFields()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<MapDoc>();
+
+        Assert.Contains("field labels type map<string,string> {", schema);
+        Assert.Contains("indexing: summary", schema);
+        Assert.Contains("struct-field key { indexing: attribute }", schema);
+        Assert.Contains("struct-field value { indexing: attribute }", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_MapOfStruct_EmitsValueMemberStructFields()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<MapOfStructDoc>();
+
+        Assert.Contains("field contacts type map<string,address> {", schema);
+        Assert.Contains("struct-field key { indexing: attribute }", schema);
+        Assert.Contains("struct-field value.street { indexing: attribute }", schema);
+        Assert.Contains("struct-field value.city { indexing: attribute }", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_MapField_SummaryOnly_OmitsStructFields()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<MapSummaryOnlyDoc>();
+
+        Assert.Contains("field labels type map<string,string> {", schema);
+        Assert.Contains("indexing: summary", schema);
+        Assert.DoesNotContain("struct-field", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_NestedStruct_EmitsBothStructDefinitions()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<NestedStructDoc>();
+
+        Assert.Contains("struct geo_point {", schema);
+        Assert.Contains("struct place {", schema);
+        Assert.Contains("field location type geo_point {}", schema);
+        // Nested struct must be defined before the struct referencing it
+        Assert.True(
+            schema.IndexOf("struct geo_point {", StringComparison.Ordinal)
+            < schema.IndexOf("struct place {", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GenerateSchema_RecursiveStruct_Throws()
+    {
+        // Vespa schemas cannot express recursive struct types — must fail with a
+        // clear message instead of overflowing the stack during collection.
+        var ex = Assert.Throws<NotSupportedException>(
+            () => VespaSchemaBuilder.GenerateSchema<RecursiveStructDoc>());
+        Assert.Contains("recursive", ex.Message);
     }
 
     // --- M16: Import fields ---
@@ -674,6 +848,309 @@ public class VespaSchemaBuilderTests
             VespaSchemaBuilder.GenerateApplicationPackage<MusicDoc>(ms, opts));
     }
 
+    // --- Type inference: widened numeric/collection mapping ---
+
+    [Fact]
+    public void GenerateSchema_WidenedScalars_MapCorrectly()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<WidenedScalarsDoc>();
+
+        Assert.Contains("field short_val type int", schema);
+        Assert.Contains("field ushort_val type int", schema);
+        Assert.Contains("field uint_val type long", schema);
+        Assert.Contains("field sbyte_val type byte", schema);
+        Assert.Contains("field guid_val type string", schema);
+        Assert.Contains("field char_val type string", schema);
+        Assert.Contains("field blob type raw", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_ReadOnlyCollections_MapToArray()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<CollectionsDoc>();
+
+        Assert.Contains("field ro_list type array<int>", schema);
+        Assert.Contains("field ro_collection type array<string>", schema);
+        Assert.Contains("field hash_set type array<string>", schema);
+        Assert.Contains("field set_iface type array<long>", schema);
+        Assert.Contains("field weights type weightedset<string>", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_CSharpByteField_Throws()
+    {
+        // C# byte is 0..255, Vespa byte is signed -128..127: values 128..255 fail at feed
+        var ex = Assert.Throws<NotSupportedException>(
+            () => VespaSchemaBuilder.GenerateSchema<ByteFieldDoc>());
+        Assert.Contains("sbyte", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_UlongField_Throws()
+    {
+        var ex = Assert.Throws<NotSupportedException>(
+            () => VespaSchemaBuilder.GenerateSchema<UlongFieldDoc>());
+        Assert.Contains("unsigned 64-bit", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_EnumField_Throws()
+    {
+        var ex = Assert.Throws<NotSupportedException>(
+            () => VespaSchemaBuilder.GenerateSchema<EnumFieldDoc>());
+        Assert.Contains("JsonStringEnumConverter", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_UnmappableField_Throws()
+    {
+        // Unknown types must throw instead of silently mapping to string
+        var ex = Assert.Throws<NotSupportedException>(
+            () => VespaSchemaBuilder.GenerateSchema<DateTimeFieldDoc>());
+        Assert.Contains("Cannot map CLR type 'DateTime'", ex.Message);
+    }
+
+    // --- Predicate fields ---
+
+    [Fact]
+    public void GenerateSchema_PredicateField_EmitsArityBlock()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<PredicateDoc>();
+
+        Assert.Contains("field constraints type predicate {", schema);
+        Assert.Contains("indexing: attribute | summary", schema);
+        Assert.Contains("arity: 8", schema);
+        Assert.Contains("lower-bound: 3", schema);
+        Assert.Contains("upper-bound: 200", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_PredicateField_WithoutArity_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<PredicateNoArityDoc>());
+        Assert.Contains("PredicateArity", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_PredicateArityOnNonPredicate_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<ArityOnStringDoc>());
+        Assert.Contains("non-predicate", ex.Message);
+    }
+
+    // --- Tensor knobs: IndexType / [VespaField] IndexingMode ---
+
+    [Fact]
+    public void GenerateSchema_TensorIndexRequested_WithIndexTypeNone_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => VespaSchemaBuilder.GenerateSchema<TensorIndexNoneDoc>());
+        Assert.Contains("TensorIndexType.None", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_TensorWithFieldSummaryMode_IncludesSummary()
+    {
+        // [VespaField(IndexingMode = AttributeSummary)] on a tensor property is honored
+        var schema = VespaSchemaBuilder.GenerateSchema<TensorFieldModeDoc>();
+        Assert.Contains("indexing: attribute | summary", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_TensorWithFieldIndexMode_EnablesHnsw()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<TensorFieldIndexModeDoc>();
+        Assert.Contains("indexing: attribute | index", schema);
+        Assert.Contains("hnsw", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_ImplicitDoubleTensorType_Parses()
+    {
+        // tensor(x{}) — value type omitted — defaults to double per the tensor grammar
+        var schema = VespaSchemaBuilder.GenerateSchema<ImplicitDoubleTensorDoc>();
+        Assert.Contains("field sparse type tensor<double>(x{})", schema);
+    }
+
+    // --- Distance metric renames ---
+
+    [Fact]
+    public void GenerateSchema_InnerProductMetric_EmitsPrenormalizedAngular()
+    {
+        // Vespa removed the "innerproduct" name; its successor is prenormalized-angular
+        var schema = VespaSchemaBuilder.GenerateSchema<InnerProductMetricDoc>();
+        Assert.Contains("distance-metric: prenormalized-angular", schema);
+        Assert.DoesNotContain("distance-metric: innerproduct", schema);
+    }
+
+    // --- Stemming shortest / rank-type about, empty ---
+
+    [Fact]
+    public void GenerateSchema_StemmingShortest_IncludesShortest()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<StemmingShortestDoc>();
+        Assert.Contains("stemming: shortest", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_RankAboutAndEmpty_EmitRankTypeElement()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<RankAboutEmptyDoc>();
+        Assert.Contains("rank-type: about", schema);
+        Assert.Contains("rank-type: empty", schema);
+    }
+
+    // --- Rank profile inputs (C9) ---
+
+    [Fact]
+    public void GenerateSchema_NonInheritingProfile_GetsTensorInputs()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<StandaloneProfileWithTensorDoc>();
+
+        // Both the auto-generated default and the standalone profile carry the inputs
+        var standalone = schema.IndexOf("rank-profile standalone {", StringComparison.Ordinal);
+        Assert.True(standalone >= 0);
+        var inputsAfter = schema.IndexOf("inputs {", standalone, StringComparison.Ordinal);
+        Assert.True(inputsAfter > standalone);
+    }
+
+    [Fact]
+    public void GenerateSchema_ProfileInheritingDefault_DoesNotRedeclareInputs()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<InheritingProfileWithTensorDoc>();
+
+        var child = schema.IndexOf("rank-profile child inherits default {", StringComparison.Ordinal);
+        Assert.True(child >= 0);
+        Assert.Equal(-1, schema.IndexOf("inputs {", child, StringComparison.Ordinal));
+    }
+
+    // --- Multi-node packages (hosts.xml) ---
+
+    [Fact]
+    public void GenerateApplicationPackage_MultiNode_GeneratesHostsXml()
+    {
+        var opts = new ApplicationPackageOptions { NodeCount = 3, Redundancy = 2 };
+        var bytes = GeneratePackageBytes<MusicDoc>(opts);
+
+        using var ms = new MemoryStream(bytes);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+
+        using var reader = new StreamReader(zip.GetEntry("hosts.xml")!.Open());
+        var hostsXml = reader.ReadToEnd();
+        Assert.Contains("<host name=\"node1\">", hostsXml);
+        Assert.Contains("<alias>node1</alias>", hostsXml);
+        Assert.Contains("<alias>node3</alias>", hostsXml);
+
+        var servicesXml = ReadServicesXml(bytes);
+        Assert.Contains("<node hostalias=\"node3\" distribution-key=\"2\"/>", servicesXml);
+        // Multi-node containers need explicit nodes referencing the aliases
+        Assert.Contains("<node hostalias=\"node1\"/>", servicesXml);
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_MultiNode_WithHostNames_UsesThem()
+    {
+        var opts = new ApplicationPackageOptions
+        {
+            NodeCount = 2,
+            HostNames = ["vespa0.example.com", "vespa1.example.com"]
+        };
+        var bytes = GeneratePackageBytes<MusicDoc>(opts);
+
+        using var ms = new MemoryStream(bytes);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        using var reader = new StreamReader(zip.GetEntry("hosts.xml")!.Open());
+        var hostsXml = reader.ReadToEnd();
+
+        Assert.Contains("<host name=\"vespa0.example.com\">", hostsXml);
+        Assert.Contains("<host name=\"vespa1.example.com\">", hostsXml);
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_SingleNode_HasNoHostsXml()
+    {
+        var bytes = GeneratePackageBytes<MusicDoc>();
+
+        using var ms = new MemoryStream(bytes);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        Assert.Null(zip.GetEntry("hosts.xml"));
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_HostNamesCountMismatch_Throws()
+    {
+        var opts = new ApplicationPackageOptions { NodeCount = 3, HostNames = ["a"] };
+        using var ms = new MemoryStream();
+        var ex = Assert.Throws<ArgumentException>(
+            () => VespaSchemaBuilder.GenerateApplicationPackage<MusicDoc>(ms, opts));
+        Assert.Contains("HostNames", ex.Message);
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_RedundancyExceedsNodeCount_Throws()
+    {
+        var opts = new ApplicationPackageOptions { NodeCount = 1, Redundancy = 2 };
+        using var ms = new MemoryStream();
+        var ex = Assert.Throws<ArgumentException>(
+            () => VespaSchemaBuilder.GenerateApplicationPackage<MusicDoc>(ms, opts));
+        Assert.Contains("Redundancy", ex.Message);
+    }
+
+    // --- AdditionalFiles vs generated entries ---
+
+    [Fact]
+    public void GenerateApplicationPackage_AdditionalFileCollidingWithServicesXml_Throws()
+    {
+        var tmp = Path.GetTempFileName();
+        try
+        {
+            var opts = new ApplicationPackageOptions
+            {
+                AdditionalFiles = new Dictionary<string, string> { ["services.xml"] = tmp }
+            };
+            using var ms = new MemoryStream();
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => VespaSchemaBuilder.GenerateApplicationPackage<MusicDoc>(ms, opts));
+            Assert.Contains("CustomServicesXml", ex.Message);
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_AdditionalFileCollidingWithSchema_Throws()
+    {
+        var tmp = Path.GetTempFileName();
+        try
+        {
+            var opts = new ApplicationPackageOptions
+            {
+                AdditionalFiles = new Dictionary<string, string> { ["schemas/music.sd"] = tmp }
+            };
+            using var ms = new MemoryStream();
+            Assert.Throws<InvalidOperationException>(
+                () => VespaSchemaBuilder.GenerateApplicationPackage<MusicDoc>(ms, opts));
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    // --- services.xml escaping ---
+
+    [Fact]
+    public void GenerateApplicationPackage_SelectionWithXmlSpecialChars_IsEscaped()
+    {
+        var servicesXml = ReadServicesXml(GeneratePackageBytes<EscapingSelectionDoc>());
+        Assert.Contains("a &lt; 1 &amp;&amp; b &gt; 2", servicesXml);
+        Assert.DoesNotContain("a < 1 && b > 2", servicesXml);
+    }
+
     // --- Helpers ---
 
     private static byte[] GeneratePackageBytes<T>(ApplicationPackageOptions? options = null) where T : class
@@ -867,6 +1344,7 @@ file record RankProfileDiversityDoc
     public string Title { get; init; } = string.Empty;
 }
 
+#pragma warning disable CS0618 // Functions DSL is obsolete but must keep working
 [VespaDocument("func_doc")]
 [VespaRankProfile("myrank", FirstPhase = "freshness", Functions = "freshness: now - attribute(timestamp)")]
 file record RankProfileFuncDoc
@@ -881,6 +1359,62 @@ file record RankProfileMultiFuncDoc
 {
     [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
     public string Title { get; init; } = string.Empty;
+}
+
+[VespaDocument("badfunc_doc")]
+[VespaRankProfile("myrank", Functions = "freshness now - attribute(timestamp)")]
+file record RankProfileBadFuncDoc
+{
+    [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
+    public string Title { get; init; } = string.Empty;
+}
+#pragma warning restore CS0618
+
+[VespaDocument("rankfunc_attr_doc")]
+[VespaRankProfile("myrank", FirstPhase = "freshness")]
+[VespaRankFunction("freshness", "now - attribute(timestamp)")]
+[VespaRankFunction("scaled(x)", "if (x > 0, x, 0)")]
+file record RankFunctionAttrDoc
+{
+    [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
+    public string Title { get; init; } = string.Empty;
+}
+
+[VespaDocument("rankfunc_multi_doc")]
+[VespaRankProfile("profile_a", FirstPhase = "nativeRank")]
+[VespaRankProfile("profile_b", FirstPhase = "only_in_b")]
+[VespaRankFunction("only_in_b", "attribute(score) * 2", Profile = "profile_b")]
+file record RankFunctionMultiProfileDoc
+{
+    [VespaField(Name = "score", IndexingMode = IndexingMode.AttributeSummary)]
+    public double Score { get; init; }
+}
+
+[VespaDocument("rankfunc_ambiguous_doc")]
+[VespaRankProfile("profile_a", FirstPhase = "nativeRank")]
+[VespaRankProfile("profile_b", FirstPhase = "nativeRank")]
+[VespaRankFunction("shared", "attribute(score)")]
+file record RankFunctionAmbiguousDoc
+{
+    [VespaField(Name = "score", IndexingMode = IndexingMode.AttributeSummary)]
+    public double Score { get; init; }
+}
+
+[VespaDocument("rankfunc_unknown_doc")]
+[VespaRankProfile("profile_a", FirstPhase = "nativeRank")]
+[VespaRankFunction("orphan", "attribute(score)", Profile = "nope")]
+file record RankFunctionUnknownProfileDoc
+{
+    [VespaField(Name = "score", IndexingMode = IndexingMode.AttributeSummary)]
+    public double Score { get; init; }
+}
+
+[VespaDocument("rankfunc_noprofile_doc")]
+[VespaRankFunction("orphan", "attribute(score)")]
+file record RankFunctionNoProfileDoc
+{
+    [VespaField(Name = "score", IndexingMode = IndexingMode.AttributeSummary)]
+    public double Score { get; init; }
 }
 
 // --- M16 test types ---
@@ -968,5 +1502,233 @@ file record OnnxModelDoc
 file record MultiOnnxDoc
 {
     [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
+    public string Title { get; init; } = "";
+}
+
+// --- Block C test types: struct-field, mapping policy, predicate, tensors, packages ---
+
+[VespaDocument("struct_attr_doc")]
+file record StructAttributeDoc
+{
+    [VespaField] // default AttributeSummary is invalid on a single struct field → throws
+    public AddressStruct? HomeAddress { get; init; }
+}
+
+[VespaDocument("array_struct_attr_doc")]
+file record ArrayStructAttributeDoc
+{
+    [VespaField] // default AttributeSummary → summary + struct-field attribute blocks
+    public List<AddressStruct>? Addresses { get; init; }
+}
+
+[VespaStruct("tree_node")]
+file class RecursiveNodeStruct
+{
+    [VespaField(Name = "label")] public string Label { get; set; } = "";
+    [VespaField(Name = "child")] public RecursiveNodeStruct? Child { get; set; }
+}
+
+[VespaDocument("recursive_struct_doc")]
+file record RecursiveStructDoc
+{
+    [VespaField(IndexingMode = IndexingMode.Summary)]
+    public RecursiveNodeStruct? Root { get; init; }
+}
+
+[VespaDocument("struct_index_doc")]
+file record StructIndexDoc
+{
+    [VespaField(IndexingMode = IndexingMode.SummaryIndex)]
+    public AddressStruct? HomeAddress { get; init; }
+}
+
+[VespaDocument("map_doc")]
+file record MapDoc
+{
+    [VespaField(Name = "labels")]
+    public Dictionary<string, string>? Labels { get; init; }
+}
+
+[VespaDocument("map_of_struct_doc")]
+file record MapOfStructDoc
+{
+    [VespaField(Name = "contacts")]
+    public Dictionary<string, AddressStruct>? Contacts { get; init; }
+}
+
+[VespaDocument("map_summary_doc")]
+file record MapSummaryOnlyDoc
+{
+    [VespaField(Name = "labels", IndexingMode = IndexingMode.Summary)]
+    public Dictionary<string, string>? Labels { get; init; }
+}
+
+[VespaStruct("geo_point")]
+file class GeoPointStruct
+{
+    [VespaField(Name = "lat")] public double Lat { get; set; }
+    [VespaField(Name = "lng")] public double Lng { get; set; }
+}
+
+[VespaStruct("place")]
+file class PlaceStruct
+{
+    [VespaField(Name = "name")] public string Name { get; set; } = "";
+    [VespaField(Name = "location")] public GeoPointStruct? Location { get; set; }
+}
+
+[VespaDocument("nested_struct_doc")]
+file record NestedStructDoc
+{
+    [VespaField(IndexingMode = IndexingMode.Summary)]
+    public PlaceStruct? Place { get; init; }
+}
+
+[VespaDocument("widened_scalars_doc")]
+file record WidenedScalarsDoc
+{
+    [VespaField(Name = "short_val")] public short ShortVal { get; init; }
+    [VespaField(Name = "ushort_val")] public ushort UshortVal { get; init; }
+    [VespaField(Name = "uint_val")] public uint UintVal { get; init; }
+    [VespaField(Name = "sbyte_val")] public sbyte SbyteVal { get; init; }
+    [VespaField(Name = "guid_val")] public Guid GuidVal { get; init; }
+    [VespaField(Name = "char_val")] public char CharVal { get; init; }
+    [VespaField(Name = "blob", IndexingMode = IndexingMode.Summary)] public byte[]? Blob { get; init; }
+}
+
+[VespaDocument("collections_doc")]
+file record CollectionsDoc
+{
+    [VespaField(Name = "ro_list")] public IReadOnlyList<int>? RoList { get; init; }
+    [VespaField(Name = "ro_collection")] public IReadOnlyCollection<string>? RoCollection { get; init; }
+    [VespaField(Name = "hash_set")] public HashSet<string>? HashSetVals { get; init; }
+    [VespaField(Name = "set_iface")] public ISet<long>? SetIface { get; init; }
+    [VespaField(Name = "weights")] public Dictionary<string, int>? Weights { get; init; }
+}
+
+[VespaDocument("byte_field_doc")]
+file record ByteFieldDoc
+{
+    [VespaField(Name = "flags")] public byte Flags { get; init; }
+}
+
+[VespaDocument("ulong_field_doc")]
+file record UlongFieldDoc
+{
+    [VespaField(Name = "big")] public ulong Big { get; init; }
+}
+
+file enum TestColor { Red, Green }
+
+[VespaDocument("enum_field_doc")]
+file record EnumFieldDoc
+{
+    [VespaField(Name = "color")] public TestColor Color { get; init; }
+}
+
+[VespaDocument("datetime_field_doc")]
+file record DateTimeFieldDoc
+{
+    [VespaField(Name = "created")] public DateTime Created { get; init; }
+}
+
+[VespaDocument("predicate_doc")]
+file record PredicateDoc
+{
+    [VespaField(Name = "constraints", FieldType = VespaFieldType.Predicate,
+        PredicateArity = 8, PredicateLowerBound = 3, PredicateUpperBound = 200)]
+    public string Constraints { get; init; } = "";
+}
+
+[VespaDocument("predicate_noarity_doc")]
+file record PredicateNoArityDoc
+{
+    [VespaField(Name = "constraints", FieldType = VespaFieldType.Predicate)]
+    public string Constraints { get; init; } = "";
+}
+
+[VespaDocument("arity_on_string_doc")]
+file record ArityOnStringDoc
+{
+    [VespaField(Name = "title", PredicateArity = 4)]
+    public string Title { get; init; } = "";
+}
+
+[VespaDocument("tensor_index_none_doc")]
+file record TensorIndexNoneDoc
+{
+    [VespaTensor("tensor<float>(x[8])", EnableIndex = true, IndexType = TensorIndexType.None)]
+    public float[]? Vec { get; init; }
+}
+
+[VespaDocument("tensor_field_mode_doc")]
+file record TensorFieldModeDoc
+{
+    [VespaField(Name = "vec", IndexingMode = IndexingMode.AttributeSummary)]
+    [VespaTensor("tensor<float>(x[8])")]
+    public float[]? Vec { get; init; }
+}
+
+[VespaDocument("tensor_field_index_mode_doc")]
+file record TensorFieldIndexModeDoc
+{
+    [VespaField(Name = "vec", IndexingMode = IndexingMode.Attribute | IndexingMode.Index)]
+    [VespaTensor("tensor<float>(x[8])")]
+    public float[]? Vec { get; init; }
+}
+
+[VespaDocument("implicit_double_tensor_doc")]
+file record ImplicitDoubleTensorDoc
+{
+    [VespaTensor("tensor(x{})", DistanceMetric = DistanceMetric.None)]
+    public Dictionary<string, double>? Sparse { get; init; }
+}
+
+#pragma warning disable CS0618 // InnerProduct is obsolete; verify its mapped emission
+[VespaDocument("ip_metric_doc")]
+file record InnerProductMetricDoc
+{
+    [VespaTensor("tensor<float>(x[8])", DistanceMetric = DistanceMetric.InnerProduct)]
+    public float[]? Vec { get; init; }
+}
+#pragma warning restore CS0618
+
+[VespaDocument("stemming_shortest_doc")]
+file record StemmingShortestDoc
+{
+    [VespaField(Name = "title", Stemming = StemmingMode.Shortest, IndexingMode = IndexingMode.IndexAttributeSummary)]
+    public string Title { get; init; } = "";
+}
+
+[VespaDocument("rank_about_empty_doc")]
+file record RankAboutEmptyDoc
+{
+    [VespaField(Name = "description", RankType = RankType.About, IndexingMode = IndexingMode.SummaryIndex)]
+    public string Description { get; init; } = "";
+
+    [VespaField(Name = "flag", RankType = RankType.Empty, IndexingMode = IndexingMode.AttributeSummary)]
+    public string Flag { get; init; } = "";
+}
+
+[VespaDocument("standalone_profile_doc")]
+[VespaRankProfile("standalone", FirstPhase = "nativeRank")]
+file record StandaloneProfileWithTensorDoc
+{
+    [VespaTensor("tensor<float>(x[8])")]
+    public float[]? Embedding { get; init; }
+}
+
+[VespaDocument("inheriting_profile_doc")]
+[VespaRankProfile("child", Inherits = "default", FirstPhase = "nativeRank")]
+file record InheritingProfileWithTensorDoc
+{
+    [VespaTensor("tensor<float>(x[8])")]
+    public float[]? Embedding { get; init; }
+}
+
+[VespaDocument("escaping_doc", Selection = "a < 1 && b > 2")]
+file record EscapingSelectionDoc
+{
+    [VespaField(Name = "title", IndexingMode = IndexingMode.AttributeSummary)]
     public string Title { get; init; } = "";
 }

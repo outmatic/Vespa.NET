@@ -29,8 +29,13 @@ public class VespaDocumentAttribute : Attribute
     public string? Inherits { get; set; }
 
     /// <summary>
-    /// Document selection expression for document expiry.
-    /// Example: <c>"music.timestamp > now() - 86400"</c>
+    /// Document selection expression for document expiry (garbage collection):
+    /// documents <em>not</em> matching the expression are removed.
+    /// Example: <c>"music.timestamp > now() - 86400"</c>.
+    /// Rendered into the generated <c>services.xml</c> as
+    /// <c>&lt;document … selection="…"/&gt;</c> with <c>garbage-collection="true"</c>
+    /// on the <c>&lt;documents&gt;</c> element — not into the <c>.sd</c> schema,
+    /// where Vespa does not accept it.
     /// </summary>
     public string? Selection { get; set; }
 

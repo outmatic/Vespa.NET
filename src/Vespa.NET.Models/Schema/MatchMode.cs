@@ -41,12 +41,12 @@ public enum MatchMode
     Suffix,
 
     /// <summary>
-    /// Case-insensitive matching
+    /// Case-sensitive matching
     /// </summary>
     Cased,
 
     /// <summary>
-    /// Case-sensitive matching
+    /// Case-insensitive matching
     /// </summary>
     Uncased,
 

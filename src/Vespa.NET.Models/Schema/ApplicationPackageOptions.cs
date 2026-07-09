@@ -12,8 +12,21 @@ public sealed record ApplicationPackageOptions
 
     /// <summary>
     /// Number of content nodes in the cluster. Default: 1.
+    /// When greater than 1 a <c>hosts.xml</c> is generated alongside
+    /// <c>services.xml</c> and every node gets a host alias <c>node1</c>…<c>nodeN</c>;
+    /// set <see cref="HostNames"/> to map those aliases to real hostnames.
     /// </summary>
     public int NodeCount { get; init; } = 1;
+
+    /// <summary>
+    /// Hostnames written to the generated <c>hosts.xml</c> for multi-node packages
+    /// (<see cref="NodeCount"/> &gt; 1). Must contain exactly <see cref="NodeCount"/>
+    /// entries when set. When omitted, the aliases themselves (<c>node1</c>…<c>nodeN</c>)
+    /// are used as hostnames — suitable for Docker-compose-style networks where
+    /// container names resolve; override with real FQDNs for actual clusters.
+    /// Ignored for single-node packages (no <c>hosts.xml</c> is generated).
+    /// </summary>
+    public IReadOnlyList<string>? HostNames { get; init; }
 
     /// <summary>
     /// Additional files to include in the application package ZIP.

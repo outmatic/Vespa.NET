@@ -156,15 +156,27 @@ public sealed class VespaContainer : IAsyncDisposable
     /// Deploys a Vespa application package (ZIP file) to this container via the config server.
     /// </summary>
     /// <param name="packageZipPath">Path to the application package ZIP file.</param>
+    /// <param name="deployTimeout">
+    /// Timeout for the deployment HTTP request itself. Default: 100 seconds
+    /// (the <see cref="HttpClient"/> default).
+    /// </param>
+    /// <param name="readyTimeout">
+    /// How long to wait for the application port to serve health after activation.
+    /// Default: 2 minutes.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <exception cref="InvalidOperationException">Thrown when deployment fails.</exception>
     public async Task DeployApplicationAsync(
         string packageZipPath,
+        TimeSpan? deployTimeout = null,
+        TimeSpan? readyTimeout = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageZipPath);
 
         using var http = new HttpClient();
+        if (deployTimeout is { } requestTimeout)
+            http.Timeout = requestTimeout;
         using var stream = File.OpenRead(packageZipPath);
         using var content = new StreamContent(stream);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
@@ -181,13 +193,12 @@ public sealed class VespaContainer : IAsyncDisposable
 
         // prepareandactivate returns before the application port serves traffic —
         // wait for the app health endpoint so callers don't race the activation.
-        await WaitForApplicationReadyAsync(http, cancellationToken);
+        await WaitForApplicationReadyAsync(http, readyTimeout ?? TimeSpan.FromMinutes(2), cancellationToken);
     }
 
-    private async Task WaitForApplicationReadyAsync(HttpClient http, CancellationToken cancellationToken)
+    private async Task WaitForApplicationReadyAsync(HttpClient http, TimeSpan deadline, CancellationToken cancellationToken)
     {
         var healthUrl = $"{Endpoint}/state/v1/health";
-        var deadline = TimeSpan.FromMinutes(2);
         var pollInterval = TimeSpan.FromMilliseconds(500);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 

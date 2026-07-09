@@ -15,5 +15,8 @@ public enum StemmingMode
     Multiple,
 
     /// <summary>Disable stemming</summary>
-    Off
+    Off,
+
+    /// <summary>Use the shortest stem of each word</summary>
+    Shortest
 }

@@ -20,18 +20,26 @@ public class VespaTensorAttribute : Attribute
     public TensorFormat PreferredFormat { get; set; } = TensorFormat.IndexedDense;
 
     /// <summary>
-    /// Whether this tensor should be indexed for nearest neighbor search
+    /// Whether this tensor should be indexed for approximate nearest neighbor search.
+    /// Also enabled when a companion <c>[VespaField]</c> requests
+    /// <c>IndexingMode.Index</c>. Requires <see cref="IndexType"/> =
+    /// <see cref="TensorIndexType.Hnsw"/>; combining an index request with
+    /// <see cref="TensorIndexType.None"/> fails schema generation.
     /// </summary>
     public bool EnableIndex { get; set; } = false;
 
     /// <summary>
     /// Whether this tensor should be included in document summaries (returned with search results).
+    /// Also enabled when a companion <c>[VespaField]</c> requests <c>IndexingMode.Summary</c>.
     /// Default: <see langword="false"/> — embeddings are typically large and not needed in results.
     /// </summary>
     public bool IncludeInSummary { get; set; } = false;
 
     /// <summary>
-    /// Index type for nearest neighbor search
+    /// Index type for nearest neighbor search. <see cref="TensorIndexType.Hnsw"/>
+    /// (default) builds an HNSW graph when an index is requested;
+    /// <see cref="TensorIndexType.None"/> keeps the field a plain attribute
+    /// (exact, brute-force nearest neighbor).
     /// </summary>
     public TensorIndexType IndexType { get; set; } = TensorIndexType.Hnsw;
 

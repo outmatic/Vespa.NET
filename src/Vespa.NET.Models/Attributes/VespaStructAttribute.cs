@@ -7,6 +7,6 @@ namespace Vespa.Models.Attributes;
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false)]
 public class VespaStructAttribute(string? name = null) : Attribute
 {
-    /// <summary>Struct name in the Vespa schema. Defaults to camelCase of the class name.</summary>
+    /// <summary>Struct name in the Vespa schema. Defaults to snake_case of the class name.</summary>
     public string? Name { get; } = name;
 }

@@ -2,7 +2,7 @@ namespace Vespa.Models.Attributes;
 
 /// <summary>
 /// Defines a document-summary in the Vespa schema. Apply to the document class.
-/// Generates <c>document-summary name { summary field type: source_field }</c>.
+/// Generates <c>document-summary name { summary field {} … }</c>.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
 public class VespaDocumentSummaryAttribute(string name, params string[] fields) : Attribute

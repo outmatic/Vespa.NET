@@ -43,8 +43,10 @@ public enum DistanceMetric
 
     /// <summary>
     /// Inner product: sum(a[i] * b[i])
-    /// Similar to dot product but used in different contexts
+    /// Vespa removed the <c>innerproduct</c> metric name; this member now emits its
+    /// successor <c>prenormalized-angular</c> (requires normalized vectors).
     /// </summary>
+    [Obsolete("Vespa renamed 'innerproduct' to 'prenormalized-angular'. Use DistanceMetric.PrenormalizedAngular (or DotProduct for non-normalized MIP vectors).")]
     InnerProduct,
 
     /// <summary>

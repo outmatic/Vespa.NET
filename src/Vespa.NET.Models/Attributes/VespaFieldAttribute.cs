@@ -20,8 +20,20 @@ public class VespaFieldAttribute : Attribute
     public VespaFieldType FieldType { get; set; } = VespaFieldType.None;
 
     /// <summary>
-    /// Indexing mode (how the field should be indexed/stored)
+    /// Indexing mode (how the field should be indexed/stored).
     /// </summary>
+    /// <remarks>
+    /// For struct, array-of-struct and map fields the flags are translated instead of
+    /// emitted verbatim (Vespa does not allow <c>attribute</c>/<c>index</c> on such fields):
+    /// <see cref="IndexingMode.Summary"/> puts the whole field in the document summary, and
+    /// <see cref="IndexingMode.Attribute"/> generates
+    /// <c>struct-field &lt;name&gt; { indexing: attribute }</c> blocks for every
+    /// primitive-typed struct member (for maps: <c>key</c>/<c>value</c>) — supported by
+    /// Vespa on array-of-struct and map fields only, so <see cref="IndexingMode.Attribute"/>
+    /// on a <em>single</em> struct field throws at generation time
+    /// (use <see cref="IndexingMode.Summary"/>).
+    /// <see cref="IndexingMode.Index"/> on any of these fields throws at generation time.
+    /// </remarks>
     public IndexingMode IndexingMode { get; set; } = IndexingMode.AttributeSummary;
 
     /// <summary>
@@ -59,4 +71,25 @@ public class VespaFieldAttribute : Attribute
     /// Example: <c>"campaign"</c> generates <c>reference&lt;campaign&gt;</c>.
     /// </summary>
     public string? ReferenceDocumentType { get; set; }
+
+    /// <summary>
+    /// Arity for <see cref="VespaFieldType.Predicate"/> fields — mandatory in Vespa
+    /// (<c>index { arity: N }</c>). Schema generation throws when a predicate field
+    /// leaves this at 0. Higher arity gives faster searches at the cost of index size.
+    /// </summary>
+    public int PredicateArity { get; set; }
+
+    /// <summary>
+    /// Optional <c>lower-bound</c> for <see cref="VespaFieldType.Predicate"/> fields:
+    /// the smallest value used in the predicates' range expressions.
+    /// Leave at <see cref="long.MinValue"/> to omit.
+    /// </summary>
+    public long PredicateLowerBound { get; set; } = long.MinValue;
+
+    /// <summary>
+    /// Optional <c>upper-bound</c> for <see cref="VespaFieldType.Predicate"/> fields:
+    /// the largest value used in the predicates' range expressions.
+    /// Leave at <see cref="long.MaxValue"/> to omit.
+    /// </summary>
+    public long PredicateUpperBound { get; set; } = long.MaxValue;
 }

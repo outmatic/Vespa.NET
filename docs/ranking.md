@@ -36,10 +36,15 @@ Define rank profiles directly on your model with `[VespaRankProfile]`:
     Inherits = "default",
     FirstPhase = "closeness(field, embedding)",
     SecondPhase = "closeness(field, embedding) * attribute(popularity)",
-    SecondPhaseRerankCount = 200,
-    Functions = "freshness: now - attribute(timestamp)")]
+    SecondPhaseRerankCount = 200)]
+[VespaRankFunction("freshness", "now - attribute(timestamp)", Profile = "semantic")]
 public record Product { ... }
 ```
+
+Functions are declared with one `[VespaRankFunction(signature, expression)]` per
+function. `Profile` may be omitted when the type declares a single rank profile.
+(The legacy semicolon-separated `Functions` string property still works but is
+obsolete — it cannot express expressions containing `:` or `;`.)
 
 ### Rank Profile Options
 
@@ -55,7 +60,7 @@ public record Product { ... }
 | `SummaryFeatures` | Features included in search results |
 | `DiversityAttribute` | Attribute field for result diversity |
 | `DiversityMinGroups` | Minimum number of diverse groups |
-| `Functions` | Custom ranking functions (semicolon-separated `name: expression`) |
+| `Functions` | *(obsolete)* Custom ranking functions — use `[VespaRankFunction]` instead |
 
 ---
 

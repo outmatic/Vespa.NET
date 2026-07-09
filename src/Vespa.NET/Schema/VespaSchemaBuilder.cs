@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Reflection;
+using System.Security;
 using System.Text;
 using Vespa.Models.Attributes;
 
@@ -18,174 +19,10 @@ public static class VespaSchemaBuilder
     /// <summary>Generates a Vespa <c>.sd</c> schema string for the given type.</summary>
     public static string GenerateSchema(Type type)
     {
-        ArgumentNullException.ThrowIfNull(type);
-
-        var docAttr = type.GetCustomAttribute<VespaDocumentAttribute>()
-            ?? throw new InvalidOperationException(
-                $"Type '{type.Name}' must be decorated with [VespaDocument].");
-
-        var docType = docAttr.DocumentType;
-        var sb = new StringBuilder();
-        var tensorInputs = new List<(string QueryName, string TensorType)>();
-
-        var schemaInherits = docAttr.Inherits is not null ? $" inherits {docAttr.Inherits}" : "";
-        sb.AppendLine($"schema {docType}{schemaInherits} {{");
-
-        var docSelection = docAttr.Selection;
-        sb.AppendLine($"    document {docType} {{");
-        if (docSelection is not null)
-            sb.AppendLine($"        selection: {docSelection}");
-
-        // Collect and emit struct definitions
-        var emittedStructs = new HashSet<Type>();
-        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-        {
-            if (prop.GetCustomAttribute<VespaExtraFieldsAttribute>() is not null)
-                continue;
-
-            var structType = ResolveStructType(prop.PropertyType);
-            if (structType is not null && emittedStructs.Add(structType))
-                AppendStructDefinition(sb, structType);
-        }
-
-        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-        {
-            // [VespaExtraFields] is a catch-all bag for unmapped fields — skip in schema generation
-            if (prop.GetCustomAttribute<VespaExtraFieldsAttribute>() is not null)
-                continue;
-
-            var tensorAttr = prop.GetCustomAttribute<VespaTensorAttribute>();
-            var fieldAttr = prop.GetCustomAttribute<VespaFieldAttribute>();
-
-            if (tensorAttr is not null)
-            {
-                AppendTensorField(sb, prop, tensorAttr, fieldAttr);
-
-                // Collect tensor inputs for rank-profile generation
-                var fieldName = ResolveFieldName(prop, fieldAttr);
-                tensorInputs.Add(($"query(query_{fieldName})", tensorAttr.GetTensorTypeString()));
-                continue;
-            }
-
-            if (fieldAttr is not null)
-            {
-                AppendRegularField(sb, prop, fieldAttr);
-            }
-        }
-
-        sb.AppendLine("    }");
-
-        // Import fields (schema-level, outside document block)
-        foreach (var impAttr in type.GetCustomAttributes<VespaImportFieldAttribute>())
-            sb.AppendLine($"    import field {impAttr.ReferenceField}.{impAttr.ForeignField} as {impAttr.Alias} {{}}");
-
-        // Constant tensors
-        foreach (var constAttr in type.GetCustomAttributes<VespaConstantAttribute>())
-        {
-            sb.AppendLine($"    constant {constAttr.Name} {{");
-            sb.AppendLine($"        file: {constAttr.File}");
-            sb.AppendLine($"        type: {constAttr.TensorType}");
-            sb.AppendLine("    }");
-        }
-
-        // ONNX models
-        foreach (var onnxAttr in type.GetCustomAttributes<VespaOnnxModelAttribute>())
-        {
-            sb.AppendLine($"    onnx-model {onnxAttr.Name} {{");
-            sb.AppendLine($"        file: {onnxAttr.File}");
-            sb.AppendLine("    }");
-        }
-
-        // Fieldsets
-        foreach (var fsAttr in type.GetCustomAttributes<VespaFieldSetAttribute>())
-            sb.AppendLine($"    fieldset {fsAttr.Name} {{\n        fields: {string.Join(", ", fsAttr.Fields)}\n    }}");
-
-        // Document summaries
-        foreach (var dsAttr in type.GetCustomAttributes<VespaDocumentSummaryAttribute>())
-        {
-            var inherits = dsAttr.Inherits is not null ? $" inherits {dsAttr.Inherits}" : "";
-            sb.AppendLine($"    document-summary {dsAttr.Name}{inherits} {{");
-            foreach (var field in dsAttr.Fields)
-                sb.AppendLine($"        summary {field} {{}}");
-            sb.AppendLine("    }");
-        }
-
-        // Rank profiles — auto-generate a "default" with tensor inputs, unless the
-        // user declared their own "default" (two same-name profiles fail deployment;
-        // the inputs are merged into the user's profile below instead).
-        var rankProfiles = type.GetCustomAttributes<VespaRankProfileAttribute>().ToList();
-        var hasUserDefault = rankProfiles.Any(rp => rp.Name == "default");
-
-        if (tensorInputs.Count > 0 && !hasUserDefault)
-        {
-            sb.AppendLine("    rank-profile default {");
-            AppendRankProfileInputs(sb, tensorInputs);
-            sb.AppendLine("    }");
-        }
-
-        // User-defined rank profiles
-        foreach (var rpAttr in rankProfiles)
-        {
-            var inherits = rpAttr.Inherits is not null ? $" inherits {rpAttr.Inherits}" : "";
-            sb.AppendLine($"    rank-profile {rpAttr.Name}{inherits} {{");
-
-            if (rpAttr.Name == "default" && tensorInputs.Count > 0)
-                AppendRankProfileInputs(sb, tensorInputs);
-
-            if (rpAttr.FirstPhase is not null)
-                sb.AppendLine($"        first-phase {{\n            expression: {rpAttr.FirstPhase}\n        }}");
-
-            if (rpAttr.SecondPhase is not null)
-            {
-                sb.Append($"        second-phase {{\n            expression: {rpAttr.SecondPhase}\n");
-                if (rpAttr.SecondPhaseRerankCount > 0)
-                    sb.Append($"            rerank-count: {rpAttr.SecondPhaseRerankCount}\n");
-                sb.AppendLine("        }");
-            }
-
-            if (rpAttr.GlobalPhase is not null)
-            {
-                sb.Append($"        global-phase {{\n            expression: {rpAttr.GlobalPhase}\n");
-                if (rpAttr.GlobalPhaseRerankCount > 0)
-                    sb.Append($"            rerank-count: {rpAttr.GlobalPhaseRerankCount}\n");
-                sb.AppendLine("        }");
-            }
-
-            if (rpAttr.MatchFeatures is not null)
-                sb.AppendLine($"        match-features: {rpAttr.MatchFeatures}");
-
-            if (rpAttr.SummaryFeatures is not null)
-                sb.AppendLine($"        summary-features: {rpAttr.SummaryFeatures}");
-
-            if (rpAttr.DiversityAttribute is not null)
-            {
-                sb.AppendLine("        diversity {");
-                sb.AppendLine($"            attribute: {rpAttr.DiversityAttribute}");
-                if (rpAttr.DiversityMinGroups > 0)
-                    sb.AppendLine($"            min-groups: {rpAttr.DiversityMinGroups}");
-                sb.AppendLine("        }");
-            }
-
-            if (rpAttr.Functions is not null)
-            {
-                foreach (var funcDef in rpAttr.Functions.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                {
-                    var colonIdx = funcDef.IndexOf(':');
-                    if (colonIdx > 0)
-                    {
-                        var funcSignature = funcDef[..colonIdx].Trim();
-                        var funcBody = funcDef[(colonIdx + 1)..].Trim();
-                        sb.AppendLine($"        function {funcSignature} {{\n            expression: {funcBody}\n        }}");
-                    }
-                }
-            }
-
-            sb.AppendLine("    }");
-        }
-
-        sb.AppendLine("}");
-
-        return sb.ToString();
+        var model = SchemaModelBuilder.Build(type);
+        var writer = new SchemaWriter();
+        EmitSchema(writer, model);
+        return writer.ToString();
     }
 
     /// <summary>Generates a ZIP application package for <typeparamref name="T"/> and writes it to the output stream.</summary>
@@ -198,7 +35,8 @@ public static class VespaSchemaBuilder
 
     /// <summary>
     /// Generates a minimal Vespa application package ZIP containing
-    /// <c>services.xml</c> and one <c>schemas/&lt;doctype&gt;.sd</c> per type.
+    /// <c>services.xml</c> and one <c>schemas/&lt;doctype&gt;.sd</c> per type
+    /// (plus <c>hosts.xml</c> when <see cref="ApplicationPackageOptions.NodeCount"/> &gt; 1).
     /// Files referenced by <see cref="VespaOnnxModelAttribute.SourcePath"/> and
     /// <see cref="VespaConstantAttribute.SourcePath"/> are streamed into the ZIP automatically.
     /// Additional files can be included via <see cref="ApplicationPackageOptions.AdditionalFiles"/>.
@@ -212,10 +50,18 @@ public static class VespaSchemaBuilder
         ArgumentNullException.ThrowIfNull(documentTypes);
 
         var opts = options ?? new ApplicationPackageOptions();
+        ValidatePackageOptions(opts);
 
         using var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
 
-        var docInfos = new List<(string DocType, bool Global, DocumentMode Mode)>();
+        var docInfos = new List<(string DocType, bool Global, DocumentMode Mode, string? Selection)>();
+        var multiNode = opts.NodeCount > 1;
+
+        // Paths of generated entries — AdditionalFiles must not clobber them.
+        var generatedPaths = new HashSet<string>(StringComparer.Ordinal) { "services.xml" };
+        if (multiNode)
+            generatedPaths.Add("hosts.xml");
+
         var includedPaths = new HashSet<string>(StringComparer.Ordinal);
         var seenDocTypes = new HashSet<string>(StringComparer.Ordinal);
 
@@ -227,9 +73,11 @@ public static class VespaSchemaBuilder
             if (!seenDocTypes.Add(docAttr.DocumentType))
                 throw new InvalidOperationException(
                     $"Duplicate document type '{docAttr.DocumentType}': two of the supplied types map to the same schema file.");
-            docInfos.Add((docAttr.DocumentType, docAttr.Global, docAttr.Mode));
+            docInfos.Add((docAttr.DocumentType, docAttr.Global, docAttr.Mode, docAttr.Selection));
 
-            var entry = zip.CreateEntry($"schemas/{docAttr.DocumentType}.sd");
+            var schemaPath = $"schemas/{docAttr.DocumentType}.sd";
+            generatedPaths.Add(schemaPath);
+            var entry = zip.CreateEntry(schemaPath);
             using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             writer.Write(schema);
 
@@ -253,14 +101,235 @@ public static class VespaSchemaBuilder
         {
             foreach (var (zipPath, sourcePath) in opts.AdditionalFiles)
             {
+                if (generatedPaths.Contains(zipPath))
+                    throw new InvalidOperationException(
+                        $"AdditionalFiles entry '{zipPath}' collides with a generated package file. " +
+                        "Use ApplicationPackageOptions.CustomServicesXml to override services.xml, " +
+                        "or pick a different entry path.");
                 if (includedPaths.Add(zipPath))
                     CopyFileToZip(zip, zipPath, sourcePath);
             }
         }
 
+        if (multiNode)
+        {
+            var hostsEntry = zip.CreateEntry("hosts.xml");
+            using var hostsWriter = new StreamWriter(hostsEntry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            hostsWriter.Write(GenerateHostsXml(opts));
+        }
+
         var servicesEntry = zip.CreateEntry("services.xml");
         using var servicesWriter = new StreamWriter(servicesEntry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         servicesWriter.Write(opts.CustomServicesXml ?? GenerateServicesXml(docInfos, opts));
+    }
+
+    // ── Schema emission ──────────────────────────────────────────────────────
+
+    private static void EmitSchema(SchemaWriter w, SchemaModel model)
+    {
+        // A schema inheriting another schema must also declare the document
+        // inheritance explicitly, otherwise Vespa rejects the package at deploy.
+        var inherits = model.Inherits is not null ? $" inherits {model.Inherits}" : "";
+        w.Open($"schema {model.DocType}{inherits}");
+        w.Open($"document {model.DocType}{inherits}");
+
+        foreach (var s in model.Structs)
+        {
+            w.Open($"struct {s.Name}");
+            foreach (var (name, vespaType) in s.Fields)
+                w.Line($"field {name} type {vespaType} {{}}");
+            w.Close();
+        }
+
+        foreach (var field in model.Fields)
+            EmitField(w, field);
+
+        w.Close(); // document
+
+        // Import fields (schema-level, outside document block)
+        foreach (var imp in model.ImportFields)
+            w.Line($"import field {imp.ReferenceField}.{imp.ForeignField} as {imp.Alias} {{}}");
+
+        foreach (var constant in model.Constants)
+        {
+            w.Open($"constant {constant.Name}");
+            w.Line($"file: {constant.File}");
+            w.Line($"type: {constant.TensorType}");
+            w.Close();
+        }
+
+        foreach (var onnx in model.OnnxModels)
+        {
+            w.Open($"onnx-model {onnx.Name}");
+            w.Line($"file: {onnx.File}");
+            w.Close();
+        }
+
+        foreach (var fieldSet in model.FieldSets)
+        {
+            w.Open($"fieldset {fieldSet.Name}");
+            w.Line($"fields: {string.Join(", ", fieldSet.Fields)}");
+            w.Close();
+        }
+
+        foreach (var summary in model.DocumentSummaries)
+        {
+            var summaryInherits = summary.Inherits is not null ? $" inherits {summary.Inherits}" : "";
+            w.Open($"document-summary {summary.Name}{summaryInherits}");
+            foreach (var field in summary.Fields)
+                w.Line($"summary {field} {{}}");
+            w.Close();
+        }
+
+        foreach (var profile in model.RankProfiles)
+            EmitRankProfile(w, profile, model.TensorInputs);
+
+        w.Close(); // schema
+    }
+
+    private static void EmitField(SchemaWriter w, SchemaFieldModel field)
+    {
+        w.Open($"field {field.Name} type {field.VespaType}");
+
+        if (field.Indexing is not null)
+            w.Line($"indexing: {field.Indexing}");
+
+        if (field.IsTensor)
+        {
+            if (field.DistanceMetric is not null)
+            {
+                w.Open("attribute");
+                w.Line($"distance-metric: {field.DistanceMetric}");
+                w.Close();
+            }
+
+            if (field.HnswIndex)
+            {
+                w.Open("index");
+                w.Open("hnsw");
+                w.Line($"max-links-per-node: {field.MaxLinksPerNode}");
+                w.Line($"neighbors-to-explore-at-insert: {field.NeighborsToExploreAtInsert}");
+                w.Close();
+                w.Close();
+            }
+        }
+
+        if (field.PredicateArity is { } arity)
+        {
+            w.Open("index");
+            w.Line($"arity: {arity}");
+            if (field.PredicateLowerBound is { } lower)
+                w.Line($"lower-bound: {lower}");
+            if (field.PredicateUpperBound is { } upper)
+                w.Line($"upper-bound: {upper}");
+            w.Close();
+        }
+
+        if (field.Match is not null)
+            w.Line($"match: {field.Match}");
+        if (field.Stemming is not null)
+            w.Line($"stemming: {field.Stemming}");
+        if (field.Bolding)
+            w.Line("bolding: on");
+        if (field.FastSearch)
+            w.Line("attribute: fast-search");
+        if (field.Normalizing is not null)
+            w.Line($"normalizing: {field.Normalizing}");
+
+        // Field-level rank accepts only filter/normal; identity/about/tags/empty
+        // belong to the separate rank-type element.
+        if (field.Rank is not null)
+            w.Line($"rank: {field.Rank}");
+        if (field.RankTypeName is not null)
+            w.Line($"rank-type: {field.RankTypeName}");
+
+        foreach (var (path, indexing) in field.StructFields)
+            w.Line($"struct-field {path} {{ indexing: {indexing} }}");
+
+        w.Close();
+    }
+
+    private static void EmitRankProfile(
+        SchemaWriter w,
+        RankProfileModel profile,
+        IReadOnlyList<(string QueryName, string TensorType)> tensorInputs)
+    {
+        var inherits = profile.Inherits is not null ? $" inherits {profile.Inherits}" : "";
+        w.Open($"rank-profile {profile.Name}{inherits}");
+
+        if (profile.EmitInputs && tensorInputs.Count > 0)
+        {
+            w.Open("inputs");
+            foreach (var (queryName, tensorType) in tensorInputs)
+                w.Line($"{queryName} {tensorType}");
+            w.Close();
+        }
+
+        if (profile.FirstPhase is not null)
+        {
+            w.Open("first-phase");
+            w.Line($"expression: {profile.FirstPhase}");
+            w.Close();
+        }
+
+        if (profile.SecondPhase is not null)
+        {
+            w.Open("second-phase");
+            w.Line($"expression: {profile.SecondPhase}");
+            if (profile.SecondPhaseRerankCount > 0)
+                w.Line($"rerank-count: {profile.SecondPhaseRerankCount}");
+            w.Close();
+        }
+
+        if (profile.GlobalPhase is not null)
+        {
+            w.Open("global-phase");
+            w.Line($"expression: {profile.GlobalPhase}");
+            if (profile.GlobalPhaseRerankCount > 0)
+                w.Line($"rerank-count: {profile.GlobalPhaseRerankCount}");
+            w.Close();
+        }
+
+        if (profile.MatchFeatures is not null)
+            w.Line($"match-features: {profile.MatchFeatures}");
+        if (profile.SummaryFeatures is not null)
+            w.Line($"summary-features: {profile.SummaryFeatures}");
+
+        if (profile.DiversityAttribute is not null)
+        {
+            w.Open("diversity");
+            w.Line($"attribute: {profile.DiversityAttribute}");
+            if (profile.DiversityMinGroups > 0)
+                w.Line($"min-groups: {profile.DiversityMinGroups}");
+            w.Close();
+        }
+
+        foreach (var function in profile.Functions)
+        {
+            w.Open($"function {function.Signature}");
+            w.Line($"expression: {function.Expression}");
+            w.Close();
+        }
+
+        w.Close();
+    }
+
+    // ── Package plumbing ─────────────────────────────────────────────────────
+
+    private static void ValidatePackageOptions(ApplicationPackageOptions opts)
+    {
+        if (opts.NodeCount < 1)
+            throw new ArgumentException("ApplicationPackageOptions.NodeCount must be at least 1.", nameof(opts));
+        if (opts.Redundancy < 1)
+            throw new ArgumentException("ApplicationPackageOptions.Redundancy must be at least 1.", nameof(opts));
+        if (opts.Redundancy > opts.NodeCount)
+            throw new ArgumentException(
+                $"ApplicationPackageOptions.Redundancy ({opts.Redundancy}) cannot exceed NodeCount ({opts.NodeCount}).",
+                nameof(opts));
+        if (opts.HostNames is not null && opts.HostNames.Count != opts.NodeCount)
+            throw new ArgumentException(
+                $"ApplicationPackageOptions.HostNames has {opts.HostNames.Count} entries but NodeCount is {opts.NodeCount}; the counts must match.",
+                nameof(opts));
     }
 
     private static void CopyFileToZip(ZipArchive zip, string entryPath, string sourcePath)
@@ -275,344 +344,90 @@ public static class VespaSchemaBuilder
         source.CopyTo(dest);
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    private static void AppendTensorField(
-        StringBuilder sb,
-        PropertyInfo prop,
-        VespaTensorAttribute tensorAttr,
-        VespaFieldAttribute? fieldAttr)
-    {
-        var name = ResolveFieldName(prop, fieldAttr);
-        var typeStr = tensorAttr.GetTensorTypeString();
-        var metric = ToVespaMetricName(tensorAttr.DistanceMetric);
-
-        sb.AppendLine($"        field {name} type {typeStr} {{");
-        var indexingParts = new List<string> { "attribute" };
-        if (tensorAttr.EnableIndex)
-            indexingParts.Add("index");
-        if (tensorAttr.IncludeInSummary)
-            indexingParts.Add("summary");
-        sb.AppendLine($"            indexing: {string.Join(" | ", indexingParts)}");
-
-        sb.AppendLine("            attribute {");
-        if (metric is not null)
-            sb.AppendLine($"                distance-metric: {metric}");
-        sb.AppendLine("            }");
-
-        if (tensorAttr.EnableIndex)
-        {
-            sb.AppendLine("            index {");
-            sb.AppendLine($"                hnsw {{");
-            sb.AppendLine($"                    max-links-per-node: {tensorAttr.MaxLinksPerNode}");
-            sb.AppendLine($"                    neighbors-to-explore-at-insert: {tensorAttr.NeighborsToExploreAtInsert}");
-            sb.AppendLine("                }");
-            sb.AppendLine("            }");
-        }
-
-        sb.AppendLine("        }");
-    }
-
-    private static void AppendRegularField(StringBuilder sb, PropertyInfo prop, VespaFieldAttribute fieldAttr)
-    {
-        var name = ResolveFieldName(prop, fieldAttr);
-
-        if (name.Equals("id", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(
-                $"Field '{prop.Name}' on type '{prop.DeclaringType?.Name}' resolves to Vespa field name 'id', " +
-                "which conflicts with the document identifier. Use [VespaId] for the document ID, " +
-                "or choose a different field name.");
-        var vespaType = fieldAttr.FieldType == VespaFieldType.Reference
-            ? $"reference<{fieldAttr.ReferenceDocumentType ?? throw new InvalidOperationException(
-                $"Field '{prop.Name}' has FieldType=Reference but ReferenceDocumentType is not set.")}>"
-            : fieldAttr.FieldType != VespaFieldType.None
-                ? ToVespaTypeName(fieldAttr.FieldType)
-                : InferVespaType(prop.PropertyType);
-
-        sb.AppendLine($"        field {name} type {vespaType} {{");
-
-        if (fieldAttr.IndexingMode != IndexingMode.None)
-        {
-            var indexing = BuildIndexingString(fieldAttr.IndexingMode);
-            sb.AppendLine($"            indexing: {indexing}");
-        }
-
-        if (fieldAttr.MatchMode != MatchMode.None)
-        {
-            var match = ToVespaMatchName(fieldAttr.MatchMode);
-            if (match is not null)
-                sb.AppendLine($"            match: {match}");
-        }
-
-        if (fieldAttr.Stemming != StemmingMode.None)
-        {
-            var stemming = ToVespaStemmingName(fieldAttr.Stemming);
-            if (stemming is not null)
-                sb.AppendLine($"            stemming: {stemming}");
-        }
-
-        if (fieldAttr.Bolding)
-            sb.AppendLine("            bolding: on");
-
-        if (fieldAttr.FastSearch)
-            sb.AppendLine("            attribute: fast-search");
-
-        if (fieldAttr.Normalizing is not null)
-            sb.AppendLine($"            normalizing: {fieldAttr.Normalizing}");
-
-        // Field-level rank: accepts only filter/normal; identity and tags belong
-        // to the separate rank-type element.
-        switch (fieldAttr.RankType)
-        {
-            case RankType.Filter:
-                sb.AppendLine("            rank: filter");
-                break;
-            case RankType.Default:
-                sb.AppendLine("            rank: normal");
-                break;
-            case RankType.Identity:
-                sb.AppendLine("            rank-type: identity");
-                break;
-            case RankType.Tags:
-                sb.AppendLine("            rank-type: tags");
-                break;
-        }
-
-        sb.AppendLine("        }");
-    }
-
-    private static void AppendRankProfileInputs(StringBuilder sb, List<(string QueryName, string TensorType)> tensorInputs)
-    {
-        sb.AppendLine("        inputs {");
-        foreach (var (queryName, tensorType) in tensorInputs)
-            sb.AppendLine($"            {queryName} {tensorType}");
-        sb.AppendLine("        }");
-    }
-
-    private static string BuildIndexingString(IndexingMode mode)
-    {
-        var parts = new List<string>();
-        if ((mode & IndexingMode.Index) != 0) parts.Add("index");
-        if ((mode & IndexingMode.Attribute) != 0) parts.Add("attribute");
-        if ((mode & IndexingMode.Summary) != 0) parts.Add("summary");
-        return string.Join(" | ", parts);
-    }
-
-    private static string ToVespaTypeName(VespaFieldType ft) => ft switch
-    {
-        VespaFieldType.Bool => "bool",
-        VespaFieldType.Byte => "byte",
-        VespaFieldType.Int => "int",
-        VespaFieldType.Long => "long",
-        VespaFieldType.Float => "float",
-        VespaFieldType.Double => "double",
-        VespaFieldType.String => "string",
-        VespaFieldType.Raw => "raw",
-        VespaFieldType.Uri => "uri",
-        VespaFieldType.Predicate => "predicate",
-        VespaFieldType.ArrayBool => "array<bool>",
-        VespaFieldType.ArrayByte => "array<byte>",
-        VespaFieldType.ArrayInt => "array<int>",
-        VespaFieldType.ArrayLong => "array<long>",
-        VespaFieldType.ArrayFloat => "array<float>",
-        VespaFieldType.ArrayDouble => "array<double>",
-        VespaFieldType.ArrayString => "array<string>",
-        VespaFieldType.WeightedSetString => "weightedset<string>",
-        VespaFieldType.WeightedSetInt => "weightedset<int>",
-        VespaFieldType.MapStringString => "map<string,string>",
-        VespaFieldType.MapStringInt => "map<string,int>",
-        _ => throw new NotSupportedException($"VespaFieldType.{ft} is not supported for schema generation.")
-    };
-
-    private static string InferVespaType(Type clrType)
-    {
-        // Unwrap Nullable<T>
-        var underlying = Nullable.GetUnderlyingType(clrType) ?? clrType;
-
-        if (underlying == typeof(string)) return "string";
-        if (underlying == typeof(int)) return "int";
-        if (underlying == typeof(long)) return "long";
-        if (underlying == typeof(double)) return "double";
-        if (underlying == typeof(float)) return "float";
-        if (underlying == typeof(bool)) return "bool";
-        if (underlying == typeof(byte)) return "byte";
-        if (underlying == typeof(decimal)) return "double";
-
-        // Arrays / Lists
-        if (underlying.IsArray)
-            return $"array<{InferVespaType(underlying.GetElementType()!)}>";
-
-        if (underlying.IsGenericType)
-        {
-            var gtd = underlying.GetGenericTypeDefinition();
-            var args = underlying.GetGenericArguments();
-
-            if (gtd == typeof(List<>) || gtd == typeof(IList<>) || gtd == typeof(IEnumerable<>))
-                return $"array<{InferVespaType(args[0])}>";
-
-            if ((gtd == typeof(Dictionary<,>) || gtd == typeof(IDictionary<,>)) && args.Length == 2)
-            {
-                var keyType = InferVespaType(args[0]);
-                var valType = InferVespaType(args[1]);
-                return (keyType, valType) switch
-                {
-                    ("string", "int") => "weightedset<string>",
-                    ("string", "string") => "map<string,string>",
-                    _ => $"map<{keyType},{valType}>"
-                };
-            }
-        }
-
-        // Check for [VespaStruct]-annotated types
-        var structAttr = underlying.GetCustomAttribute<VespaStructAttribute>();
-        if (structAttr is not null)
-            return structAttr.Name ?? ToSnakeCase(underlying.Name);
-
-        return "string"; // safe fallback
-    }
-
-    private static string? ToVespaMetricName(DistanceMetric m) => m switch
-    {
-        DistanceMetric.None => null,
-        DistanceMetric.Euclidean => "euclidean",
-        DistanceMetric.Angular => "angular",
-        DistanceMetric.DotProduct => "dotproduct",
-        DistanceMetric.Hamming => "hamming",
-        DistanceMetric.Geodesic => "geodegrees",
-        DistanceMetric.InnerProduct => "innerproduct",
-        DistanceMetric.PrenormalizedAngular => "prenormalized-angular",
-        _ => null
-    };
-
-    private static string? ToVespaStemmingName(StemmingMode s) => s switch
-    {
-        StemmingMode.None => null,
-        StemmingMode.Best => "best",
-        StemmingMode.Multiple => "multiple",
-        StemmingMode.Off => "none",
-        _ => null
-    };
-
-    private static string? ToVespaMatchName(MatchMode m) => m switch
-    {
-        MatchMode.None => null,
-        MatchMode.Text => "text",
-        MatchMode.Word => "word",
-        MatchMode.Exact => "exact",
-        MatchMode.Prefix => "prefix",
-        MatchMode.Substring => "substring",
-        MatchMode.Suffix => "suffix",
-        MatchMode.Cased => "cased",
-        MatchMode.Uncased => "uncased",
-        MatchMode.Gram => "gram",
-        _ => null
-    };
-
-    private static void AppendStructDefinition(StringBuilder sb, Type structType)
-    {
-        var structAttr = structType.GetCustomAttribute<VespaStructAttribute>()!;
-        var structName = structAttr.Name ?? ToSnakeCase(structType.Name);
-
-        sb.AppendLine($"        struct {structName} {{");
-        foreach (var prop in structType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-        {
-            var fieldAttr = prop.GetCustomAttribute<VespaFieldAttribute>();
-            var name = ResolveFieldName(prop, fieldAttr);
-            var vespaType = fieldAttr?.FieldType is not null and not VespaFieldType.None
-                ? ToVespaTypeName(fieldAttr.FieldType)
-                : InferVespaType(prop.PropertyType);
-            sb.AppendLine($"            field {name} type {vespaType} {{}}");
-        }
-        sb.AppendLine("        }");
-    }
-
-    /// <summary>
-    /// Returns the struct type if the CLR type (or its element type for arrays/lists) has [VespaStruct], else null.
-    /// </summary>
-    private static Type? ResolveStructType(Type clrType)
-    {
-        var underlying = Nullable.GetUnderlyingType(clrType) ?? clrType;
-
-        // Direct struct type
-        if (underlying.GetCustomAttribute<VespaStructAttribute>() is not null)
-            return underlying;
-
-        // Array of structs
-        if (underlying.IsArray)
-        {
-            var elem = underlying.GetElementType()!;
-            if (elem.GetCustomAttribute<VespaStructAttribute>() is not null)
-                return elem;
-        }
-
-        // List<StructType> / IList<StructType>
-        if (underlying.IsGenericType)
-        {
-            var gtd = underlying.GetGenericTypeDefinition();
-            if (gtd == typeof(List<>) || gtd == typeof(IList<>) || gtd == typeof(IEnumerable<>))
-            {
-                var elem = underlying.GetGenericArguments()[0];
-                if (elem.GetCustomAttribute<VespaStructAttribute>() is not null)
-                    return elem;
-            }
-        }
-
-        return null;
-    }
-
-    internal static string ToSnakeCase(string name) => VespaNaming.ToSnakeCase(name);
-
-    /// <summary>/
-    /// Resolves the Vespa field name from <see cref="VespaFieldAttribute.Name"/>
-    /// or falls back to snake_case of the property name (matching JSON serialization).
-    /// </summary>
-    private static string ResolveFieldName(PropertyInfo prop, VespaFieldAttribute? fieldAttr) =>
-        fieldAttr?.Name ?? ToSnakeCase(prop.Name);
+    private static string XmlEscape(string value) => SecurityElement.Escape(value)!;
 
     private static string GenerateServicesXml(
-        IEnumerable<(string DocType, bool Global, DocumentMode Mode)> docInfos,
+        IReadOnlyList<(string DocType, bool Global, DocumentMode Mode, string? Selection)> docInfos,
         ApplicationPackageOptions opts)
     {
-        var docs = string.Join("\n", docInfos.Select(d =>
+        var multiNode = opts.NodeCount > 1;
+        var sb = new StringBuilder();
+        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        sb.Append("<services version=\"1.0\">\n");
+        sb.Append("  <container id=\"default\" version=\"1.0\">\n");
+        sb.Append("    <search/>\n");
+        sb.Append("    <document-api/>\n");
+
+        if (opts.ContainerOptions is { Count: > 0 })
         {
-            var mode = d.Mode switch
+            foreach (var fragment in opts.ContainerOptions.Values)
+                sb.Append("    ").Append(fragment.Trim()).Append('\n');
+        }
+
+        if (multiNode)
+        {
+            sb.Append("    <nodes>\n");
+            for (var i = 0; i < opts.NodeCount; i++)
+                sb.Append($"      <node hostalias=\"node{i + 1}\"/>\n");
+            sb.Append("    </nodes>\n");
+        }
+
+        sb.Append("  </container>\n");
+        sb.Append("  <content id=\"content\" version=\"1.0\">\n");
+        sb.Append($"    <redundancy>{opts.Redundancy}</redundancy>\n");
+
+        // Any per-document selection implies garbage collection: documents no longer
+        // matching their selection are removed by the content nodes.
+        var garbageCollection = docInfos.Any(d => d.Selection is not null)
+            ? " garbage-collection=\"true\""
+            : "";
+        sb.Append($"    <documents{garbageCollection}>\n");
+
+        foreach (var (docType, global, docMode, selection) in docInfos)
+        {
+            var mode = docMode switch
             {
                 DocumentMode.Streaming => "streaming",
                 DocumentMode.StoreOnly => "store-only",
                 _ => "index"
             };
-            var global = d.Global ? " global=\"true\"" : "";
-            return $"            <document type=\"{d.DocType}\" mode=\"{mode}\"{global}/>";
-        }));
+            var globalAttr = global ? " global=\"true\"" : "";
+            var selectionAttr = selection is not null ? $" selection=\"{XmlEscape(selection)}\"" : "";
+            sb.Append($"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}{selectionAttr}/>\n");
+        }
 
-        var nodes = string.Join("\n", Enumerable.Range(0, opts.NodeCount).Select(i =>
-            $"""      <node hostalias="node{i + 1}" distribution-key="{i}"/>"""));
+        sb.Append("    </documents>\n");
+        sb.Append("    <nodes>\n");
+        for (var i = 0; i < opts.NodeCount; i++)
+            sb.Append($"      <node hostalias=\"node{i + 1}\" distribution-key=\"{i}\"/>\n");
+        sb.Append("    </nodes>\n");
 
-        var containerExtras = "";
-        if (opts.ContainerOptions is { Count: > 0 })
-            containerExtras = "\n" + string.Join("\n", opts.ContainerOptions.Values.Select(v => $"    {v.Trim()}"));
-
-        var contentExtras = "";
         if (opts.ContentOptions is { Count: > 0 })
-            contentExtras = "\n" + string.Join("\n", opts.ContentOptions.Values.Select(v => $"    {v.Trim()}"));
+        {
+            foreach (var fragment in opts.ContentOptions.Values)
+                sb.Append("    ").Append(fragment.Trim()).Append('\n');
+        }
 
-        return $"""
-<?xml version="1.0" encoding="UTF-8"?>
-<services version="1.0">
-  <container id="default" version="1.0">
-    <search/>
-    <document-api/>{containerExtras}
-  </container>
-  <content id="content" version="1.0">
-    <redundancy>{opts.Redundancy}</redundancy>
-    <documents>
-{docs}
-    </documents>
-    <nodes>
-{nodes}
-    </nodes>{contentExtras}
-  </content>
-</services>
-""";
+        sb.Append("  </content>\n");
+        sb.Append("</services>\n");
+        return sb.ToString();
+    }
+
+    private static string GenerateHostsXml(ApplicationPackageOptions opts)
+    {
+        var sb = new StringBuilder();
+        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        sb.Append("<hosts>\n");
+        for (var i = 0; i < opts.NodeCount; i++)
+        {
+            var alias = $"node{i + 1}";
+            var hostName = opts.HostNames is not null ? opts.HostNames[i] : alias;
+            sb.Append($"  <host name=\"{XmlEscape(hostName)}\">\n");
+            sb.Append($"    <alias>{XmlEscape(alias)}</alias>\n");
+            sb.Append("  </host>\n");
+        }
+
+        sb.Append("</hosts>\n");
+        return sb.ToString();
     }
 }

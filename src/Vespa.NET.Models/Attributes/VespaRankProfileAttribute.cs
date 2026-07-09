@@ -44,7 +44,9 @@ public class VespaRankProfileAttribute(string name) : Attribute
 
     /// <summary>
     /// Semicolon-separated list of named function definitions.
-    /// Format: <c>"myFunc(a,b): a*b; freshness: now - attribute(timestamp)"</c>
+    /// Format: <c>"myFunc(a,b): a*b; freshness: now - attribute(timestamp)"</c>.
+    /// Entries without a <c>:</c> separator fail schema generation.
     /// </summary>
+    [Obsolete("Use one [VespaRankFunction(signature, expression)] attribute per function instead; the string micro-DSL cannot express expressions containing ';' or ':'.")]
     public string? Functions { get; set; }
 }

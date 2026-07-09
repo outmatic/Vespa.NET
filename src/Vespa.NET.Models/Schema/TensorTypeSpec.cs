@@ -83,31 +83,40 @@ public sealed class TensorTypeSpec
     }
 
     /// <summary>
-    /// Parse a Vespa tensor type string into a TensorTypeSpec
+    /// Parse a Vespa tensor type string into a TensorTypeSpec.
+    /// The value type is optional and defaults to <see cref="TensorValueType.Double"/>
+    /// (Vespa's implicit value type), so both <c>tensor&lt;float&gt;(x[384])</c>
+    /// and <c>tensor(x{})</c> are accepted.
     /// </summary>
     public static TensorTypeSpec Parse(string tensorType)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tensorType);
 
-        // Example: "tensor<float>(x[384])" or "tensor<float>(x{},y[2])"
+        // Example: "tensor<float>(x[384])", "tensor<float>(x{},y[2])" or "tensor(x{})"
         if (!tensorType.StartsWith("tensor", StringComparison.Ordinal))
             throw new FormatException($"Invalid tensor type format: {tensorType} (expected to start with \"tensor\").");
 
-        // Extract value type
+        // Extract the optional value type; "tensor(x{})" implies double
+        var valueType = TensorValueType.Double;
         var valueTypeStart = tensorType.IndexOf('<') + 1;
         var valueTypeEnd = tensorType.IndexOf('>');
-        if (valueTypeStart <= 0 || valueTypeEnd <= valueTypeStart)
-            throw new FormatException($"Invalid tensor type format: {tensorType}");
+        var dimensionsOpen = tensorType.IndexOf('(');
 
-        var valueTypeStr = tensorType[valueTypeStart..valueTypeEnd];
-        var valueType = valueTypeStr switch
+        if (valueTypeStart > 0 && (dimensionsOpen < 0 || valueTypeStart < dimensionsOpen))
         {
-            "float" => TensorValueType.Float,
-            "double" => TensorValueType.Double,
-            "int8" => TensorValueType.Int8,
-            "bfloat16" => TensorValueType.BFloat16,
-            _ => throw new FormatException($"Unknown tensor value type: {valueTypeStr}")
-        };
+            if (valueTypeEnd <= valueTypeStart)
+                throw new FormatException($"Invalid tensor type format: {tensorType}");
+
+            var valueTypeStr = tensorType[valueTypeStart..valueTypeEnd];
+            valueType = valueTypeStr switch
+            {
+                "float" => TensorValueType.Float,
+                "double" => TensorValueType.Double,
+                "int8" => TensorValueType.Int8,
+                "bfloat16" => TensorValueType.BFloat16,
+                _ => throw new FormatException($"Unknown tensor value type: {valueTypeStr}")
+            };
+        }
 
         var spec = new TensorTypeSpec(valueType);
 
