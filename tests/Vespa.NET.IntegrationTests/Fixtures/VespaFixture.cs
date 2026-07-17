@@ -121,6 +121,10 @@ public class VespaCollection : ICollectionFixture<VespaFixture> { }
 [VespaDocument("product", Namespace = "test")]
 [VespaRankProfile("closeness_profile", Inherits = "default",
     FirstPhase = "closeness(field, embedding)")]
+[VespaRankProfile("features_profile", Inherits = "default",
+    FirstPhase = "attribute(price)",
+    MatchFeatures = "attribute(price) attribute(quantity)",
+    SummaryFeatures = "attribute(quantity)")]
 public sealed record TestProduct
 {
     [VespaField(Name = "product_name", IndexingMode = IndexingMode.SummaryIndex)]

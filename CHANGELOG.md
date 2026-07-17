@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.1] - 2026-07-17
+
+### Fixed
+
+- **`SearchHit<T>.MatchFeatures`/`SummaryFeatures` were always `null` with
+  Vespa's default JSON renderer.** The default renderer emits
+  `matchfeatures`/`summaryfeatures` as pseudo-fields *inside* `fields`, while
+  the hit model only read them at hit level. A dedicated `SearchHit<T>`
+  converter now lifts them out of `fields`, so `GetMatchFeature(...)`/
+  `GetSummaryFeature(...)` work against real server responses.
+  - Hit-level occurrences (custom renderers) are still read; `fields` wins
+    when both are present.
+  - The `fields` object is passed to `T` unchanged, so models that declare
+    `matchfeatures` themselves (pre-3.0.1 workarounds) keep working.
+
 ## [3.0.0] - 2026-07-09
 
 Correctness-focused major release: every generated artifact (YQL, grouping

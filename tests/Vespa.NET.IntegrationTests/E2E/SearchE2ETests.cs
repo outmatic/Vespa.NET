@@ -393,6 +393,37 @@ public class SearchE2ETests(VespaFixture fixture)
         finally { await CleanupAsync(ids); }
     }
 
+    [Fact]
+    public async Task SearchAsync_MatchAndSummaryFeatures_ExposedOnHits()
+    {
+        if (!Enabled) return;
+
+        var ids = await SeedAsync();
+        try
+        {
+            // features_profile declares match-features/summary-features; the default
+            // JSON renderer emits them inside "fields" as pseudo-fields.
+            var request = new VespaSearchRequest
+            {
+                Yql = YqlBuilder<TestProduct>.Select().Where(w => w.True()).Build(),
+                Hits = 10,
+                Ranking = new RankingConfig { Profile = "features_profile" }
+            };
+
+            var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
+
+            Assert.NotEmpty(result.Root.Children);
+            Assert.All(result.Root.Children, hit =>
+            {
+                Assert.NotNull(hit.MatchFeatures);
+                Assert.Equal(hit.Fields?.Price, hit.GetMatchFeature("attribute(price)"));
+                Assert.Equal((double?)hit.Fields?.Quantity, hit.GetMatchFeature("attribute(quantity)"));
+                Assert.Equal((double?)hit.Fields?.Quantity, hit.GetSummaryFeature("attribute(quantity)"));
+            });
+        }
+        finally { await CleanupAsync(ids); }
+    }
+
     // ── SearchPagedAsync ────────────────────────────────────────────────────────
 
     [Fact]

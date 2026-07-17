@@ -109,8 +109,11 @@ public sealed record CoverageDegraded
 }
 
 /// <summary>
-/// Individual search hit
+/// Individual search hit. Deserialized via <see cref="SearchHitConverter{T}"/>, which
+/// lifts the <c>matchfeatures</c>/<c>summaryfeatures</c> pseudo-fields that Vespa's
+/// default renderer emits inside <c>fields</c> up to hit level.
 /// </summary>
+[JsonConverter(typeof(SearchHitConverterFactory))]
 public sealed record SearchHit<T> where T : class
 {
     private readonly string? _id;

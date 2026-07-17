@@ -131,7 +131,167 @@ public class ResponseModelTests
         Assert.Null(coverage.Degraded);
     }
 
-    // ── Summary features ─────────────────────────────────────────────────────
+    // ── Match/summary features ───────────────────────────────────────────────
+
+    private sealed record FeatureFields
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("title")]
+        public string? Title { get; init; }
+    }
+
+    // Mirrors consumer workarounds that declare the pseudo-field on T directly;
+    // extracting features at hit level must not break them.
+    private sealed record WorkaroundFields
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("title")]
+        public string? Title { get; init; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("matchfeatures")]
+        public Dictionary<string, JsonElement>? MatchFeatures { get; init; }
+    }
+
+    [Fact]
+    public void SearchHit_MatchFeatures_InsideFields_DefaultRenderer_ArePopulated()
+    {
+        // Vespa's default JSON renderer emits matchfeatures as a pseudo-field
+        // INSIDE "fields", not at hit level.
+        var json = """
+            {
+                "id": "index:rag/0/abc",
+                "relevance": 0.5,
+                "source": "rag",
+                "fields": {
+                    "sddocname": "doc",
+                    "documentid": "id:rag:doc::1",
+                    "title": "hello",
+                    "matchfeatures": {
+                        "bm25(title)": 1.5,
+                        "bm25(chunks)": 2.5,
+                        "max_chunk_sim_scores": 0.9
+                    }
+                }
+            }
+            """;
+
+        var hit = JsonSerializer.Deserialize<SearchHit<FeatureFields>>(json);
+
+        Assert.NotNull(hit);
+        Assert.NotNull(hit.MatchFeatures);
+        Assert.Equal(1.5, hit.GetMatchFeature("bm25(title)"));
+        Assert.Equal(2.5, hit.GetMatchFeature("bm25(chunks)"));
+        Assert.Equal(0.9, hit.GetMatchFeature("max_chunk_sim_scores"));
+        Assert.Equal("hello", hit.Fields?.Title);
+        Assert.Equal("index:rag/0/abc", hit.FullId);
+        Assert.Equal(0.5, hit.Relevance);
+        Assert.Equal("rag", hit.Source);
+    }
+
+    [Fact]
+    public void SearchHit_SummaryFeatures_InsideFields_ArePopulated()
+    {
+        var json = """
+            {
+                "id": "id:ns:music::doc1",
+                "relevance": 1.0,
+                "fields": {
+                    "title": "hello",
+                    "summaryfeatures": { "attribute(year)": 2001.0 }
+                }
+            }
+            """;
+
+        var hit = JsonSerializer.Deserialize<SearchHit<FeatureFields>>(json);
+
+        Assert.NotNull(hit);
+        Assert.Equal(2001.0, hit.GetSummaryFeature("attribute(year)"));
+        Assert.Equal("hello", hit.Fields?.Title);
+    }
+
+    [Fact]
+    public void SearchHit_Features_FieldsLevel_WinsOverHitLevel()
+    {
+        var json = """
+            {
+                "id": "id:ns:music::doc1",
+                "relevance": 1.0,
+                "matchfeatures": { "bm25(title)": 99.0 },
+                "fields": {
+                    "matchfeatures": { "bm25(title)": 1.5 }
+                }
+            }
+            """;
+
+        var hit = JsonSerializer.Deserialize<SearchHit<FeatureFields>>(json);
+
+        Assert.NotNull(hit);
+        Assert.Equal(1.5, hit.GetMatchFeature("bm25(title)"));
+    }
+
+    [Fact]
+    public void SearchHit_MatchFeatures_AtHitLevel_StillRead()
+    {
+        // Custom renderers may put the features at hit level; keep reading them there.
+        var json = """
+            {
+                "id": "id:ns:music::doc1",
+                "relevance": 1.0,
+                "matchfeatures": { "bm25(title)": 1.5 }
+            }
+            """;
+
+        var hit = JsonSerializer.Deserialize<SearchHit<FeatureFields>>(json);
+
+        Assert.NotNull(hit);
+        Assert.Equal(1.5, hit.GetMatchFeature("bm25(title)"));
+    }
+
+    [Fact]
+    public void SearchHit_FieldsTypeDeclaringMatchfeatures_StillReceivesThem()
+    {
+        var json = """
+            {
+                "id": "id:ns:music::doc1",
+                "relevance": 1.0,
+                "fields": {
+                    "title": "hello",
+                    "matchfeatures": { "bm25(title)": 1.5 }
+                }
+            }
+            """;
+
+        var hit = JsonSerializer.Deserialize<SearchHit<WorkaroundFields>>(json);
+
+        Assert.NotNull(hit);
+        // Hit-level accessor works…
+        Assert.Equal(1.5, hit.GetMatchFeature("bm25(title)"));
+        // …and the consumer's own property keeps receiving the pseudo-field.
+        Assert.NotNull(hit.Fields?.MatchFeatures);
+        Assert.Equal(1.5, hit.Fields.MatchFeatures["bm25(title)"].GetDouble());
+    }
+
+    [Fact]
+    public void SearchHit_SerializeDeserialize_RoundTripsFeatures()
+    {
+        var original = new SearchHit<FeatureFields>
+        {
+            FullId = "id:ns:music::doc1",
+            Relevance = 0.7,
+            Fields = new FeatureFields { Title = "hello" },
+            MatchFeatures = new Dictionary<string, JsonElement>
+            {
+                ["bm25(title)"] = JsonDocument.Parse("1.5").RootElement
+            }
+        };
+
+        var roundTripped = JsonSerializer.Deserialize<SearchHit<FeatureFields>>(
+            JsonSerializer.Serialize(original));
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal("id:ns:music::doc1", roundTripped.FullId);
+        Assert.Equal(0.7, roundTripped.Relevance);
+        Assert.Equal("hello", roundTripped.Fields?.Title);
+        Assert.Equal(1.5, roundTripped.GetMatchFeature("bm25(title)"));
+    }
 
     [Fact]
     public void SearchHit_SummaryFeatures_DeserializeAndExposeScalars()

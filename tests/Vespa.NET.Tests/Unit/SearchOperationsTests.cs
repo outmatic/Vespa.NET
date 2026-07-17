@@ -67,6 +67,47 @@ public class SearchOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task SearchAsync_MatchFeaturesInsideFields_ExposedOnHit()
+    {
+        // Real shape of Vespa's default JSON renderer: matchfeatures/summaryfeatures
+        // are rendered inside "fields", not at hit level.
+        var responseJson = """
+            {
+                "root": {
+                    "id": "toplevel",
+                    "relevance": 1.0,
+                    "fields": { "totalCount": 1 },
+                    "children": [
+                        {
+                            "id": "index:content/0/abc",
+                            "relevance": 0.5,
+                            "source": "content",
+                            "fields": {
+                                "sddocname": "testdoc",
+                                "documentid": "id:test:testdoc::doc-1",
+                                "title": "Test",
+                                "matchfeatures": { "bm25(title)": 1.5 },
+                                "summaryfeatures": { "attribute(year)": 2001.0 }
+                            }
+                        }
+                    ]
+                }
+            }
+            """;
+        SetupRawSearchResponse(responseJson);
+
+        var result = await _searchOps.SearchAsync<TestDocument>(new VespaSearchRequest
+        {
+            Yql = "select * from testdoc where true"
+        });
+
+        var hit = Assert.Single(result.Root.Children);
+        Assert.Equal(1.5, hit.GetMatchFeature("bm25(title)"));
+        Assert.Equal(2001.0, hit.GetSummaryFeature("attribute(year)"));
+        Assert.Equal("Test", hit.Fields?.Title);
+    }
+
+    [Fact]
     public async Task SearchAsync_WithNullRequest_ThrowsArgumentNullException()
     {
         // Act & Assert
@@ -456,6 +497,21 @@ public class SearchOperationsTests : IDisposable
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
 
+        _mockHandler
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>()
+            )
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json)
+            });
+    }
+
+    private void SetupRawSearchResponse(string json)
+    {
         _mockHandler
             .Protected()
             .Setup<Task<HttpResponseMessage>>(
