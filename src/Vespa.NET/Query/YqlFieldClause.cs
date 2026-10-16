@@ -8,8 +8,7 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     public YqlWhereClause Contains(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        parent.AddPredicate(new YqlPredicate.Contains(fieldName, value));
-        return parent;
+        return parent.AddPredicate(new YqlPredicate.Contains(fieldName, value));
     }
 
     /// <summary>
@@ -42,8 +41,7 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
         var annotations = new TermAnnotations(
             filter, termId, connectivityWeight, stem, normalizeCase, accentDrop, usePositionData,
             weight, prefix, suffix, substring, significance, ranked, language, nfkc, implicitTransforms);
-        parent.AddPredicate(new YqlPredicate.Contains(fieldName, value, annotations));
-        return parent;
+        return parent.AddPredicate(new YqlPredicate.Contains(fieldName, value, annotations));
     }
 
     /// <summary>
@@ -52,40 +50,22 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     /// <param name="value">The text to match.</param>
     /// <param name="language">Optional RFC 3066 language code annotation (<c>{language: "…"}</c>).</param>
     public YqlWhereClause Text(string value, string? language = null)
-    {
-        parent.AddPredicate(new YqlPredicate.Text(fieldName, value, language));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Text(fieldName, value, language));
 
     public YqlWhereClause Matches(string regex)
-    {
-        parent.AddPredicate(new YqlPredicate.Matches(fieldName, regex));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Matches(fieldName, regex));
 
     public YqlWhereClause GreaterThan(object value)
-    {
-        parent.AddPredicate(new YqlPredicate.Comparison(fieldName, ">", value));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Comparison(fieldName, ">", value));
 
     public YqlWhereClause LessThan(object value)
-    {
-        parent.AddPredicate(new YqlPredicate.Comparison(fieldName, "<", value));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Comparison(fieldName, "<", value));
 
     public YqlWhereClause GreaterOrEqual(object value)
-    {
-        parent.AddPredicate(new YqlPredicate.Comparison(fieldName, ">=", value));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Comparison(fieldName, ">=", value));
 
     public YqlWhereClause LessOrEqual(object value)
-    {
-        parent.AddPredicate(new YqlPredicate.Comparison(fieldName, "<=", value));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Comparison(fieldName, "<=", value));
 
     public YqlWhereClause EqualTo(object value)
     {
@@ -95,15 +75,11 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
             throw new NotSupportedException(
                 "YQL's = operator does not accept strings — use Contains(...) for text matching or In(...) for exact membership.");
 
-        parent.AddPredicate(new YqlPredicate.Comparison(fieldName, "=", value));
-        return parent;
+        return parent.AddPredicate(new YqlPredicate.Comparison(fieldName, "=", value));
     }
 
     public YqlWhereClause Range(object from, object to, int? hitLimit = null, string? bounds = null)
-    {
-        parent.AddPredicate(new YqlPredicate.Range(fieldName, from, to, hitLimit, bounds));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Range(fieldName, from, to, hitLimit, bounds));
 
     /// <summary>
     /// <c>field in ("a", "b")</c> — matches documents whose field value is one of the given values.
@@ -118,8 +94,7 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     {
         if (values.Length == 0)
             throw new ArgumentException("in requires at least one value — 'field in ()' is invalid YQL.", nameof(values));
-        parent.AddPredicate(new YqlPredicate.In(fieldName, values));
-        return parent;
+        return parent.AddPredicate(new YqlPredicate.In(fieldName, values));
     }
 
     /// <summary>
@@ -131,18 +106,14 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     public YqlWhereClause InParameter(string paramName)
     {
         YqlIdentifier.Validate(paramName, nameof(paramName));
-        parent.AddPredicate(new YqlPredicate.InParameter(fieldName, paramName));
-        return parent;
+        return parent.AddPredicate(new YqlPredicate.InParameter(fieldName, paramName));
     }
 
     /// <summary>
     /// <c>field contains phrase("word1", "word2")</c> — ordered phrase match.
     /// </summary>
     public YqlWhereClause Phrase(params string[] terms)
-    {
-        parent.AddPredicate(new YqlPredicate.Phrase(fieldName, terms));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Phrase(fieldName, terms));
 
     /// <summary>
     /// <c>field contains fuzzy("term")</c> — approximate / fuzzy string match.
@@ -151,10 +122,7 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     /// <param name="maxEditDistance">Max Levenshtein distance (default: 2).</param>
     /// <param name="prefixLength">Number of leading characters that must match exactly (default: 0).</param>
     public YqlWhereClause Fuzzy(string term, int? maxEditDistance = null, int? prefixLength = null)
-    {
-        parent.AddPredicate(new YqlPredicate.Fuzzy(fieldName, term, maxEditDistance, prefixLength));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Fuzzy(fieldName, term, maxEditDistance, prefixLength));
 
     /// <summary>
     /// <c>field contains near("t1", "t2", !"t3")</c> — terms within <paramref name="distance"/>
@@ -163,29 +131,20 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     /// exclusion zone (default <c>(distance+1)/2</c>, override with <paramref name="exclusionDistance"/>).
     /// </summary>
     public YqlWhereClause Near(string[] terms, int? distance = null, string[]? excludedTerms = null, int? exclusionDistance = null)
-    {
-        parent.AddPredicate(new YqlPredicate.Near(fieldName, terms, distance, excludedTerms, exclusionDistance));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Near(fieldName, terms, distance, excludedTerms, exclusionDistance));
 
     /// <summary>
     /// <c>field contains onear("t1", "t2", !"t3")</c> — ordered near; positive terms must
     /// appear in query sequence. See <see cref="Near"/> for the negated-term semantics.
     /// </summary>
     public YqlWhereClause ONear(string[] terms, int? distance = null, string[]? excludedTerms = null, int? exclusionDistance = null)
-    {
-        parent.AddPredicate(new YqlPredicate.Near(fieldName, terms, distance, excludedTerms, exclusionDistance, ordered: true));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Near(fieldName, terms, distance, excludedTerms, exclusionDistance, ordered: true));
 
     /// <summary>
     /// <c>field contains equiv("t1", "t2")</c> — treats terms as synonyms; ranks as a single term.
     /// </summary>
     public YqlWhereClause Equiv(params string[] terms)
-    {
-        parent.AddPredicate(new YqlPredicate.Equiv(fieldName, terms));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Equiv(fieldName, terms));
 
     /// <summary>
     /// <c>field contains sameElement(...)</c> — conditions must match within the same
@@ -200,8 +159,7 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     {
         var clause = new SameElementClause();
         configure(clause);
-        parent.AddPredicate(new YqlPredicate.SameElement(fieldName, clause.GetPredicates(), elementFilter));
-        return parent;
+        return parent.AddPredicate(new YqlPredicate.SameElement(fieldName, clause.GetPredicates(), elementFilter));
     }
 
     /// <summary>
@@ -209,8 +167,5 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
     /// </summary>
     [Obsolete("The Vespa uri field type (and the uri query operator) is deprecated upstream.")]
     public YqlWhereClause Uri(string value, bool? startAnchor = null, bool? endAnchor = null)
-    {
-        parent.AddPredicate(new YqlPredicate.Uri(fieldName, value, startAnchor, endAnchor));
-        return parent;
-    }
+        => parent.AddPredicate(new YqlPredicate.Uri(fieldName, value, startAnchor, endAnchor));
 }

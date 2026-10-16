@@ -46,13 +46,13 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
 
     public TypedYqlWhereClause<T> And(Action<TypedYqlWhereClause<T>> subClause)
     {
-        inner.And(w => subClause(new TypedYqlWhereClause<T>(w)));
+        inner.And(Adapt(subClause));
         return this;
     }
 
     public TypedYqlWhereClause<T> Or(Action<TypedYqlWhereClause<T>> subClause)
     {
-        inner.Or(w => subClause(new TypedYqlWhereClause<T>(w)));
+        inner.Or(Adapt(subClause));
         return this;
     }
 
@@ -61,7 +61,7 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
     /// </summary>
     public TypedYqlWhereClause<T> Not(Action<TypedYqlWhereClause<T>> subClause)
     {
-        inner.Not(w => subClause(new TypedYqlWhereClause<T>(w)));
+        inner.Not(Adapt(subClause));
         return this;
     }
 
@@ -77,13 +77,13 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
     /// </summary>
     public TypedYqlWhereClause<T> AnyOf(params Action<TypedYqlWhereClause<T>>[] predicates)
     {
-        inner.AnyOf([.. predicates.Select<Action<TypedYqlWhereClause<T>>, Action<YqlWhereClause>>(c => w => c(new TypedYqlWhereClause<T>(w)))]);
+        inner.AnyOf([.. predicates.Select(Adapt)]);
         return this;
     }
 
     public TypedYqlWhereClause<T> WeakAnd(Action<TypedYqlWhereClause<T>> configure, int? targetHits = null, int? totalTargetHits = null)
     {
-        inner.WeakAnd(w => configure(new TypedYqlWhereClause<T>(w)), targetHits, totalTargetHits);
+        inner.WeakAnd(Adapt(configure), targetHits, totalTargetHits);
         return this;
     }
 
@@ -158,13 +158,13 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
 
     public TypedYqlWhereClause<T> Rank(params Action<TypedYqlWhereClause<T>>[] clauses)
     {
-        inner.Rank([.. clauses.Select<Action<TypedYqlWhereClause<T>>, Action<YqlWhereClause>>(c => w => c(new TypedYqlWhereClause<T>(w)))]);
+        inner.Rank([.. clauses.Select(Adapt)]);
         return this;
     }
 
     public TypedYqlWhereClause<T> NonEmpty(Action<TypedYqlWhereClause<T>> configure)
     {
-        inner.NonEmpty(w => configure(new TypedYqlWhereClause<T>(w)));
+        inner.NonEmpty(Adapt(configure));
         return this;
     }
 
@@ -193,4 +193,7 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         inner.Predicate(field, attributes, rangeAttributes);
         return this;
     }
+
+    private static Action<YqlWhereClause> Adapt(Action<TypedYqlWhereClause<T>> configure) =>
+        clause => configure(new(clause));
 }

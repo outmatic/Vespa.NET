@@ -37,10 +37,7 @@ public sealed class YqlWhereClause
 
     /// <summary>Logical AND with a sub-expression</summary>
     public YqlWhereClause And(Action<YqlWhereClause> subClause)
-    {
-        _andPredicates.Add(BuildSubClause(subClause).BuildPredicate());
-        return this;
-    }
+        => AddPredicate(BuildSubClause(subClause).BuildPredicate());
 
     /// <summary>
     /// <c>pred1 or pred2 or pred3</c> — matches documents satisfying any of the given predicates.
@@ -55,8 +52,7 @@ public sealed class YqlWhereClause
             return this;
         }
         var built = predicates.Select(configure => BuildSubClause(configure).BuildPredicate()).ToList();
-        _andPredicates.Add(new YqlPredicate.Or(built));
-        return this;
+        return AddPredicate(new YqlPredicate.Or(built));
     }
 
     /// <summary>
@@ -76,8 +72,7 @@ public sealed class YqlWhereClause
         else if (existing.Count > 1)
             allOperands.Add(new YqlPredicate.And(existing));
         allOperands.AddRange(subPredicates);
-        _andPredicates.Add(allOperands.Count == 1 ? allOperands[0] : new YqlPredicate.Or(allOperands));
-        return this;
+        return AddPredicate(allOperands.Count == 1 ? allOperands[0] : new YqlPredicate.Or(allOperands));
     }
 
     /// <summary>
@@ -86,10 +81,7 @@ public sealed class YqlWhereClause
     /// AND'd before negation.
     /// </summary>
     public YqlWhereClause Not(Action<YqlWhereClause> subClause)
-    {
-        _andPredicates.Add(new YqlPredicate.Not(BuildSubClause(subClause).BuildPredicate()));
-        return this;
-    }
+        => AddPredicate(new YqlPredicate.Not(BuildSubClause(subClause).BuildPredicate()));
 
     /// <summary>
     /// Embeds a raw YQL predicate fragment verbatim.
@@ -103,16 +95,12 @@ public sealed class YqlWhereClause
     public YqlWhereClause Raw(string yqlPredicate)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(yqlPredicate);
-        _andPredicates.Add(new YqlPredicate.RawPredicate(yqlPredicate));
-        return this;
+        return AddPredicate(new YqlPredicate.RawPredicate(yqlPredicate));
     }
 
     /// <summary>Match all documents</summary>
     public YqlWhereClause True()
-    {
-        _andPredicates.Add(new YqlPredicate.True());
-        return this;
-    }
+        => AddPredicate(new YqlPredicate.True());
 
     /// <summary>
     /// Nearest-neighbor predicate with optional annotations.
@@ -127,8 +115,7 @@ public sealed class YqlWhereClause
     {
         YqlIdentifier.Validate(field, nameof(field));
         YqlIdentifier.Validate(queryTensor, nameof(queryTensor));
-        _andPredicates.Add(new YqlPredicate.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits));
-        return this;
+        return AddPredicate(new YqlPredicate.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits));
     }
 
     /// <summary>
@@ -157,8 +144,7 @@ public sealed class YqlWhereClause
         var predicates = sub.GetPredicates();
         if (predicates.Count == 0)
             throw new ArgumentException("weakAnd requires at least one predicate.", nameof(configure));
-        _andPredicates.Add(new YqlPredicate.WeakAnd(predicates, targetHits, totalTargetHits));
-        return this;
+        return AddPredicate(new YqlPredicate.WeakAnd(predicates, targetHits, totalTargetHits));
     }
 
     /// <summary>
@@ -170,8 +156,7 @@ public sealed class YqlWhereClause
     public YqlWhereClause Wand(string field, IReadOnlyDictionary<string, int> terms, int targetHits = 100, double? scoreThreshold = null, int? totalTargetHits = null)
     {
         YqlIdentifier.Validate(field, nameof(field));
-        _andPredicates.Add(new YqlPredicate.Wand(field, terms, targetHits, scoreThreshold, totalTargetHits));
-        return this;
+        return AddPredicate(new YqlPredicate.Wand(field, terms, targetHits, scoreThreshold, totalTargetHits));
     }
 
     /// <summary>
@@ -181,8 +166,7 @@ public sealed class YqlWhereClause
     public YqlWhereClause DotProduct(string field, IReadOnlyDictionary<string, int> terms)
     {
         YqlIdentifier.Validate(field, nameof(field));
-        _andPredicates.Add(new YqlPredicate.DotProduct(field, terms));
-        return this;
+        return AddPredicate(new YqlPredicate.DotProduct(field, terms));
     }
 
     /// <summary>
@@ -193,8 +177,7 @@ public sealed class YqlWhereClause
     public YqlWhereClause GeoLocation(string field, double latitude, double longitude, double radiusKm)
     {
         YqlIdentifier.Validate(field, nameof(field));
-        _andPredicates.Add(new YqlPredicate.GeoLocation(field, latitude, longitude, radiusKm));
-        return this;
+        return AddPredicate(new YqlPredicate.GeoLocation(field, latitude, longitude, radiusKm));
     }
 
     /// <summary>
@@ -208,8 +191,7 @@ public sealed class YqlWhereClause
     public YqlWhereClause UserQuery(string query)
     {
         UserQueryText = query;
-        _andPredicates.Add(new YqlPredicate.UserQuery());
-        return this;
+        return AddPredicate(new YqlPredicate.UserQuery());
     }
 
     /// <summary>Free text captured by <see cref="UserQuery"/>, sent as <c>model.queryString</c>.</summary>
@@ -217,13 +199,12 @@ public sealed class YqlWhereClause
 
     /// <summary>
     /// <c>userInput(@param)</c> — references a query parameter containing user input.
-    /// Pass the actual text via <c>VespaSearchRequest.Input["param"]</c> at query time.
+    /// Pass the actual text via <c>request.WithParameter("param", text)</c> at query time.
     /// </summary>
     public YqlWhereClause UserInput(string paramName, string? grammar = null, string? defaultIndex = null, string? language = null, bool? allowEmpty = null)
     {
         YqlIdentifier.Validate(paramName, nameof(paramName));
-        _andPredicates.Add(new YqlPredicate.UserInput(paramName, grammar, defaultIndex, language, allowEmpty));
-        return this;
+        return AddPredicate(new YqlPredicate.UserInput(paramName, grammar, defaultIndex, language, allowEmpty));
     }
 
     /// <summary>
@@ -252,16 +233,12 @@ public sealed class YqlWhereClause
         YqlIdentifier.Validate(userInputParam, nameof(userInputParam));
         var nn = new YqlPredicate.NearestNeighbor(vectorField, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
         var ui = new YqlPredicate.UserInput(userInputParam);
-        _andPredicates.Add(new YqlPredicate.HybridSearch(nn, ui));
-        return this;
+        return AddPredicate(new YqlPredicate.HybridSearch(nn, ui));
     }
 
     /// <summary>Match no documents</summary>
     public YqlWhereClause False()
-    {
-        _andPredicates.Add(new YqlPredicate.False());
-        return this;
-    }
+        => AddPredicate(new YqlPredicate.False());
 
     /// <summary>
     /// <c>rank(matchExpr, rankExpr1, rankExpr2, ...)</c> — first argument determines which
@@ -276,8 +253,7 @@ public sealed class YqlWhereClause
             return this;
         }
         var predicates = clauses.Select(configure => BuildSubClause(configure).BuildPredicate()).ToList();
-        _andPredicates.Add(new YqlPredicate.Rank(predicates));
-        return this;
+        return AddPredicate(new YqlPredicate.Rank(predicates));
     }
 
     /// <summary>
@@ -285,10 +261,7 @@ public sealed class YqlWhereClause
     /// parameter substitution.
     /// </summary>
     public YqlWhereClause NonEmpty(Action<YqlWhereClause> configure)
-    {
-        _andPredicates.Add(new YqlPredicate.NonEmpty(BuildSubClause(configure).BuildPredicate()));
-        return this;
-    }
+        => AddPredicate(new YqlPredicate.NonEmpty(BuildSubClause(configure).BuildPredicate()));
 
     /// <summary>
     /// <c>geoBoundingBox(field, south, west, north, east)</c> — position inside a
@@ -298,8 +271,7 @@ public sealed class YqlWhereClause
     public YqlWhereClause GeoBoundingBox(string field, double south, double west, double north, double east)
     {
         YqlIdentifier.Validate(field, nameof(field));
-        _andPredicates.Add(new YqlPredicate.GeoBoundingBox(field, south, west, north, east));
-        return this;
+        return AddPredicate(new YqlPredicate.GeoBoundingBox(field, south, west, north, east));
     }
 
     /// <summary>
@@ -309,8 +281,7 @@ public sealed class YqlWhereClause
     public YqlWhereClause WeightedSet(string field, IReadOnlyDictionary<string, int> tokens)
     {
         YqlIdentifier.Validate(field, nameof(field));
-        _andPredicates.Add(new YqlPredicate.WeightedSet(field, tokens));
-        return this;
+        return AddPredicate(new YqlPredicate.WeightedSet(field, tokens));
     }
 
     /// <summary>
@@ -320,11 +291,15 @@ public sealed class YqlWhereClause
     public YqlWhereClause Predicate(string field, IReadOnlyDictionary<string, string> attributes, IReadOnlyDictionary<string, long>? rangeAttributes = null)
     {
         YqlIdentifier.Validate(field, nameof(field));
-        _andPredicates.Add(new YqlPredicate.Predicate(field, attributes, rangeAttributes));
+        return AddPredicate(new YqlPredicate.Predicate(field, attributes, rangeAttributes));
+    }
+
+    internal YqlWhereClause AddPredicate(YqlPredicate predicate)
+    {
+        _andPredicates.Add(predicate);
         return this;
     }
 
-    internal void AddPredicate(YqlPredicate predicate) => _andPredicates.Add(predicate);
     internal IReadOnlyList<YqlPredicate> GetPredicates() => _andPredicates;
 
     internal YqlPredicate BuildPredicate() =>
