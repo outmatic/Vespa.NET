@@ -55,11 +55,15 @@ public class GroupingPaginationE2ETests(VespaFixture fixture)
 
             var pages = 0;
             var seenGroups = new List<string>();
-            await foreach (var page in fixture.Client.Search.GroupByStreamAsync<TestProduct>(request))
+            await foreach (var response in fixture.Client.Search.GroupByStreamAsync<TestProduct>(request))
             {
+                var page = response.AsTyped();
                 pages++;
                 foreach (var list in page.GroupingResults)
+                {
                     seenGroups.AddRange(list.Groups.Select(g => g.Value));
+                    Assert.All(list.Groups, group => Assert.Equal(1, group.GetAggregation<long>("count()")));
+                }
 
                 Assert.True(pages <= groupCount, "pagination did not terminate");
             }

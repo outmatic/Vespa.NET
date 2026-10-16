@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- `GroupingSearchResponse<T>.AsTyped()` with typed summaries and nested groups
+  through `TypedGroupingSearchResponse<T>`, `VespaGroup<T>` and `VespaGroupList<T>`.
+  Existing grouping signatures and models remain available.
+- `GetAggregation<TValue>` and `TryGetAggregation<TValue>` on both grouping models,
+  reading original JSON for exact integers, decimals and structured outputs.
 - Mixed `FeedAsync` overloads for synchronous and asynchronous sources of
   `FeedOperation.Put`, `Update` and `Delete`, with model-aware or explicit targets,
   conditions, upserts and per-operation request options.

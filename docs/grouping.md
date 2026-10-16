@@ -1,6 +1,7 @@
 # Grouping & Aggregation
 
-Vespa.NET provides a fluent builder for Vespa's grouping expressions. Results are returned as typed `GroupingSearchResponse<T>`.
+Vespa.NET provides a fluent builder for Vespa's grouping expressions. Results are returned as
+`GroupingSearchResponse<T>`; call `.AsTyped()` for a grouping hierarchy with typed document summaries.
 
 ---
 
@@ -27,12 +28,83 @@ var result = await client.Search.GroupByAsync<Product>(request);
 
 foreach (var groupList in result.GroupingResults)
 foreach (var group in groupList.Groups)
-    Console.WriteLine($"{group.Value}: count={group.Aggregations["count()"]}");
+    Console.WriteLine($"{group.Value}: count={group.GetAggregation<long>("count()")}");
 ```
 
 `VespaGroup.Aggregations` holds the numeric outputs; non-numeric outputs (e.g.
 `tostring(...)`/`toraw(...)`) are available as `JsonElement`s in
 `VespaGroup.RawAggregations`.
+
+### Typed results and exact aggregation values
+
+Call `.AsTyped()` once to obtain a `TypedGroupingSearchResponse<T>`. Its
+`GroupingResults` and `GroupingRoots` contain `VespaGroupList<T>` and
+`VespaGroup<T>` at every level, so `group.Hits` is an
+`IReadOnlyList<SearchHit<T>>` and `group.SubGroups` retains the same document type:
+
+```csharp
+var result = (await client.Search.GroupByAsync<Product>(request)).AsTyped();
+
+foreach (var list in result.GroupingResults)
+foreach (var group in list.Groups)
+{
+    long count = group.GetAggregation<long>("count()");
+    double average = group.GetAggregation<double>("avg(price)");
+
+    foreach (var hit in group.Hits) // populated when the query requests summaries
+        Console.WriteLine($"{group.Value}: {hit.Fields?.Name}");
+}
+```
+
+The projection runs in memory, makes no HTTP requests and leaves the original
+response available. It preserves ordinary hits, root outputs and summaries,
+rest buckets, nested groups, coverage, errors, timing, trace and continuation
+tokens. Existing `GroupByAsync<T>`, `GetHits<T>()` and response constructors remain
+available. Manually constructed responses must contain `SearchHit<T>` summaries
+matching their document type; mismatched summaries throw `InvalidCastException`.
+
+Both typed and original groups expose `GetAggregation<TValue>(name)` and
+`TryGetAggregation<TValue>(name, out value)`. They deserialize the original
+`RawAggregations` JSON instead of converting the legacy `double` values.
+This preserves 64-bit integer values beyond `2^53` and the precision present
+in JSON decimal values. Choosing `double` still uses floating-point precision;
+choosing `decimal` cannot recover precision already lost by the server.
+
+Vespa returns `count()` as a long, and outputs can also contain structured
+values such as the array returned by `quantiles(...)` (see the official
+[grouping reference](https://docs.vespa.ai/en/reference/querying/grouping-language.html#group-aggregators)).
+Select the corresponding CLR type, or use `JsonElement` for arbitrary JSON:
+
+```csharp
+using System.Text.Json;
+
+long total = group.GetAggregation<long>("count()");
+decimal amount = group.GetAggregation<decimal>("sum(price)");
+JsonElement quantiles = group.GetAggregation<JsonElement>("quantiles([0.5, 0.9], price)");
+
+if (group.TryGetAggregation<double>("avg(price)", out var average))
+    Console.WriteLine(average);
+```
+
+Use an aggregation's alias, such as `"total"`, when the query uses
+`count() as(total)`. Structured outputs can also be read into arrays or DTOs;
+an optional `JsonSerializerOptions` argument controls deserialization. By
+default, standard `System.Text.Json` rules apply, including case-sensitive
+property matching and no conversion of JSON strings to numbers.
+For string-rendered `"NaN"` or infinities, pass options with
+`NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals`.
+
+| Situation | `GetAggregation<TValue>` | `TryGetAggregation<TValue>` |
+|---|---|---|
+| Name absent from `RawAggregations` | `KeyNotFoundException` | `false`, default output |
+| JSON incompatible with the requested type or integer/decimal overflow | `JsonException` | `false`, default output |
+| JSON null, nullable/reference target | `null` | `true`, null output |
+| JSON null, non-nullable value target | `JsonException` | `false`, default output |
+| Unsupported CLR type or invalid serializer configuration | Exception | Exception |
+
+Null or empty names throw an argument exception in both methods. Manually
+constructed groups must populate `RawAggregations` to use these accessors;
+there is no fallback to potentially rounded `Aggregations` values.
 
 `GroupingSearchResponse.Coverage`, `Errors`, and `Trace` retain the same metadata
 as a regular search response. Check coverage and errors when consuming results:
@@ -41,7 +113,12 @@ Vespa can return partial results with HTTP 200.
 `GroupingRoots` contains the root of each grouping expression, including its
 aggregations and hit lists. For example, a request containing
 `| all(output(count()))` exposes the count through
-`result.GroupingRoots[0].Aggregations["count()"]`.
+`result.GroupingRoots[0].GetAggregation<long>("count()")`.
+
+For numeric aggregations over all matched documents, create a single constant
+group, for example `all(group(1) each(output(sum(price))))`, and read the value
+from `result.GroupingResults[0].Groups[0]`. This follows the official
+[whole-document aggregation example](https://docs.vespa.ai/en/querying/grouping.html#aggregating-over-all-documents).
 
 ---
 
@@ -104,18 +181,19 @@ GroupingBuilder.All()
 
 ### Per-group document summaries
 
-Return the actual documents inside each group (`hitlist:*` in the response,
-surfaced in `VespaGroup.Hits`; use `group.GetHits<T>()` for typed
-`SearchHit<T>` access):
+Return the actual documents inside each group (`hitlist:*` in the response).
+Use `.AsTyped()` to read `SearchHit<T>` directly from `group.Hits`:
 
 ```csharp
-GroupingBuilder.All().Group("category")
-    .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 3));
+var request = YqlBuilder<Product>.Select()
+    .GroupBy(GroupingBuilder.All().Group("category")
+        .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 3)))
+    .ToSearchRequest();
 // all(group(category) each(output(count()) max(3) each(output(summary()))))
 
-var response = await client.Search.GroupByAsync<Product>(request);
+var response = (await client.Search.GroupByAsync<Product>(request)).AsTyped();
 foreach (var group in response.GroupingResults[0].Groups)
-    foreach (var hit in group.GetHits<Product>())
+    foreach (var hit in group.Hits)
         Console.WriteLine($"{group.Value}: {hit.Id} ({hit.Relevance})");
 ```
 
@@ -140,7 +218,7 @@ automatically, passing them back through the YQL `continuations` annotation
 
 ```csharp
 await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
-    foreach (var list in page.GroupingResults)
+    foreach (var list in page.AsTyped().GroupingResults)
         Console.WriteLine(list.Label);
 ```
 

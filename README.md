@@ -205,10 +205,12 @@ var request = new VespaSearchRequest
     Hits = 0
 };
 
-var result = await client.Search.GroupByAsync<Product>(request);
+var result = (await client.Search.GroupByAsync<Product>(request)).AsTyped();
+foreach (var group in result.GroupingResults[0].Groups)
+    Console.WriteLine($"{group.Value}: {group.GetAggregation<long>("count()")} documents");
 ```
 
-> Nested grouping, buckets, per-group summaries, pagination, and full aggregation reference in **[docs/grouping.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/grouping.md)**
+> Typed grouping, exact aggregation values, buckets, summaries and pagination in **[docs/grouping.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/grouping.md)**
 
 ---
 
