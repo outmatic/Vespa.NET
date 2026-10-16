@@ -2,8 +2,8 @@ using Vespa.Models.Attributes;
 
 namespace Vespa.Models.Schema;
 
-// Built in a single reflection pass by SchemaModelBuilder, rendered by the small
-// emitters in VespaSchemaBuilder. All validation happens while building the model.
+// Built in a single reflection pass by SchemaModelBuilder and rendered by
+// SchemaEmitter. All validation happens while building the model.
 
 /// <summary>Structural shape of a field, driving indexing/struct-field emission.</summary>
 internal enum FieldShape
