@@ -125,6 +125,12 @@ await client.Documents.UpdateFieldsByNumberAsync(42L, product.Id,
 // Delete
 await client.Documents.DeleteByGroupAsync("tenant-42", product.Id, documentType: "product");
 await client.Documents.DeleteByNumberAsync(42L, product.Id, documentType: "product");
+
+// Model-aware writes and deletes infer schema and namespace from [VespaDocument]
+await client.Documents.PutByGroupAsync("tenant-42", product.Id, product);
+await client.Documents.PutByNumberAsync(42L, product.Id, product);
+await client.Documents.DeleteByGroupAsync<Product>("tenant-42", product.Id);
+await client.Documents.DeleteByNumberAsync<Product>(42L, product.Id);
 ```
 
 > [!NOTE]
@@ -297,6 +303,47 @@ await foreach (var doc in client.Documents.VisitAllAsync<Dictionary<string, obje
     cluster: "content")) { }
 ```
 
+### Manual Visit Pages and Checkpoints
+
+`VisitPageAsync<T>` makes one request and returns a `VespaVisitResponse<T>` with
+`Documents`, `DocumentCount`, `PathId`, `Continuation` and `IsComplete`. It does
+not fetch the next page automatically. The model-aware overload infers the schema
+and namespace from `[VespaDocument]`:
+
+```csharp
+var (continuation, completed) = await LoadCheckpointAsync();
+var options = new VisitOptions { WantedDocumentCount = 500, Concurrency = 2 };
+
+while (!completed)
+{
+    var page = await client.Documents.VisitPageAsync<Product>(
+        selection: "product.price > 100",
+        cluster: "content",
+        continuation: continuation,
+        options: options,
+        cancellationToken: cancellationToken);
+
+    await ProcessPageAsync(page.Documents, cancellationToken);
+    continuation = page.Continuation;
+    completed = page.IsComplete;
+    await SaveCheckpointAsync(continuation, completed);
+}
+```
+
+Save the continuation **after** processing the page. Treat it as an opaque string
+and resume with the same schema, namespace, selection, cluster and visit options
+(including slice settings). Persist completion separately: a null continuation
+also represents the initial request. Reprocessing a page after a crash is possible.
+
+An empty page can still have a continuation; only `IsComplete` signals completion.
+`WantedDocumentCount` is a best-effort lower bound, not a maximum page size.
+Document IDs and `[VespaId]` injection work as with `VisitAsync`.
+
+For explicit schema/namespace addressing, pass `documentType` and `namespace`.
+Use `VisitAllPageAsync<T>(cluster: "content", continuation: continuation)` to page
+across all schemas and namespaces in a cluster. It requires a cluster and does not
+accept `VisitOptions.Group` or `VisitOptions.Number`.
+
 ### JSONL Streaming (lower memory)
 
 `VisitJsonlAsync` streams one document per line (`stream=true`,
@@ -356,6 +403,33 @@ var opts = new DocumentRequestOptions
 
 await client.Documents.PutAsync(product.Id, product, documentType: "product", requestOptions: opts);
 ```
+
+Model-aware CRUD overloads accept the options object **before the document ID**,
+retaining the existing positional signatures and a final cancellation token:
+
+```csharp
+var readOptions = new DocumentRequestOptions
+{
+    Cluster = "content",
+    Timeout = TimeSpan.FromSeconds(10),
+    TensorFormat = "long"
+};
+var writeOptions = new DocumentRequestOptions { Timeout = TimeSpan.FromSeconds(10) };
+
+var doc = await client.Documents.GetAsync<Product>(readOptions, product.Id);
+await client.Documents.PutAsync(writeOptions, product.Id, product);
+await client.Documents.UpdateFieldsAsync<Product>(writeOptions, product.Id,
+    update => update.Field(p => p.Price, FieldOp.Assign(49.99m)));
+await client.Documents.DeleteAsync<Product>(writeOptions, product.Id);
+
+// The same options-first overloads cover addressed reads/updates and GetManyAsync
+var groupDoc = await client.Documents.GetByGroupAsync<Product>(readOptions, "tenant-42", product.Id);
+var docs = await client.Documents.GetManyAsync<Product>(readOptions, ["p-1", "p-2"]);
+```
+
+Model-aware `PutByGroupAsync`, `PutByNumberAsync`, `DeleteByGroupAsync` and
+`DeleteByNumberAsync` accept `requestOptions` as a named argument. `Cluster`
+is forwarded only on reads; write routing uses `Route`.
 
 > [!NOTE]
 > `DocumentRequestOptions.Timeout` is the **Vespa server-side soft timeout** — it

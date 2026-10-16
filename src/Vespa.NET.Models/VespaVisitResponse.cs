@@ -15,4 +15,11 @@ public sealed record VespaVisitResponse<T>(
     /// <summary>Documents in this page; empty when the response carried none (no NREs on empty pages).</summary>
     [JsonPropertyName("documents")]
     public List<VespaDocument<T>> Documents { get; init; } = Documents ?? [];
+
+    /// <summary>
+    /// Whether visiting is complete. An empty page with a continuation token
+    /// still has more work and must be resumed.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsComplete => Continuation is null;
 }

@@ -39,7 +39,7 @@ var results = await client.Search.NearestNeighborSearchAsync<Product>(embedding,
 | | |
 |---|---|
 | **Schema** | Code-first `.sd` generation from attributes, multi-type deploy, [custom `services.xml`](https://github.com/outmatic/Vespa.NET/blob/main/docs/schema.md) |
-| **Documents** | CRUD, conditional writes, field-level ops, visit/iterate, group/number addressing (read+write), selection-based update/delete/copy with continuation auto-loop + crash-safe manual paging |
+| **Documents** | CRUD, conditional writes, field-level ops, resumable visit pages, group/number addressing (read+write), selection-based update/delete/copy with continuation auto-loop + crash-safe manual paging |
 | **Search** | Full-text, nearest-neighbor, hybrid, streaming, auto-paginated `IAsyncEnumerable` |
 | **YQL** | Fluent type-safe builder with boolean composition, grouping, ranking DSL |
 | **Feed** | Parallel `/document/v1` pipeline with `Channel<T>` backpressure, progress callbacks |
@@ -118,6 +118,10 @@ await client.Documents.PutAsync(product.Id, product);
 var doc = await client.Documents.GetAsync<Product>(product.Id);
 await client.Documents.DeleteAsync<Product>(product.Id);
 
+// Request options with model-inferred schema and namespace
+var readOptions = new DocumentRequestOptions { Cluster = "content", Timeout = TimeSpan.FromSeconds(5) };
+var routedDoc = await client.Documents.GetAsync<Product>(readOptions, product.Id);
+
 // Field-level update with typed lambda builder
 await client.Documents.UpdateFieldsAsync<Product>(product.Id, ops => ops
     .Field(p => p.Name, FieldOp.Assign("New Name"))
@@ -130,6 +134,10 @@ var results = await client.Search.NearestNeighborSearchAsync<Product>(
 // Visit
 await foreach (var d in client.Documents.VisitAsync<Product>(selection: "product.price > 100"))
     Process(d.Fields);
+
+// One visit page; persist Continuation after processing to resume later
+var page = await client.Documents.VisitPageAsync<Product>(cluster: "content");
+// page.IsComplete indicates completion, including for empty pages
 
 // Selection-based bulk ops — typed builder, auto-loops on Vespa's continuation token
 var resp = await client.Documents.UpdateBySelectionAsync<Product>(

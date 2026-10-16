@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Model-aware document overloads accepting `DocumentRequestOptions`, including
+  field-update builders, group/number reads and updates, and `GetManyAsync`.
+  Existing method signatures and positional cancellation-token calls are retained.
+- Model-aware `PutByGroupAsync`, `PutByNumberAsync`, `DeleteByGroupAsync` and
+  `DeleteByNumberAsync` with request options.
+- `VisitPageAsync<T>` and `VisitAllPageAsync<T>` for one-request visit pages and
+  persisted continuation checkpoints. `VespaVisitResponse<T>.IsComplete`
+  distinguishes completion from an empty page with further work.
+
 ## [3.0.1] - 2026-07-17
 
 ### Fixed

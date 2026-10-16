@@ -318,6 +318,39 @@ public interface IDocumentOperations
     ) where T : class;
 
     /// <summary>
+    /// Visit a single page of documents. Makes one HTTP request without following
+    /// continuation tokens. Persist the returned token after processing the page,
+    /// then pass it as <paramref name="continuation"/> to resume with the same
+    /// document type, namespace, selection, cluster and visit options.
+    /// An empty page may still have a continuation token.
+    /// </summary>
+    /// <exception cref="NotSupportedException">A custom implementation does not support manual visit pages.</exception>
+    Task<VespaVisitResponse<T>> VisitPageAsync<T>(
+        string documentType,
+        string? selection = null,
+        string? cluster = null,
+        string? @namespace = null,
+        string? continuation = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default
+    ) where T : class => throw new NotSupportedException("This document operations implementation does not support manual visit pages.");
+
+    /// <summary>
+    /// Visit a single page across all namespaces and document types in a cluster.
+    /// The cluster is mandatory. Pass the returned continuation token back with
+    /// the same selection and visit options to resume.
+    /// Group/number addressing is not supported at this root level.
+    /// </summary>
+    /// <exception cref="NotSupportedException">A custom implementation does not support manual visit pages.</exception>
+    Task<VespaVisitResponse<T>> VisitAllPageAsync<T>(
+        string cluster,
+        string? selection = null,
+        string? continuation = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default
+    ) where T : class => throw new NotSupportedException("This document operations implementation does not support manual visit pages.");
+
+    /// <summary>
     /// Iterate over all documents matching an optional selection, following
     /// continuation tokens page by page. Use <see cref="VisitOptions.Group"/> /
     /// <see cref="VisitOptions.Number"/> to visit a single group/number bucket.

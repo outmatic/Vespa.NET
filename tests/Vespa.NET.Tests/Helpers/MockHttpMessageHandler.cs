@@ -44,6 +44,8 @@ public class MockHttpMessageHandler : HttpMessageHandler
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         // Clone the request to capture it (requests can only be sent once)
         var capturedRequest = await CloneRequestAsync(request);
         _requests.Enqueue(capturedRequest);

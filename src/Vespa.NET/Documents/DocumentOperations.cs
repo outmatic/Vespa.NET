@@ -612,19 +612,66 @@ public sealed partial class DocumentOperations(
         return VisitPagedCoreAsync<T>(VisitBasePath(documentType, @namespace, options), selection, cluster, options, cancellationToken);
     }
 
+    public Task<VespaVisitResponse<T>> VisitPageAsync<T>(
+        string documentType,
+        string? selection = null,
+        string? cluster = null,
+        string? @namespace = null,
+        string? continuation = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        return VisitPageCoreAsync<T>(VisitBasePath(documentType, @namespace, options), selection, cluster, options, continuation, cancellationToken);
+    }
+
+    public Task<VespaVisitResponse<T>> VisitAllPageAsync<T>(
+        string cluster,
+        string? selection = null,
+        string? continuation = null,
+        VisitOptions? options = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        ValidateRootVisit(cluster, options);
+        return VisitPageCoreAsync<T>($"{VespaPaths.DocV1}/", selection, cluster, options, continuation, cancellationToken);
+    }
+
     public IAsyncEnumerable<VespaDocument<T>> VisitAllAsync<T>(
         string cluster,
         string? selection = null,
         VisitOptions? options = null,
         CancellationToken cancellationToken = default) where T : class
     {
+        ValidateRootVisit(cluster, options);
+
+        return VisitPagedCoreAsync<T>($"{VespaPaths.DocV1}/", selection, cluster, options, cancellationToken);
+    }
+
+    private static void ValidateRootVisit(string cluster, VisitOptions? options)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(cluster);
         if (options is { Group: not null } or { Number: not null })
             throw new ArgumentException(
                 "VisitOptions.Group/Number addressing is not supported on root-level visits.",
                 nameof(options));
+    }
 
-        return VisitPagedCoreAsync<T>($"{VespaPaths.DocV1}/", selection, cluster, options, cancellationToken);
+    private async Task<VespaVisitResponse<T>> VisitPageCoreAsync<T>(
+        string basePath,
+        string? selection,
+        string? cluster,
+        VisitOptions? options,
+        string? continuation,
+        CancellationToken cancellationToken) where T : class
+    {
+        var url = BuildVisitUrl(basePath, selection, cluster, options, continuation, stream: false);
+        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+            throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
+
+        return await VespaIdInjector.DeserializeVisitAndInjectAsync<T>(response.Content, cancellationToken)
+            ?? throw new VespaException("The visit response did not contain a page.");
     }
 
     private async IAsyncEnumerable<VespaDocument<T>> VisitPagedCoreAsync<T>(
@@ -637,16 +684,7 @@ public sealed partial class DocumentOperations(
         string? continuation = null;
         do
         {
-            var url = BuildVisitUrl(basePath, selection, cluster, options, continuation, stream: false);
-
-            using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-                throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
-
-            var page = await VespaIdInjector.DeserializeVisitAndInjectAsync<T>(response.Content, cancellationToken);
-            if (page is null)
-                yield break;
+            var page = await VisitPageCoreAsync<T>(basePath, selection, cluster, options, continuation, cancellationToken);
 
             foreach (var doc in page.Documents)
                 yield return doc;
