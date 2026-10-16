@@ -2,6 +2,7 @@ using System.Collections;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Vespa.Models.Schema;
 
 namespace Vespa.Models.Tensors;
 
@@ -11,20 +12,34 @@ namespace Vespa.Models.Tensors;
 /// mapped/mixed short forms, verbose cells, blocks, and hex-encoded dense values
 /// (<c>presentation.format.tensors=hex|hex-value</c>).
 /// Efficiently handles float, double, int8 (sbyte), and bfloat16 (stored as float) cell types.
+/// Value-only hex forms require a schema type supplied to the constructor; Vespa.NET
+/// supplies it automatically for properties with <c>[VespaTensor]</c>.
 /// </summary>
 public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
 {
+    private readonly string? _tensorType;
+
+    /// <summary>Reads self-describing tensors and numeric short forms.</summary>
+    public VespaTensorConverter() { }
+
+    /// <summary>
+    /// Supplies the schema type for value-only forms, including hex values and
+    /// mapped labels that coincide with JSON wrapper property names.
+    /// </summary>
+    public VespaTensorConverter(string tensorType)
+    {
+        _tensorType = TensorTypeSpec.Parse(tensorType).ToString();
+    }
+
     public override VespaTensor? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         return reader.TokenType switch
         {
             JsonTokenType.Null => null,
-            // presentation.format.tensors=hex-value renders dense tensors as a bare hex
-            // string. Without a type spec the cell width is unknown, so the value is
-            // decoded as double (16 hex digits per cell).
-            JsonTokenType.String => FromDenseArray(ParseHexValues(reader.GetString()!, null, typeof(double)), null),
-            JsonTokenType.StartArray => ReadArrayFormat(ref reader, null),
-            JsonTokenType.StartObject => ReadObjectFormat(ref reader),
+            JsonTokenType.String => FromDenseArray(
+                ParseHexValues(reader.GetString()!, _tensorType, VespaTensor.DetectValueType(_tensorType)), _tensorType),
+            JsonTokenType.StartArray => ReadArrayFormat(ref reader, _tensorType),
+            JsonTokenType.StartObject => ReadObjectFormat(ref reader, _tensorType),
             _ => throw new JsonException($"Unexpected token type for tensor: {reader.TokenType}")
         };
     }
@@ -132,19 +147,29 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
         return VespaTensor.FromMappedValues(new Dictionary<string, double>(), tensorType);
     }
 
-    private static VespaTensor ReadObjectFormat(ref Utf8JsonReader reader)
+    private static VespaTensor ReadObjectFormat(ref Utf8JsonReader reader, string? declaredType)
     {
-        // First pass: collect all properties to find "type" field
-        string? tensorType = null;
-
         using var doc = JsonDocument.ParseValue(ref reader);
         var root = doc.RootElement;
-
-        // Extract type first if present
-        if (root.TryGetProperty("type", out var typeElem))
-            tensorType = typeElem.GetString();
-
+        // In value-only forms, "type", "values", "cells" and "blocks" can be
+        // mapped labels. A string type specification identifies an actual wrapper.
+        var hasType = root.TryGetProperty("type", out var typeElem) && typeElem.ValueKind == JsonValueKind.String &&
+            typeElem.GetString()!.StartsWith("tensor", StringComparison.Ordinal);
+        var tensorType = hasType ? typeElem.GetString() : declaredType;
         var valueType = VespaTensor.DetectValueType(tensorType);
+        var properties = root.EnumerateObject().Where(p => !hasType || p.Name != "type").ToList();
+
+        if (!hasType)
+        {
+            if (properties.Count > 0 && properties.All(p => p.Value.ValueKind == JsonValueKind.Number))
+                return ParseMapped(properties, valueType, tensorType);
+
+            // A declared mixed tensor disambiguates {"values":[...]} (a mapped
+            // label) from the dense wrapper with the same spelling.
+            if (tensorType is not null && tensorType.Count(c => c == '{') == 1 && tensorType.Contains('[') &&
+                properties.All(p => IsDenseBlockValue(p.Value)))
+                return ParseMixedSingleSparse(properties, valueType, tensorType);
+        }
 
         if (root.TryGetProperty("blocks", out var blocksElem))
         {
@@ -161,8 +186,12 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
             return FromDenseArray(ParseTypedValuesElement(valuesElem, tensorType, valueType), tensorType);
 
         // Could be mapped or mixed sparse
-        return ParseMappedOrMixed(root, valueType, tensorType);
+        return ParseMappedOrMixed(properties, valueType, tensorType);
     }
+
+    private static bool IsDenseBlockValue(JsonElement value) =>
+        value.ValueKind == JsonValueKind.String ||
+        (value.ValueKind == JsonValueKind.Array && value.EnumerateArray().All(e => e.ValueKind is JsonValueKind.Number or JsonValueKind.Array));
 
     private static VespaTensor ParseCellsProperty(JsonElement cellsElem, Type valueType, string? tensorType)
     {
@@ -290,13 +319,12 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
             : VespaTensor.FromCells(cells, tensorType);
     }
 
-    private static VespaTensor ParseMappedOrMixed(JsonElement root, Type valueType, string? tensorType)
+    private static VespaTensor ParseMappedOrMixed(List<JsonProperty> properties, Type valueType, string? tensorType)
     {
-        // Skip "type" property
-        var properties = root.EnumerateObject().Where(p => p.Name != "type").ToList();
-
         if (properties.Count == 0)
-            return CreateEmptyDenseTensor(valueType, tensorType);
+            return tensorType is not null && tensorType.Contains('[') && !tensorType.Contains('{')
+                ? CreateEmptyDenseTensor(valueType, tensorType)
+                : CreateEmptyMappedTensor(valueType, tensorType);
 
         return properties[0].Value.ValueKind switch
         {
@@ -360,10 +388,15 @@ public sealed class VespaTensorConverter : JsonConverter<VespaTensor?>
     /// <summary>
     /// Decodes the documented hex string form for dense tensor values: each cell is the
     /// big-endian bit pattern of its value — 2 hex digits for int8, 4 for bfloat16,
-    /// 8 for float, 16 for double. Without a type spec the value is decoded as double.
+    /// 8 for float, 16 for double. A type specification is required to determine cell width.
     /// </summary>
     private static Array ParseHexValues(string hex, string? tensorType, Type valueType)
     {
+        if (tensorType is null)
+            throw new JsonException(
+                "Hex tensor values require a tensor type. Use [VespaTensor] on the model property, " +
+                "configure VespaTensorConverter with a type, or request the self-describing 'hex' format instead of 'hex-value'.");
+
         if (valueType == typeof(sbyte))
         {
             var values = new sbyte[HexCellCount(hex, 2)];

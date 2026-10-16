@@ -455,7 +455,7 @@ public class FieldOperationsTests : IDisposable
     [Fact]
     public async Task UpdateBySelectionAsync_SendsPutWithSelectionParam()
     {
-        SetupSuccessResponse();
+        SetupSuccessResponse(selection: true);
         var ops = new Dictionary<string, FieldOperation>
         {
             ["status"] = FieldOp.Assign("archived")
@@ -474,7 +474,7 @@ public class FieldOperationsTests : IDisposable
     [Fact]
     public async Task UpdateBySelectionAsync_WithCluster_IncludesClusterParam()
     {
-        SetupSuccessResponse();
+        SetupSuccessResponse(selection: true);
         var ops = new Dictionary<string, FieldOperation>
         {
             ["status"] = FieldOp.Assign("archived")
@@ -495,7 +495,7 @@ public class FieldOperationsTests : IDisposable
     [Fact]
     public async Task DeleteBySelectionAsync_SendsDeleteWithSelectionParam()
     {
-        SetupSuccessResponse();
+        SetupSuccessResponse(selection: true);
 
         await _documentOps.DeleteBySelectionAsync("music.year < 1980", "music");
 
@@ -510,7 +510,7 @@ public class FieldOperationsTests : IDisposable
     [Fact]
     public async Task DeleteBySelectionAsync_WithCluster_IncludesClusterParam()
     {
-        SetupSuccessResponse();
+        SetupSuccessResponse(selection: true);
 
         await _documentOps.DeleteBySelectionAsync("music.year < 1980", "music", cluster: "content");
 
@@ -1087,7 +1087,7 @@ public class FieldOperationsTests : IDisposable
             .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedUrl = req.RequestUri!.PathAndQuery)
             .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("", System.Text.Encoding.UTF8, "application/jsonl")
+                Content = new StringContent("""{"continuation":{"percentFinished":100}}""", System.Text.Encoding.UTF8, "application/jsonl")
             });
 
         await foreach (var _ in _documentOps.VisitJsonlAsync<object>(
@@ -1175,7 +1175,7 @@ public class FieldOperationsTests : IDisposable
 
     // --- Helpers ---
 
-    private void SetupSuccessResponse()
+    private void SetupSuccessResponse(bool selection = false)
     {
         _mockHandler
             .Protected()
@@ -1183,7 +1183,10 @@ public class FieldOperationsTests : IDisposable
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(selection ? """{"documentCount":0}""" : "{}")
+            });
     }
 
     private void Setup412Response()

@@ -28,14 +28,29 @@ internal static class VespaErrorResponse
         if (!string.IsNullOrWhiteSpace(body))
             try
             {
-                error = JsonSerializer.Deserialize<VespaError>(body, VespaJsonOptions.Default);
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement;
+                // Search uses a result envelope; document/admin errors are top-level objects.
+                if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("root", out var searchRoot) &&
+                    searchRoot.ValueKind == JsonValueKind.Object && searchRoot.TryGetProperty("errors", out var errors) &&
+                    errors.ValueKind == JsonValueKind.Array)
+                    error = errors.EnumerateArray().FirstOrDefault(e => e.ValueKind == JsonValueKind.Object)
+                        is { ValueKind: JsonValueKind.Object } first
+                            ? first.Deserialize<VespaError>(VespaJsonOptions.Default)
+                            : null;
+                else if (root.ValueKind == JsonValueKind.Object)
+                    error = root.Deserialize<VespaError>(VespaJsonOptions.Default);
             }
             catch (JsonException)
             {
                 // Non-JSON error body — fall through to the raw-body message.
             }
 
-        var message = error?.Message ?? $"HTTP {(int)response.StatusCode}: {body}";
+        var message = !string.IsNullOrWhiteSpace(error?.Message) ? error.Message
+            : !string.IsNullOrWhiteSpace(error?.Summary) ? error.Summary
+            : error is not null || string.IsNullOrWhiteSpace(body)
+                ? VespaException.FromStatusCode((int)response.StatusCode, string.Empty).Message
+            : $"HTTP {(int)response.StatusCode}: {body}";
         if (context is not null)
             message = $"{context}: {message}";
 

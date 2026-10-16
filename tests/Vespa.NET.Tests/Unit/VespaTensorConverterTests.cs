@@ -386,7 +386,7 @@ public class VespaTensorConverterTests
     [Fact]
     public void Read_MappedSingle_EmptyDictionary_CreatesEmptyTensor()
     {
-        // Arrange - Empty object is parsed as empty dense array by the converter
+        // An empty mapped value must retain the object form when fed again.
         var json = "{}";
 
         // Act
@@ -394,9 +394,8 @@ public class VespaTensorConverterTests
 
         // Assert
         Assert.NotNull(tensor);
-        // Note: Empty {} is treated as IndexedDense format with empty array
-        Assert.Equal(TensorFormat.IndexedDense, tensor.Format);
-        var values = tensor.GetDenseValues<double>();
+        Assert.Equal(TensorFormat.MappedSingle, tensor.Format);
+        var values = tensor.GetMappedValues<double>();
         Assert.NotNull(values);
         Assert.Empty(values);
     }
@@ -652,9 +651,10 @@ public class VespaTensorConverterTests
     }
 
     [Fact]
-    public void Read_MixedSingleSparse_EmptyObject_CreatesEmptyTensor()
+    public void Read_EmptyObject_RoundTripPreservesObjectForm()
     {
-        // Arrange - Empty object is parsed as empty dense array by the converter
+        // Without schema metadata the precise sparse shape is unknown, but the
+        // object form must not turn into a dense array on the next write.
         var json = "{}";
 
         // Act
@@ -662,11 +662,7 @@ public class VespaTensorConverterTests
 
         // Assert
         Assert.NotNull(tensor);
-        // Note: Empty {} is treated as IndexedDense format with empty array
-        Assert.Equal(TensorFormat.IndexedDense, tensor.Format);
-        var values = tensor.GetDenseValues<double>();
-        Assert.NotNull(values);
-        Assert.Empty(values);
+        Assert.Equal("{}", JsonSerializer.Serialize(tensor, _jsonOptions));
     }
 
     #endregion
@@ -978,16 +974,12 @@ public class VespaTensorConverterTests
     }
 
     [Fact]
-    public void Read_BareHexString_DefaultsToDouble()
+    public void Read_BareHexString_WithoutType_RejectsAmbiguousCellWidth()
     {
-        // hex-value form carries no type info — decoded as double
+        // This could be one double or two floats: guessing silently corrupts data.
         var json = "\"3FF0000000000000\"";
 
-        var tensor = JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions);
-
-        Assert.NotNull(tensor);
-        Assert.Equal(TensorFormat.IndexedDense, tensor.Format);
-        Assert.Equal(new[] { 1.0 }, tensor.GetDenseValues<double>());
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<VespaTensor>(json, _jsonOptions));
     }
 
     [Fact]

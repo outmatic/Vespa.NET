@@ -21,6 +21,12 @@ public sealed record VespaGroup(
     IReadOnlyDictionary<string, double> Aggregations,
     IReadOnlyList<VespaGroupList> SubGroups)
 {
+    /// <summary>Full group identity returned by Vespa, including bucket and root identities.</summary>
+    public string Id { get; init; } = string.Empty;
+
+    /// <summary>Whether this group contains values outside all predefined buckets.</summary>
+    public bool IsRestBucket => Id == "group:null";
+
     /// <summary>
     /// All aggregation outputs of this group as raw JSON values, keyed by the
     /// aggregation expression (or its <c>as(label)</c>). Includes non-numeric
@@ -60,4 +66,20 @@ public sealed record GroupingSearchResponse<T>(
     long TotalCount,
     TimingInfo? Timing = null,
     IReadOnlyList<string>? ContinuationTokens = null
-) where T : class;
+) where T : class
+{
+    /// <summary>
+    /// Root group for each grouping expression, retaining root-level aggregations and
+    /// hit lists. Their subgroups are also exposed through <see cref="GroupingResults"/>.
+    /// </summary>
+    public IReadOnlyList<VespaGroup> GroupingRoots { get; init; } = [];
+
+    /// <summary>Coverage and degradation information, including soft timeouts.</summary>
+    public Coverage? Coverage { get; init; }
+
+    /// <summary>Backend errors, which may accompany partial results with HTTP 200.</summary>
+    public IReadOnlyList<VespaError>? Errors { get; init; }
+
+    /// <summary>Query trace returned when tracing is requested.</summary>
+    public TraceInfo? Trace { get; init; }
+}

@@ -34,6 +34,15 @@ foreach (var group in groupList.Groups)
 `tostring(...)`/`toraw(...)`) are available as `JsonElement`s in
 `VespaGroup.RawAggregations`.
 
+`GroupingSearchResponse.Coverage`, `Errors`, and `Trace` retain the same metadata
+as a regular search response. Check coverage and errors when consuming results:
+Vespa can return partial results with HTTP 200.
+
+`GroupingRoots` contains the root of each grouping expression, including its
+aggregations and hit lists. For example, a request containing
+`| all(output(count()))` exposes the count through
+`result.GroupingRoots[0].Aggregations["count()"]`.
+
 ---
 
 ## Grouping Extensions
@@ -59,6 +68,10 @@ GroupingBuilder.All().GroupByBuckets("price",
     GroupingBucket.Numeric(100, 500, toInclusive: true),    // bucket[100,500]
     GroupingBucket.Numeric(500, null));                     // bucket[500,inf)
 ```
+
+Rest groups are retained in the results: `group.IsRestBucket` identifies them,
+and `group.Id` preserves Vespa's `group:null` identity. Their aggregation values
+are included just like those of the explicit buckets.
 
 ### Filtering groups
 

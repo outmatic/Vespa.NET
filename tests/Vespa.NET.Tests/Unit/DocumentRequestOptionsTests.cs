@@ -220,7 +220,7 @@ public class DocumentRequestOptionsTests
                 capturedAccept = req.Headers.Accept.FirstOrDefault()?.MediaType)
             .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = JsonlContent("")
+                Content = JsonlContent("""{"continuation":{"percentFinished":100}}""")
             });
 
         using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
@@ -237,6 +237,7 @@ public class DocumentRequestOptionsTests
         var jsonl = """
         {"id":"id:test:music::1","fields":{"title":"Song A"}}
         {"id":"id:test:music::2","fields":{"title":"Song B"}}
+        {"continuation":{"percentFinished":100}}
         """;
 
         _mockHandler.Protected()
@@ -381,6 +382,7 @@ public class DocumentRequestOptionsTests
         var jsonl = """
         {"put":"id:test:music::1","fields":{"title":"Song A"}}
         {"remove":"id:test:music::4"}
+        {"continuation":{"percentFinished":100}}
         """;
 
         _mockHandler.Protected()
@@ -405,9 +407,9 @@ public class DocumentRequestOptionsTests
     }
 
     [Fact]
-    public async Task VisitJsonlAsync_MalformedLine_IsSkipped()
+    public async Task VisitJsonlAsync_MalformedLine_ThrowsInsteadOfDroppingDocuments()
     {
-        // A truncated line (connection drop mid-line) must not abort the whole stream
+        // A malformed document must not silently disappear from the export.
         var jsonl = """
         {"put":"id:test:music::1","fields":{"title":"Song A"}}
         {"put":"id:test:music::2","fie
@@ -425,12 +427,10 @@ public class DocumentRequestOptionsTests
         using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };
         var ops = new DocumentOperations(http, _options);
 
-        var docs = new List<VespaDocument<Dictionary<string, object>>>();
-        await foreach (var doc in ops.VisitJsonlAsync<Dictionary<string, object>>("music"))
-            docs.Add(doc);
-
-        Assert.Equal(2, docs.Count);
-        Assert.Equal(["1", "3"], docs.Select(d => d.Id));
+        await Assert.ThrowsAsync<VespaException>(async () =>
+        {
+            await foreach (var _ in ops.VisitJsonlAsync<Dictionary<string, object>>("music")) { }
+        });
     }
 
     [Fact]
@@ -443,7 +443,7 @@ public class DocumentRequestOptionsTests
             .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedUrl = req.RequestUri?.ToString())
             .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = JsonlContent("")
+                Content = JsonlContent("""{"continuation":{"percentFinished":100}}""")
             });
 
         using var http = new HttpClient(_mockHandler.Object) { BaseAddress = new Uri("http://localhost:8080") };

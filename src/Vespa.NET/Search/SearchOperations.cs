@@ -140,43 +140,63 @@ public sealed partial class SearchOperations(
                     ? timingEl.Deserialize<TimingInfo>(VespaJsonOptions.Default)
                     : null;
 
+                TraceInfo? trace = rootEl.TryGetProperty("trace", out var traceEl)
+                    ? traceEl.Deserialize<TraceInfo>(VespaJsonOptions.Default)
+                    : null;
+
                 if (!rootEl.TryGetProperty("root", out var searchRoot))
-                    return new GroupingSearchResponse<T>([], [], 0, timing, null);
+                    throw new VespaException("Search response does not contain a root object.");
+
+                Coverage? coverage = searchRoot.TryGetProperty("coverage", out var coverageEl)
+                    ? coverageEl.Deserialize<Coverage>(VespaJsonOptions.Default)
+                    : null;
+                List<VespaError>? errors = searchRoot.TryGetProperty("errors", out var errorsEl)
+                    ? errorsEl.Deserialize<List<VespaError>>(VespaJsonOptions.Default)
+                    : null;
 
                 long totalCount = searchRoot.TryGetProperty("fields", out var fields) &&
                     fields.TryGetProperty("totalCount", out var tc)
                         ? tc.GetInt64()
                         : 0;
 
-                if (!searchRoot.TryGetProperty("children", out var children))
-                    return new GroupingSearchResponse<T>([], [], totalCount, timing, null);
-
                 var hits = new List<SearchHit<T>>();
                 var groupingResults = new List<VespaGroupList>();
+                var groupingRoots = new List<VespaGroup>();
                 IReadOnlyList<string>? continuationTokens = null;
 
-                foreach (var child in children.EnumerateArray())
+                if (searchRoot.TryGetProperty("children", out var children))
                 {
-                    if (!child.TryGetProperty("id", out var idEl)) continue;
-                    var id = idEl.GetString() ?? "";
+                    foreach (var child in children.EnumerateArray())
+                    {
+                        if (!child.TryGetProperty("id", out var idEl)) continue;
+                        var id = idEl.GetString() ?? "";
 
-                    if (id.StartsWith("group:root:", StringComparison.Ordinal))
-                    {
-                        groupingResults.AddRange(ParseGroupLists<T>(child));
-                        continuationTokens ??= ExtractContinuationTokens(child);
-                    }
-                    else
-                    {
-                        var hit = child.Deserialize<SearchHit<T>>(VespaJsonOptions.Default);
-                        if (hit is not null)
+                        if (id.StartsWith("group:root:", StringComparison.Ordinal))
                         {
-                            VespaIdInjector.Inject(hit);
-                            hits.Add(hit);
+                            var groupRoot = ParseGroup<T>(child);
+                            groupingRoots.Add(groupRoot);
+                            groupingResults.AddRange(groupRoot.SubGroups);
+                            continuationTokens ??= ExtractContinuationTokens(child);
+                        }
+                        else
+                        {
+                            var hit = child.Deserialize<SearchHit<T>>(VespaJsonOptions.Default);
+                            if (hit is not null)
+                            {
+                                VespaIdInjector.Inject(hit);
+                                hits.Add(hit);
+                            }
                         }
                     }
                 }
 
-                return new GroupingSearchResponse<T>(hits, groupingResults, totalCount, timing, continuationTokens);
+                return new GroupingSearchResponse<T>(hits, groupingResults, totalCount, timing, continuationTokens)
+                {
+                    GroupingRoots = groupingRoots,
+                    Coverage = coverage,
+                    Errors = errors,
+                    Trace = trace
+                };
             },
             cancellationToken);
     }
@@ -331,65 +351,44 @@ public sealed partial class SearchOperations(
                 CollectNextTokens(child, output);
     }
 
-    private static List<VespaGroupList> ParseGroupLists<T>(JsonElement groupRootNode) where T : class
-    {
-        var result = new List<VespaGroupList>();
-        if (!groupRootNode.TryGetProperty("children", out var children)) return result;
-
-        foreach (var child in children.EnumerateArray())
-        {
-            if (!child.TryGetProperty("id", out var idEl)) continue;
-            var id = idEl.GetString() ?? "";
-            if (id.StartsWith("grouplist:", StringComparison.Ordinal))
-                result.Add(ParseSingleGroupList<T>(child, id["grouplist:".Length..]));
-        }
-        return result;
-    }
-
     private static VespaGroupList ParseSingleGroupList<T>(JsonElement groupListNode, string label) where T : class
     {
         var groups = new List<VespaGroup>();
 
         if (groupListNode.TryGetProperty("children", out var groupChildren))
-        {
             foreach (var groupNode in groupChildren.EnumerateArray())
-            {
-                var groupId = groupNode.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
-
-                // Skip rest buckets (group:null)
-                if (groupId is "group:null")
-                    continue;
-
-                var value = groupNode.TryGetProperty("value", out var v)
-                    ? v.ToString()
-                    : ParseBucketId(groupId);
-
-                var aggregations = new Dictionary<string, double>();
-                var rawAggregations = new Dictionary<string, JsonElement>();
-
-                if (groupNode.TryGetProperty("fields", out var aggFields))
-                    foreach (var field in aggFields.EnumerateObject())
-                    {
-                        // Clone detaches the element from the JsonDocument disposed after parsing
-                        rawAggregations[field.Name] = field.Value.Clone();
-                        if (field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetDouble(out var d))
-                            aggregations[field.Name] = d;
-                    }
-
-                var subGroups = (IReadOnlyList<VespaGroupList>)[];
-                var hits = (IReadOnlyList<object>)[];
-                if (groupNode.TryGetProperty("children", out var subChildren))
-                    (subGroups, hits) = ParseGroupChildren<T>(subChildren);
-
-                groups.Add(new VespaGroup(value, aggregations, subGroups)
-                {
-                    Hits = hits,
-                    RawAggregations = rawAggregations
-                });
-            }
-        }
+                groups.Add(ParseGroup<T>(groupNode));
 
         return new VespaGroupList(label, groups);
+    }
+
+    private static VespaGroup ParseGroup<T>(JsonElement node) where T : class
+    {
+        var id = node.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
+        var value = node.TryGetProperty("value", out var valueEl) ? valueEl.ToString() : ParseBucketId(id);
+        var aggregations = new Dictionary<string, double>();
+        var rawAggregations = new Dictionary<string, JsonElement>();
+
+        if (node.TryGetProperty("fields", out var fields))
+            foreach (var field in fields.EnumerateObject())
+            {
+                // Clones must outlive the response JsonDocument.
+                rawAggregations[field.Name] = field.Value.Clone();
+                if (field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetDouble(out var number))
+                    aggregations[field.Name] = number;
+            }
+
+        var subGroups = (IReadOnlyList<VespaGroupList>)[];
+        var hits = (IReadOnlyList<object>)[];
+        if (node.TryGetProperty("children", out var children))
+            (subGroups, hits) = ParseGroupChildren<T>(children);
+
+        return new VespaGroup(value, aggregations, subGroups)
+        {
+            Id = id,
+            Hits = hits,
+            RawAggregations = rawAggregations
+        };
     }
 
     /// <summary>

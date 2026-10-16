@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization.Metadata;
 using Vespa.Models.Attributes;
+using Vespa.Models.Tensors;
 
 namespace Vespa;
 
@@ -10,6 +11,7 @@ namespace Vespa;
 ///   <item><see cref="VespaFieldAttribute.Name"/> → JSON property name</item>
 ///   <item><see cref="VespaIdAttribute"/> → excluded from serialization (document ID is passed in the URL, not the body)</item>
 ///   <item><see cref="VespaExtraFieldsAttribute"/> → wired as <c>System.Text.Json</c> extension data (catch-all for unmapped fields)</item>
+///   <item><see cref="VespaTensorAttribute"/> → schema type for value-only tensor formats</item>
 /// </list>
 /// </summary>
 internal static class VespaFieldJsonModifier
@@ -54,6 +56,13 @@ internal static class VespaFieldJsonModifier
 
             if (fieldAttr?.Name is not null)
                 prop.Name = fieldAttr.Name;
+
+            // Value-only tensor formats omit the cell type. Use schema metadata,
+            // while respecting converters explicitly configured by the caller.
+            if (prop.PropertyType == typeof(VespaTensor) && prop.CustomConverter is null &&
+                prop.AttributeProvider.GetCustomAttributes(typeof(VespaTensorAttribute), inherit: false)
+                    .OfType<VespaTensorAttribute>().FirstOrDefault() is { } tensorAttr)
+                prop.CustomConverter = new VespaTensorConverter(tensorAttr.GetTensorTypeString());
         }
     }
 }

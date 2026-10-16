@@ -4,7 +4,8 @@ using Vespa.Models.Tensors;
 namespace Vespa.Models.Attributes;
 
 /// <summary>
-/// Attribute to specify Vespa tensor metadata for schema generation
+/// Specifies tensor metadata for schema generation and type-aware reading of
+/// value-only JSON formats such as <c>hex-value</c>.
 /// </summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false)]
 public class VespaTensorAttribute : Attribute

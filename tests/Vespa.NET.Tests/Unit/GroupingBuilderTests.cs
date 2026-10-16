@@ -643,13 +643,15 @@ public class GroupingBuilderTests : IDisposable
 
         var priceList = response.GroupingResults[0];
         Assert.Equal("price", priceList.Label);
-        Assert.Equal(2, priceList.Groups.Count); // group:null is skipped
+        Assert.Equal(3, priceList.Groups.Count);
 
         Assert.Equal("0:100", priceList.Groups[0].Value);
         Assert.Equal(3.0, priceList.Groups[0].Aggregations["count()"]);
 
         Assert.Equal("100:500", priceList.Groups[1].Value);
         Assert.Equal(19.0, priceList.Groups[1].Aggregations["count()"]);
+        Assert.True(priceList.Groups[2].IsRestBucket);
+        Assert.Equal(2.0, priceList.Groups[2].Aggregations["count()"]);
     }
 
     [Fact]

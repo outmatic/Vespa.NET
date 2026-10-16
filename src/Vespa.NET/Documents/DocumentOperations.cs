@@ -484,11 +484,11 @@ public sealed partial class DocumentOperations(
         if (!response.IsSuccessStatusCode)
             throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
-        var body = await TryReadSelectionBodyAsync(response, cancellationToken);
+        var body = await ReadSelectionBodyAsync(response, cancellationToken);
         return new SelectionPageResult
         {
-            DocumentCount = body?.DocumentCount ?? 0,
-            Continuation = body?.Continuation,
+            DocumentCount = body.DocumentCount!.Value,
+            Continuation = body.Continuation,
             StatusCode = (int)response.StatusCode,
             HadIgnoredFields = HasIgnoredFields(response)
         };
@@ -562,21 +562,25 @@ public sealed partial class DocumentOperations(
             cancellationToken);
     }
 
-    private static async Task<SelectionResponseBody?> TryReadSelectionBodyAsync(
+    private static async Task<SelectionResponseBody> ReadSelectionBodyAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
+        SelectionResponseBody? body;
         try
         {
-            return await response.Content.ReadFromJsonAsync<SelectionResponseBody>(VespaJsonOptions.Default, cancellationToken);
+            body = await response.Content.ReadFromJsonAsync<SelectionResponseBody>(VespaJsonOptions.Default, cancellationToken);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or IOException or HttpRequestException)
         {
-            return null;
+            throw new VespaException("Could not read the selection response; the operation may have been partially applied.", ex);
         }
-        catch (IOException)
-        {
-            return null;
-        }
+
+        if (!string.IsNullOrWhiteSpace(body?.Message))
+            throw new VespaException($"Selection operation failed: {body.Message}");
+        if (body?.DocumentCount is not >= 0 || body.Continuation is { Length: 0 })
+            throw new VespaException("Invalid selection response; a documentCount and a valid continuation are required to determine progress.");
+
+        return body;
     }
 
     private sealed record SelectionResponseBody(
@@ -686,6 +690,7 @@ public sealed partial class DocumentOperations(
                     "Streamed visits require Vespa 8.593 or newer — use VisitAsync against older versions.");
 
             continuation = null;
+            var endedWithContinuation = false;
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var reader = new StreamReader(stream);
@@ -700,28 +705,29 @@ public sealed partial class DocumentOperations(
                 {
                     json = JsonDocument.Parse(line);
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
-                    // Malformed/truncated line (e.g. connection drop mid-line) — skip.
-                    continue;
+                    throw new VespaException("Invalid JSONL visit response; the stream may be incomplete.", ex);
                 }
 
                 using (json)
                 {
                     var root = json.RootElement;
                     if (root.ValueKind != JsonValueKind.Object)
-                        continue;
+                        throw new VespaException("Invalid JSONL visit response: each line must be a JSON object.");
+
+                    endedWithContinuation = false;
 
                     if (root.TryGetProperty("message", out var message))
-                        throw new VespaException($"JSONL visit reported an error: {FormatVisitMessage(message)}");
+                    {
+                        HandleVisitMessage(message);
+                        continue;
+                    }
 
                     if (root.TryGetProperty(QueryParamContinuation, out var marker))
                     {
-                        // Continuation markers subsume earlier ones — remember only the
-                        // last. It has no token (percentFinished == 100) iff complete.
-                        continuation = marker.TryGetProperty("token", out var token) && token.ValueKind == JsonValueKind.String
-                            ? token.GetString()
-                            : null;
+                        continuation = ReadVisitContinuation(marker);
+                        endedWithContinuation = true;
                         continue;
                     }
 
@@ -730,8 +736,47 @@ public sealed partial class DocumentOperations(
                         yield return doc;
                 }
             }
+
+            if (!endedWithContinuation)
+                throw new VespaException("JSONL visit ended without a final continuation marker; the stream may be incomplete.");
         }
         while (continuation is not null);
+    }
+
+    private static string? ReadVisitContinuation(JsonElement marker)
+    {
+        if (marker.ValueKind != JsonValueKind.Object)
+            throw new VespaException("Invalid JSONL visit continuation: expected an object.");
+
+        if (marker.TryGetProperty("token", out var token) && token.ValueKind != JsonValueKind.Null)
+        {
+            if (token.ValueKind == JsonValueKind.String && token.GetString() is { Length: > 0 } value)
+                return value;
+            throw new VespaException("Invalid JSONL visit continuation token.");
+        }
+
+        if (marker.TryGetProperty("percentFinished", out var percent) &&
+            percent.ValueKind == JsonValueKind.Number && percent.TryGetDouble(out var valueFinished) && valueFinished == 100)
+            return null;
+
+        throw new VespaException("JSONL visit continuation has no resume token and does not report 100 percent completion.");
+    }
+
+    private void HandleVisitMessage(JsonElement message)
+    {
+        var text = FormatVisitMessage(message);
+        var severity = message.ValueKind == JsonValueKind.Object && message.TryGetProperty("severity", out var level) &&
+            level.ValueKind == JsonValueKind.String ? level.GetString() : null;
+
+        if (severity is not ("info" or "warning"))
+            throw new VespaException($"JSONL visit reported an error: {text}");
+
+        if (logger is null)
+            return;
+        if (severity == "warning")
+            LogVisitWarning(logger, text);
+        else
+            LogVisitInformation(logger, text);
     }
 
     private static string FormatVisitMessage(JsonElement message) => message.ValueKind switch
@@ -753,7 +798,7 @@ public sealed partial class DocumentOperations(
         if (root.TryGetProperty("remove", out var removeElem))
             return new VespaDocument<T>
             {
-                Id = VespaDocumentId.GetUserSpecified(removeElem.GetString() ?? string.Empty)
+                FullId = removeElem.GetString() ?? string.Empty
             };
 
         string? id = null;
@@ -767,7 +812,7 @@ public sealed partial class DocumentOperations(
 
         var doc = new VespaDocument<T>
         {
-            Id = VespaDocumentId.GetUserSpecified(id),
+            FullId = id,
             Fields = root.TryGetProperty("fields", out var fieldsElem)
                 ? fieldsElem.Deserialize<T>(VespaJsonOptions.Default)
                 : null
@@ -994,4 +1039,10 @@ public sealed partial class DocumentOperations(
 
     [LoggerMessage(EventId = 105, Level = LogLevel.Debug, Message = "Updating document {DocumentId} of type {DocumentType}")]
     static partial void LogUpdatingDocument(ILogger logger, string documentId, string documentType);
+
+    [LoggerMessage(EventId = 106, Level = LogLevel.Warning, Message = "JSONL visit: {Message}")]
+    static partial void LogVisitWarning(ILogger logger, string message);
+
+    [LoggerMessage(EventId = 107, Level = LogLevel.Information, Message = "JSONL visit: {Message}")]
+    static partial void LogVisitInformation(ILogger logger, string message);
 }

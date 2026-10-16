@@ -307,7 +307,13 @@ result sets. Notes:
   client rejects with a `VespaException` instead of silently yielding nothing.
 - If a chunk ends with a continuation token (e.g. after a server-side visit
   timeout), the client **resumes automatically** until the final continuation
-  reports completion; server-reported `message` errors surface as `VespaException`.
+  reports completion. Malformed lines or a missing final continuation marker
+  throw `VespaException`; an incomplete export is never reported as completed.
+- Server messages with severity `error` throw `VespaException`. Messages with
+  severity `info` or `warning` are logged at the corresponding level and the
+  visit continues.
+- `FullId` retains the complete Vespa document ID, including group/number
+  addressing, for both documents and removal tombstones. `Id` is the short user part.
 - `WantedDocumentCount` is not sent on this path — streaming makes it redundant.
 
 ```csharp
@@ -325,6 +331,11 @@ await foreach (var doc in client.Documents.VisitJsonlAsync<Product>(
     Process(doc.Fields);
 }
 ```
+
+Selection-based update/delete/copy operations also require a readable response
+with `documentCount`. A malformed or interrupted response throws instead of
+treating a missing continuation as successful completion. The server may already
+have applied part of the operation; the client does not automatically repeat it.
 
 ---
 

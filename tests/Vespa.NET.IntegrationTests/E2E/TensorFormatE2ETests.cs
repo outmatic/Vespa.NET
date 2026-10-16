@@ -68,7 +68,15 @@ public class TensorFormatE2ETests(VespaFixture fixture)
         if (!Enabled) return;
 
         var id = NewId();
-        var mapped = new Dictionary<string, float> { ["a"] = 1.5f, ["b"] = -3.75f };
+        var mapped = new Dictionary<string, float>
+        {
+            ["a"] = 1.5f,
+            ["b"] = -3.75f,
+            ["type"] = 2,
+            ["values"] = 3,
+            ["cells"] = 4,
+            ["blocks"] = 5
+        };
         try
         {
             await fixture.Client.Documents.PutAsync(id, new TestProduct
@@ -84,9 +92,9 @@ public class TensorFormatE2ETests(VespaFixture fixture)
 
             var parsed = doc?.Fields?.Weights?.GetMappedValues<float>();
             Assert.NotNull(parsed);
-            Assert.Equal(2, parsed.Count);
-            Assert.Equal(1.5f, parsed["a"], FloatTolerance);
-            Assert.Equal(-3.75f, parsed["b"], FloatTolerance);
+            Assert.Equal(mapped.Count, parsed.Count);
+            foreach (var (label, value) in mapped)
+                Assert.Equal(value, parsed[label], FloatTolerance);
         }
         finally
         {
@@ -96,8 +104,10 @@ public class TensorFormatE2ETests(VespaFixture fixture)
 
     // ── Search: hex and hex-value ────────────────────────────────────────────
 
-    [Fact]
-    public async Task Search_HexTensorFormat_DenseFloat_RoundTrips()
+    [Theory]
+    [InlineData("hex")]
+    [InlineData("hex-value")]
+    public async Task Search_HexTensorFormat_DenseFloat_RoundTrips(string format)
     {
         if (!Enabled) return;
 
@@ -114,13 +124,13 @@ public class TensorFormatE2ETests(VespaFixture fixture)
             });
             await Task.Delay(2000);
 
-            // hex renders {"type":…,"cells":"<hex>"} — type-aware float decoding
+            // hex has a type wrapper; hex-value uses [VespaTensor] for the cell width.
             var request = new VespaSearchRequest
             {
                 Yql = YqlBuilder<TestProduct>.Select()
                     .Where(w => w.Field(p => p.Category).Contains(category))
                     .Build(),
-                PresentationFormatTensors = "hex"
+                PresentationFormatTensors = format
             };
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
@@ -147,8 +157,7 @@ public class TensorFormatE2ETests(VespaFixture fixture)
             {
                 Name = "hex-value dense",
                 Category = category,
-                // hex-value renders a bare hex string without a type — the converter
-                // decodes 16 hex digits per cell, so use the double tensor field.
+                // The schema attribute supplies the omitted double cell type.
                 DenseDouble = VespaTensor.FromDenseValues(values)
             });
             await Task.Delay(2000);
