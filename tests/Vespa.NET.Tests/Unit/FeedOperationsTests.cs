@@ -963,21 +963,28 @@ public class FeedOperationsTests
     [Fact]
     public async Task FeedAsync_MultipleRealFaults_AggregatesInsideVespaFeedException()
     {
-        SetupPutSuccess();
+        var started = 0;
+        var bothStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        SetupPut(async () =>
+        {
+            if (Interlocked.Increment(ref started) == 2)
+                bothStarted.TrySetResult();
+            await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            return new VespaResponse { IsSuccess = true, StatusCode = 200 };
+        });
 
-        // Two consumers each fault with a real exception at the same time
-        using var barrier = new Barrier(2);
+        // Both operations must be in flight before either callback faults. A
+        // synchronous barrier can block creation of the second consumer.
         var ex = await Assert.ThrowsAsync<VespaFeedException>(() =>
             _feedOps.FeedAsync(GenerateDocuments(2), "testdoc", maxConcurrency: 2,
-                onProgress: p =>
-                {
-                    barrier.SignalAndWait(TimeSpan.FromSeconds(5));
-                    throw new InvalidOperationException($"boom {p.LastDocumentId}");
-                }));
+                onProgress: p => throw new InvalidOperationException($"boom {p.LastDocumentId}")));
 
         var aggregate = Assert.IsType<AggregateException>(ex.InnerException);
         Assert.Equal(2, aggregate.InnerExceptions.Count);
         Assert.All(aggregate.InnerExceptions, e => Assert.IsType<InvalidOperationException>(e));
+        Assert.Equal(["boom doc-0", "boom doc-1"], aggregate.InnerExceptions.Select(error => error.Message).Order());
+        Assert.Equal(2, ex.PartialResult.SuccessCount);
+        Assert.Equal(0, ex.PartialResult.FailureCount);
     }
 
     [Fact]

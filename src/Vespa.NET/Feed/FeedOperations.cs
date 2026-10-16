@@ -14,8 +14,6 @@ public sealed partial class FeedOperations(
     VespaClientOptions options,
     ILogger? logger = null) : IFeedOperations
 {
-    private static readonly TimeSpan MaxRetryBackoff = TimeSpan.FromSeconds(30);
-
     private readonly IDocumentOperations _documentOperations =
         documentOperations ?? throw new ArgumentNullException(nameof(documentOperations));
     private readonly VespaClientOptions _options =
@@ -204,33 +202,6 @@ public sealed partial class FeedOperations(
             }
         }
 
-        // Per-document retry for Vespa's transient backpressure signals (429/503).
-        // The DI-registered HTTP handler may already retry transient responses; when both
-        // are active the handler retries first, and this loop re-sends the operation only
-        // after the handler has given up.
-        async Task<VespaResponse> ExecuteWithRetryAsync(FeedDocument<T> doc)
-        {
-            for (var attempt = 0; ; attempt++)
-            {
-                try
-                {
-                    return await operation(doc, pipelineToken);
-                }
-                catch (VespaException ex) when (
-                    _options.EnableRetry &&
-                    attempt < _options.MaxRetryAttempts &&
-                    IsRetryableFeedError(ex))
-                {
-                    var delay = ComputeRetryDelay(
-                        _options.FeedRetryBaseDelay, attempt,
-                        (ex as VespaTooManyRequestsException)?.RetryAfter);
-                    if (_logger != null)
-                        LogDocumentFeedRetry(_logger, doc.Id, attempt + 1, delay.TotalMilliseconds, ex);
-                    await Task.Delay(delay, pipelineToken);
-                }
-            }
-        }
-
         // Consumer: reads from channel and executes operation
         async Task ConsumeAsync()
         {
@@ -240,7 +211,7 @@ public sealed partial class FeedOperations(
                 {
                     try
                     {
-                        var response = await ExecuteWithRetryAsync(doc);
+                        var response = await ExecuteWithRetryAsync(doc, doc.Id, operation, pipelineToken);
                         if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger != null)
                             LogIgnoredFields(_logger, doc.Id);
                         accumulator.IncrementSuccess();
@@ -279,50 +250,7 @@ public sealed partial class FeedOperations(
         var allTasks = new List<Task>(maxConcurrency + 1) { producerTask };
         allTasks.AddRange(Enumerable.Range(0, maxConcurrency).Select(_ => ConsumeAsync()));
 
-        try
-        {
-            // Await everything together: a producer failure must not abandon
-            // consumers with HTTP operations still in flight (and vice versa).
-            await Task.WhenAll(allTasks);
-        }
-        catch (Exception whenAllException)
-        {
-            stopwatch.Stop();
-
-            // Caller cancellation always surfaces as OperationCanceledException.
-            if (cancellationToken.IsCancellationRequested)
-            {
-                if (whenAllException is OperationCanceledException)
-                    throw;
-                throw new OperationCanceledException(
-                    "The feed pipeline was canceled.", whenAllException, cancellationToken);
-            }
-
-            // WhenAll surfaces only the first task's exception; after a consumer fault the
-            // producer typically fails with the linked cancellation — prefer the real causes
-            // and aggregate when several tasks faulted independently.
-            var realFaults = allTasks
-                .Where(t => t.IsFaulted)
-                .SelectMany(t => t.Exception!.InnerExceptions)
-                .Where(e => e is not OperationCanceledException)
-                .ToList();
-
-            Exception cause = realFaults switch
-            {
-                [] => whenAllException,
-                [var single] => single,
-                _ => new AggregateException(realFaults)
-            };
-
-            var partialResult = accumulator.ToResult(stopwatch.Elapsed);
-            throw new VespaFeedException(
-                $"Feed pipeline faulted after {partialResult.SuccessCount} succeeded and " +
-                $"{partialResult.FailureCount} failed (see PartialResult): {cause.Message}",
-                partialResult, cause);
-        }
-
-        stopwatch.Stop();
-        var result = accumulator.ToResult(stopwatch.Elapsed);
+        var result = await CompletePipelineAsync(allTasks, accumulator, stopwatch, cancellationToken);
         activity?.SetTag(VespaActivitySource.TagFeedCount, result.TotalDocuments);
         activity?.SetTag(VespaActivitySource.TagFeedSuccess, result.SuccessCount);
 
@@ -330,24 +258,6 @@ public sealed partial class FeedOperations(
             LogPipelineComplete(_logger, result.SuccessCount, result.TotalDocuments, stopwatch.ElapsedMilliseconds);
 
         return result;
-    }
-
-    /// <summary>429 (always transient backpressure) and 503 (overload/unavailable) are retryable.</summary>
-    private static bool IsRetryableFeedError(VespaException ex) =>
-        ex is VespaTooManyRequestsException or VespaServerException { StatusCode: 503 };
-
-    /// <summary>
-    /// Server-suggested <c>Retry-After</c> wins; otherwise exponential backoff
-    /// (base × 2^attempt, capped) with ±20% jitter.
-    /// </summary>
-    private static TimeSpan ComputeRetryDelay(TimeSpan baseDelay, int attempt, TimeSpan? retryAfter)
-    {
-        if (retryAfter is { } serverDelay && serverDelay > TimeSpan.Zero)
-            return serverDelay;
-
-        var exponential = baseDelay * Math.Pow(2, Math.Min(attempt, 10));
-        var capped = exponential > MaxRetryBackoff ? MaxRetryBackoff : exponential;
-        return capped * (0.8 + Random.Shared.NextDouble() * 0.4);
     }
 
     [LoggerMessage(203, LogLevel.Debug, "Fed document {DocumentId} [{DocType}]")]

@@ -49,6 +49,7 @@ public sealed partial class FeedOperations
         var accumulator = new FeedResultAccumulator(_options.FeedMaxRetainedErrors);
         var processedCount = 0;
         var stopwatch = Stopwatch.StartNew();
+        Func<FeedOperation, CancellationToken, Task<VespaResponse>> executeOperation = ExecuteMixedOperationAsync;
 
         // Only one ready/active worker owns a document queue. Slots count pending
         // operations globally, including those queued behind an active document.
@@ -90,27 +91,6 @@ public sealed partial class FeedOperations
             }
         }
 
-        async Task<VespaResponse> ExecuteWithRetryAsync(FeedOperation operation)
-        {
-            for (var attempt = 0; ; attempt++)
-            {
-                pipelineToken.ThrowIfCancellationRequested();
-                try
-                {
-                    return await operation.ExecuteAsync(_documentOperations, _options.DefaultNamespace, pipelineToken);
-                }
-                catch (VespaException ex) when (
-                    _options.EnableRetry && attempt < _options.MaxRetryAttempts && IsRetryableFeedError(ex))
-                {
-                    var delay = ComputeRetryDelay(_options.FeedRetryBaseDelay, attempt,
-                        (ex as VespaTooManyRequestsException)?.RetryAfter);
-                    if (_logger is not null)
-                        LogDocumentFeedRetry(_logger, operation.Id, attempt + 1, delay.TotalMilliseconds, ex);
-                    await Task.Delay(delay, pipelineToken);
-                }
-            }
-        }
-
         async Task ConsumeAsync()
         {
             try
@@ -125,7 +105,7 @@ public sealed partial class FeedOperations
                     var ns = operation.Namespace ?? _options.DefaultNamespace;
                     try
                     {
-                        var response = await ExecuteWithRetryAsync(operation);
+                        var response = await ExecuteWithRetryAsync(operation, operation.Id, executeOperation, pipelineToken);
                         if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger is not null)
                             LogIgnoredFields(_logger, operation.Id);
                         accumulator.IncrementSuccess();
@@ -185,42 +165,18 @@ public sealed partial class FeedOperations
         for (var i = 0; i < options.MaxConcurrency; i++)
             tasks.Add(ConsumeAsync());
 
-        try
-        {
-            await Task.WhenAll(tasks);
-        }
-        catch (Exception exception)
-        {
-            stopwatch.Stop();
-            if (cancellationToken.IsCancellationRequested)
-            {
-                if (exception is OperationCanceledException)
-                    throw;
-                throw new OperationCanceledException("The feed pipeline was canceled.", exception, cancellationToken);
-            }
-
-            var faults = tasks.Where(task => task.IsFaulted)
-                .SelectMany(task => task.Exception!.InnerExceptions)
-                .Where(error => error is not OperationCanceledException).ToList();
-            var cause = faults switch
-            {
-                [] => exception,
-                [var single] => single,
-                _ => new AggregateException(faults)
-            };
-            var partialResult = accumulator.ToResult(stopwatch.Elapsed);
-            throw new VespaFeedException(
-                $"Feed pipeline faulted after {partialResult.SuccessCount} succeeded and " +
-                $"{partialResult.FailureCount} failed (see PartialResult): {cause.Message}", partialResult, cause);
-        }
-
-        stopwatch.Stop();
-        var result = accumulator.ToResult(stopwatch.Elapsed);
+        var result = await CompletePipelineAsync(tasks, accumulator, stopwatch, cancellationToken);
         activity?.SetTag(VespaActivitySource.TagFeedCount, result.TotalOperations);
         activity?.SetTag(VespaActivitySource.TagFeedSuccess, result.SuccessCount);
         if (_logger is not null)
             LogPipelineComplete(_logger, result.SuccessCount, result.TotalOperations, stopwatch.ElapsedMilliseconds);
         return result;
+    }
+
+    private Task<VespaResponse> ExecuteMixedOperationAsync(FeedOperation operation, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return operation.ExecuteAsync(_documentOperations, _options.DefaultNamespace, cancellationToken);
     }
 
     private sealed class MixedDocumentQueue(FeedOperation.DocumentKey key)
