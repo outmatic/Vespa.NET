@@ -9,8 +9,11 @@ public sealed class FeedResult
     /// <summary>Default maximum number of <see cref="FeedError"/> entries retained in <see cref="Errors"/>.</summary>
     public const int DefaultMaxRetainedErrors = 1000;
 
-    /// <summary>Total number of documents read from the source.</summary>
+    /// <summary>Total feed entries accepted from the source, counting each mutation separately.</summary>
     public int TotalDocuments { get; init; }
+
+    /// <summary>Total operations accepted from the source (alias of <see cref="TotalDocuments"/>).</summary>
+    public int TotalOperations => TotalDocuments;
 
     /// <summary>Number of documents fed successfully.</summary>
     public int SuccessCount { get; init; }
@@ -55,4 +58,16 @@ public sealed record FeedError
     public string DocumentId { get; init; } = string.Empty;
     public string Message { get; init; } = string.Empty;
     public int? StatusCode { get; init; }
+
+    /// <summary>Mutation kind for a mixed-feed error; null for legacy bulk APIs.</summary>
+    public FeedOperationKind? OperationKind { get; init; }
+
+    /// <summary>Target schema for a mixed-feed error.</summary>
+    public string? DocumentType { get; init; }
+
+    /// <summary>Resolved target namespace for a mixed-feed error.</summary>
+    public string? Namespace { get; init; }
+
+    /// <summary>Zero-based position in the mixed-feed source, independent of completion order.</summary>
+    public int? OperationIndex { get; init; }
 }

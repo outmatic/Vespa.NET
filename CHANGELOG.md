@@ -6,6 +6,14 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Mixed `FeedAsync` overloads for synchronous and asynchronous sources of
+  `FeedOperation.Put`, `Update` and `Delete`, with model-aware or explicit targets,
+  conditions, upserts and per-operation request options.
+- `FeedOptions` for concurrency, bounded capacity and progress. Mixed feeds preserve
+  source order per document across retries, including equivalent full/bare IDs,
+  while processing independent documents concurrently.
+- `FeedResult.TotalOperations` and mixed-feed identity metadata on `FeedError`
+  and `FeedProgress`, including a zero-based source operation index.
 - Model-aware document overloads accepting `DocumentRequestOptions`, including
   field-update builders, group/number reads and updates, and `GetManyAsync`.
   Existing method signatures and positional cancellation-token calls are retained.

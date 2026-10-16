@@ -4,6 +4,96 @@ Vespa.NET provides high-throughput feed helpers built on Vespa's `/document/v1` 
 
 ---
 
+## Mixed Operations
+
+Feed puts, field updates and deletes through one call, including operations for
+different schemas and namespaces. Both `IEnumerable<FeedOperation>` and
+`IAsyncEnumerable<FeedOperation>` are accepted:
+
+```csharp
+using Vespa.Feed;
+using Vespa.Models;
+
+var requestOptions = new DocumentRequestOptions { Timeout = TimeSpan.FromSeconds(10) };
+FeedOperation[] operations =
+[
+    FeedOperation.Put("p-1", product, requestOptions: requestOptions),
+    FeedOperation.Update<Product>("p-1", update => update
+        .Field(p => p.Price, FieldOp.Assign(49.99m)),
+        condition: "product.price > 0", requestOptions: requestOptions),
+    FeedOperation.Delete<Product>("p-2", requestOptions: requestOptions)
+];
+
+var result = await client.Feed.FeedAsync(
+    operations,
+    new FeedOptions
+    {
+        MaxConcurrency = 32,
+        BoundedCapacity = 128,
+        OnProgress = progress => Console.WriteLine(
+            $"{progress.ProcessedCount}: {progress.LastOperationKind} {progress.LastDocumentType}/{progress.LastDocumentId}")
+    },
+    cancellationToken);
+
+Console.WriteLine($"{result.SuccessCount}/{result.TotalOperations} operations succeeded");
+```
+
+Factories infer schema and namespace from `[VespaDocument]`. Use `@namespace` to
+override the model's namespace. Supplying `documentType` bypasses attribute
+inference and supports models without attributes; an omitted namespace then uses
+`VespaClientOptions.DefaultNamespace`:
+
+```csharp
+FeedOperation.Put("p-3", new { product_name = "Camera", price = 100.0 },
+    documentType: "product", @namespace: "archive");
+
+FeedOperation.Update("p-3",
+    new Dictionary<string, FieldOperation> { ["price"] = FieldOp.Assign(90.0) },
+    documentType: "product", @namespace: "archive", createIfMissing: true);
+
+FeedOperation.Delete("p-3", documentType: "product", @namespace: "archive");
+```
+
+`Put` supports `condition` and `create` (conditional put with create).
+`Update` supports `condition` and `createIfMissing`, with either a typed builder or
+a dictionary of Vespa field operations. `Delete` supports `condition`. Each factory
+accepts `DocumentRequestOptions`, including routing, dry-run, timeout and tracing.
+Keep payload objects unchanged until the feed completes; update dictionaries are
+shallow-copied when the operation is constructed.
+
+### Ordering and Backpressure
+
+- Within one mixed-feed call, mutations of the same document execute in source
+  order, including retries. A failed operation is recorded and the next operation
+  for that document is still attempted.
+- Identity includes namespace, schema, group/number location and user ID. Full and
+  bare IDs addressing the same document share an ordered queue. Full IDs must agree
+  with the operation's target schema and namespace, as with regular document CRUD.
+- Different documents can execute concurrently. There is no global completion
+  order or coordination between separate feed calls or clients.
+- `MaxConcurrency` (default 64) limits in-flight operations. `BoundedCapacity`
+  (default 256) limits queued operations across all documents, including operations
+  waiting behind a busy document. The source can have one additional prefetched entry.
+
+Retries follow the same rules described below. Ordering does not provide
+exactly-once execution: replaying non-idempotent updates such as increments can
+apply them more than once. Use test-and-set conditions when needed; see
+[Vespa reads and writes](https://docs.vespa.ai/en/writing/reads-and-writes.html).
+
+For mixed feeds, `FeedError` includes `OperationKind`, `DocumentType`, the resolved
+`Namespace`, and a zero-based `OperationIndex` in the source. These distinguish
+mutations with the same local ID. `FeedProgress` provides the corresponding
+`LastOperationKind`, `LastDocumentType`, `LastNamespace`, and `OperationIndex`.
+The additional metadata is null for the existing bulk and generic feed APIs.
+
+`FeedResult.TotalOperations` counts each mutation, even when several target the
+same document. `TotalDocuments` remains available with the same value. Individual
+errors, partial results on source/callback failure, cancellation and retained-error
+limits follow the rules below. A null entry faults the source; accepted operations
+are drained before the resulting `VespaFeedException` is returned.
+
+---
+
 ## BulkPut / BulkUpdate / BulkDelete
 
 ```csharp
@@ -92,13 +182,14 @@ When `VespaClientOptions.EnableRetry` is set (the default), the feed pipeline re
 
 | Property | Description |
 |---|---|
-| `TotalDocuments` | Total documents processed |
+| `TotalDocuments` | Total feed entries accepted from the source |
+| `TotalOperations` | Alias of `TotalDocuments`; mixed-feed mutations are counted separately |
 | `SuccessCount` | Successful operations |
 | `FailureCount` | Failed operations (always exact) |
 | `IsSuccess` | `true` if no failures |
 | `SuccessRate` | `SuccessCount / TotalDocuments` |
 | `Duration` | Total elapsed time |
-| `Errors` | `IReadOnlyCollection<FeedError>` with per-document error details, capped at `VespaClientOptions.FeedMaxRetainedErrors` (default 1000, first errors win) |
+| `Errors` | `IReadOnlyList<FeedError>` with per-operation error details, capped at `VespaClientOptions.FeedMaxRetainedErrors` (default 1000, first errors win) |
 | `ErrorsTruncated` | `true` when more errors occurred than `Errors` retains — counts stay exact either way |
 | `HadIgnoredFields` | `true` when any response signalled ignored fields (`X-Vespa-Ignored-Fields`), typically a document/schema mismatch |
 

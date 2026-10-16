@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Vespa.Documents;
@@ -379,23 +378,4 @@ public sealed partial class FeedOperations(
     [LoggerMessage(217, LogLevel.Warning,
         "Vespa ignored unknown fields during this feed (first seen on document {DocumentId}) — check for a document/schema mismatch")]
     static partial void LogIgnoredFields(ILogger logger, string documentId);
-}
-
-/// <summary>
-/// Extension to bridge <see cref="IEnumerable{T}"/> to <see cref="IAsyncEnumerable{T}"/>.
-/// </summary>
-file static class EnumerableExtensions
-{
-#pragma warning disable CS1998 // Async method lacks 'await' operators
-    public static async IAsyncEnumerable<T> ToAsyncEnumerable<T>(
-        this IEnumerable<T> source,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-#pragma warning restore CS1998
-    {
-        foreach (var item in source)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return item;
-        }
-    }
 }

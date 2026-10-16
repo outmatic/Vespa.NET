@@ -26,6 +26,28 @@ namespace Vespa.Feed;
 public interface IFeedOperations
 {
     /// <summary>
+    /// Feed puts, field updates and deletes, possibly targeting different schemas
+    /// and namespaces. Source order is preserved per document within this call,
+    /// including retries. Different documents may execute concurrently.
+    /// </summary>
+    Task<FeedResult> FeedAsync(
+        IEnumerable<FeedOperation> operations,
+        FeedOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This feed implementation does not support mixed operations.");
+
+    /// <summary>
+    /// Stream mixed document mutations through a bounded pipeline. Each document
+    /// is processed in source order, including retries, within this call. Accepted
+    /// operations are drained if the source fails; caller cancellation stops work.
+    /// </summary>
+    Task<FeedResult> FeedAsync(
+        IAsyncEnumerable<FeedOperation> operations,
+        FeedOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This feed implementation does not support mixed operations.");
+
+    /// <summary>
     /// Bulk insert/update multiple documents
     /// </summary>
     Task<FeedResult> BulkPutAsync<T>(
@@ -144,4 +166,17 @@ public sealed record BulkFieldUpdate
 /// <paramref name="ProcessedCount"/> order; within a snapshot,
 /// <c>SuccessCount + FailureCount &gt;= ProcessedCount</c> always holds.
 /// </remarks>
-public sealed record FeedProgress(int ProcessedCount, int SuccessCount, int FailureCount, string LastDocumentId);
+public sealed record FeedProgress(int ProcessedCount, int SuccessCount, int FailureCount, string LastDocumentId)
+{
+    /// <summary>Mutation kind for mixed feeds.</summary>
+    public FeedOperationKind? LastOperationKind { get; init; }
+
+    /// <summary>Target schema for mixed feeds.</summary>
+    public string? LastDocumentType { get; init; }
+
+    /// <summary>Resolved target namespace for mixed feeds.</summary>
+    public string? LastNamespace { get; init; }
+
+    /// <summary>Zero-based position in the mixed-feed source.</summary>
+    public int? OperationIndex { get; init; }
+}

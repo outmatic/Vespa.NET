@@ -42,7 +42,7 @@ var results = await client.Search.NearestNeighborSearchAsync<Product>(embedding,
 | **Documents** | CRUD, conditional writes, field-level ops, resumable visit pages, group/number addressing (read+write), selection-based update/delete/copy with continuation auto-loop + crash-safe manual paging |
 | **Search** | Full-text, nearest-neighbor, hybrid, streaming, auto-paginated `IAsyncEnumerable` |
 | **YQL** | Fluent type-safe builder with boolean composition, grouping, ranking DSL |
-| **Feed** | Parallel `/document/v1` pipeline with `Channel<T>` backpressure, progress callbacks |
+| **Feed** | Mixed puts/updates/deletes across schemas and namespaces, per-document ordering, bounded backpressure, progress callbacks |
 | **Multi-tenant** | [`[VespaExtraFields]`](https://github.com/outmatic/Vespa.NET/blob/main/docs/schema.md#dynamic-fields-with-vespaextrafields) catch-all for dynamic fields, configurable tenant |
 | **Cloud** | mTLS (PEM, PFX, in-memory cert), Bearer token auth |
 | **Ops** | OpenTelemetry traces + metrics, ASP.NET Core health checks, Testcontainers |
@@ -215,7 +215,16 @@ var result = await client.Search.GroupByAsync<Product>(request);
 ## Bulk Feed
 
 ```csharp
-// Streaming pipeline with backpressure
+// Mixed operations with per-document ordering
+FeedOperation[] operations =
+[
+    FeedOperation.Put("p-1", product),
+    FeedOperation.Update<Product>("p-1", update => update.Field(p => p.Price, FieldOp.Assign(49.99m))),
+    FeedOperation.Delete<Product>("p-2")
+];
+var mixed = await client.Feed.FeedAsync(operations, new FeedOptions { MaxConcurrency = 32 });
+
+// Streaming puts with backpressure
 var result = await client.Feed.FeedAsync(
     ReadFromDatabase(),             // IAsyncEnumerable<FeedDocument<Product>>
     documentType: "product",
@@ -224,7 +233,7 @@ var result = await client.Feed.FeedAsync(
     onProgress: p => Console.Write($"\r{p.SuccessCount} docs..."));
 ```
 
-> Per-document conditions, BulkPut/Update/Delete, and FeedResult details in **[docs/feed.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/feed.md)**
+> Mixed operations, ordering, per-document conditions, BulkPut/Update/Delete, and FeedResult details in **[docs/feed.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/feed.md)**
 
 ---
 
