@@ -28,6 +28,12 @@ All notable changes to this project are documented in this file.
   persisted continuation checkpoints. `VespaVisitResponse<T>.IsComplete`
   distinguishes completion from an empty page with further work.
 
+### Fixed
+
+- Updated SourceLink build tooling and Testcontainers to resolve NuGet vulnerability
+  warnings from `Microsoft.Build.Tasks.Git` and `SSH.NET`, allowing standard builds
+  with NuGet auditing enabled.
+
 ## [3.0.1] - 2026-07-17
 
 ### Fixed
