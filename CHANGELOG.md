@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-17
+
 ### Added
 
 - `GroupingSearchResponse<T>.AsTyped()` with typed summaries and nested groups
@@ -30,6 +32,18 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- JSONL visits retain full document IDs, log informational/warning messages and
+  reject truncated streams or incomplete continuation markers.
+- Selection operations surface malformed, truncated or server-error responses
+  instead of silently returning a zero document count.
+- Tensor deserialization uses `[VespaTensor]` metadata or an explicitly configured
+  converter type to decode value-only formats and mapped labels named `type`,
+  `values`, `cells` or `blocks`. Hex values without a known tensor type now throw
+  `JsonException` instead of guessing a cell width.
+- Grouping responses retain root-level outputs and summaries, rest buckets,
+  coverage, backend errors and query trace.
+- Search HTTP failures preserve the primary `root.errors` entry in
+  `VespaException.Error`.
 - Updated SourceLink build tooling and Testcontainers to resolve NuGet vulnerability
   warnings from `Microsoft.Build.Tasks.Git` and `SSH.NET`, allowing standard builds
   with NuGet auditing enabled.
