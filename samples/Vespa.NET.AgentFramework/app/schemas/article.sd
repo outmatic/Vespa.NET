@@ -1,0 +1,32 @@
+schema article {
+    document article {
+        field title type string {
+            indexing: summary | index
+        }
+        field category type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field priority type int {
+            indexing: attribute | summary
+        }
+        field published type bool {
+            indexing: attribute | summary
+        }
+        field embedding type tensor<float>(x[768]) {
+            indexing: attribute | index | summary
+            attribute {
+                distance-metric: angular
+            }
+        }
+    }
+    rank-profile vector_search {
+        inputs {
+            query(query_embedding) tensor<float>(x[768])
+        }
+        first-phase {
+            expression: closeness(field, embedding)
+        }
+        match-features: distance(field, embedding)
+    }
+}

@@ -494,6 +494,11 @@ set `VESPA_INTEGRATION_TESTS=1`; this flag is not required by the helper itself.
 
 ## Documentation
 
+The experimental [VectorData connector](src/Vespa.NET.VectorData/README.md) is a
+separate optional package for typed vector-store access and Microsoft Agent
+Framework retrieval tools. Its guide includes a complete quickstart and the
+current schema requirements and limitations.
+
 | Guide | Content |
 |---|---|
 | **[Schema & Attributes](https://github.com/outmatic/Vespa.NET/blob/main/docs/schema.md)** | Code-first generation, `[VespaExtraFields]`, `ApplicationPackageOptions` |
