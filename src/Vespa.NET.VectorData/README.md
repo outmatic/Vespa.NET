@@ -49,7 +49,7 @@ For this quickstart, use the checked-in
 [application package](https://github.com/outmatic/Vespa.NET/tree/main/samples/Vespa.NET.AgentFramework/app)
 with its `article` schema and 768-dimensional vector. Use a dedicated development
 instance: deploying an application replaces that instance's application configuration.
-Install Docker and the Vespa CLI using the
+Install Docker using the
 [official local deployment guide](https://docs.vespa.ai/en/basics/deploy-an-application-local.html).
 With ports 8080 and 19071 available, run from the repository root:
 
@@ -57,6 +57,12 @@ With ports 8080 and 19071 available, run from the repository root:
 docker run --detach --name vespa-vector-data --hostname vespa-container \
   --publish 127.0.0.1:8080:8080 --publish 127.0.0.1:19071:19071 \
   vespaengine/vespa:8
+```
+
+The Agent Framework sample can deploy this application itself with `--deploy`;
+see below. For the standalone C# quickstart, install the Vespa CLI and run:
+
+```sh
 vespa deploy samples/Vespa.NET.AgentFramework/app -t local --wait 300
 ```
 
@@ -273,19 +279,28 @@ hybrid search, custom ranking, bulk feed, document visiting, and deployment.
 
 The runnable
 [Agent Framework sample](https://github.com/outmatic/Vespa.NET/tree/main/samples/Vespa.NET.AgentFramework)
-uses OllamaSharp, `nomic-embed-text`, and a tool-capable chat model. Start Ollama,
-deploy the application above, then run from the repository root:
+uses OllamaSharp, `nomic-embed-text`, and a tool-capable chat model. Start Ollama
+and the dedicated Docker instance above, then run from the repository root:
 
 ```sh
 ollama pull nomic-embed-text
 ollama pull qwen3:4b
-dotnet run --project samples/Vespa.NET.AgentFramework -- --seed "How does vector search work?"
+dotnet run --project samples/Vespa.NET.AgentFramework -- --deploy --seed "How does vector search work?"
 ```
+
+`--deploy` waits for the config server, uploads the included application package
+with the client's Admin API, and waits for Vespa readiness before seeding or
+querying. It replaces the active application on that instance; use a dedicated
+development instance. `--deploy-only` deploys and exits without connecting to
+Ollama. The application files are included in build and publish output, so the
+published executable can deploy from any working directory.
 
 `--seed` explicitly generates embeddings, writes three sample documents in the
 `agent-framework` category, and waits until their IDs are searchable.
-Omit it on subsequent runs. Configure `VESPA_ENDPOINT`, `OLLAMA_ENDPOINT`, and
-`OLLAMA_MODEL` to change the defaults (`http://localhost:8080`,
+Omit `--deploy` and `--seed` on subsequent query-only runs. Set
+`VESPA_CONFIG_ENDPOINT` when the config server uses a different address; by default
+it uses the query endpoint's host with port `19071`. Configure `VESPA_ENDPOINT`,
+`OLLAMA_ENDPOINT`, and `OLLAMA_MODEL` to change the other defaults (`http://localhost:8080`,
 `http://localhost:11434`, and `qwen3:4b`).
 
 The sample constructs an `OllamaApiClient`, uses it as
@@ -326,7 +341,9 @@ The default suite tests HTTP request bodies, mapping, filters, scores, errors,
 cancellation, ownership, and a real Agent Framework tool loop with deterministic
 chat/embedding test doubles. It does not download or run models.
 
-The opt-in Docker test creates its own Vespa container, deploys a three-dimensional
-test schema, and exercises the connector and retrieval tool against it. It is
-reported skipped unless enabled and never deploys to an existing instance.
+The opt-in Docker tests create their own Vespa containers. One exercises the
+connector and retrieval tool against a three-dimensional schema; the other runs
+the published sample with `--deploy-only`, then executes the complete C# quickstart
+against its application. They are reported skipped unless enabled and never deploy
+to an existing instance.
 Set `VESPA_VECTOR_DATA_IMAGE` to select the test image.

@@ -52,11 +52,18 @@ until enabled. Each creates and disposes a dedicated Vespa container; they never
 deploy to another running application. Set `VESPA_VECTOR_DATA_IMAGE` to pin an image.
 
 One Docker test checks CRUD, search, score conversion, filtering and Agent Framework.
-The other extracts the README's complete C# example, builds it in a temporary
-consumer project, executes it against the actual 768-dimensional sample schema,
-and verifies document cleanup. Running this test requires the .NET 10 SDK as well
+The other publishes the Agent Framework sample, runs its `--deploy-only` command,
+then extracts the README's complete C# example, builds it in a temporary consumer
+project, executes it against the deployed 768-dimensional schema, and verifies
+document cleanup. Running this test requires the .NET 10 SDK as well
 as Docker. The test application's relaxed disk threshold is not applied to the
 sample application distributed to users.
+
+The [Agent Framework sample](../samples/Vespa.NET.AgentFramework/README.md) supports
+`--deploy --seed` for its first run and `--deploy-only` to prepare a dedicated
+development instance without Ollama. Deployment uses the client's existing Admin
+API with the checked-in application package; collection lifecycle remains outside
+the VectorData provider.
 
 ## Prepare a NuGet package
 

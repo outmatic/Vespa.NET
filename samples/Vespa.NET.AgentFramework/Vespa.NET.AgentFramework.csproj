@@ -10,5 +10,6 @@
     <PackageReference Include="Microsoft.Agents.AI" />
     <PackageReference Include="OllamaSharp" />
     <ProjectReference Include="../../src/Vespa.NET.VectorData/Vespa.NET.VectorData.csproj" />
+    <None Update="app/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

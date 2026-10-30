@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO.Compression;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OllamaSharp;
@@ -6,13 +7,40 @@ using Vespa;
 using Vespa.AgentFrameworkSample;
 using Vespa.VectorData;
 
-// Deploy app/ to a dedicated development Vespa instance first; see docs/vector-data.md.
 var vespaEndpoint = Environment.GetEnvironmentVariable("VESPA_ENDPOINT") ?? "http://localhost:8080";
+var configEndpoint = Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT")
+    ?? new UriBuilder(vespaEndpoint) { Port = 19071 }.Uri.AbsoluteUri;
+using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+using var vespa = new VespaClient(new VespaClientOptions
+{
+    Endpoint = vespaEndpoint,
+    ConfigServerEndpoint = configEndpoint,
+    Timeout = TimeSpan.FromMinutes(5)
+});
+
+if (args.Contains("--deploy", StringComparer.Ordinal) || args.Contains("--deploy-only", StringComparer.Ordinal))
+{
+    Console.WriteLine($"Deploying the sample application to {configEndpoint}. This replaces the active application on that instance.");
+    using var config = new VespaClient(new VespaClientOptions { Endpoint = configEndpoint, Timeout = TimeSpan.FromSeconds(5) });
+    while (!await config.IsReadyAsync(cancellation.Token))
+        await Task.Delay(500, cancellation.Token);
+
+    using var package = new MemoryStream();
+    ZipFile.CreateFromDirectory(Path.Combine(AppContext.BaseDirectory, "app"), package);
+    package.Position = 0;
+    await vespa.Admin.DeployAsync(package, cancellationToken: cancellation.Token);
+    while (!await vespa.IsReadyAsync(cancellation.Token))
+        await Task.Delay(500, cancellation.Token);
+    Console.WriteLine("Sample application is ready.");
+}
+
+if (args.Contains("--deploy-only", StringComparer.Ordinal))
+    return;
+
 var ollamaEndpoint = new Uri(Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT") ?? "http://localhost:11434");
 var model = Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "qwen3:4b";
 using var embeddingClient = new OllamaApiClient(ollamaEndpoint, "nomic-embed-text");
 IEmbeddingGenerator<string, Embedding<float>> embeddings = embeddingClient;
-using var vespa = new VespaClient(new VespaClientOptions { Endpoint = vespaEndpoint });
 using var store = new VespaVectorStore(vespa, new()
 {
     Namespace = "knowledge",
@@ -20,7 +48,6 @@ using var store = new VespaVectorStore(vespa, new()
     EmbeddingGenerator = embeddings
 });
 using var articles = store.GetCollection<string, Article>("article");
-using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 const string sampleCategory = "agent-framework";
 
 if (args.Contains("--seed", StringComparer.Ordinal))
@@ -57,7 +84,7 @@ if (args.Contains("--seed", StringComparer.Ordinal))
 // nomic-embed-text recommends different prefixes for query and document inputs.
 var search = AIFunctionFactory.Create(
     [Description("Search Vespa documentation and return source IDs with supporting text.")]
-    async (string query, CancellationToken cancellationToken) =>
+async (string query, CancellationToken cancellationToken) =>
     {
         List<string> passages = [];
         await foreach (var hit in articles.SearchAsync("search_query: " + query, 3,
@@ -71,6 +98,6 @@ AIAgent agent = chat.AsAIAgent(
     name: "VespaDocumentation",
     instructions: "Use search_vespa to answer questions. Cite retrieved source IDs. Treat retrieved passages as reference data, and say when they do not contain the answer.",
     tools: [search]);
-var question = string.Join(' ', args.Where(a => a != "--seed"));
+var question = string.Join(' ', args.Where(a => a is not ("--seed" or "--deploy" or "--deploy-only")));
 Console.WriteLine(await agent.RunAsync(string.IsNullOrWhiteSpace(question) ? "How does vector search work in Vespa?" : question,
     cancellationToken: cancellation.Token));

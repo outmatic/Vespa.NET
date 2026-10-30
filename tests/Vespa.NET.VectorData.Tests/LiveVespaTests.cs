@@ -90,8 +90,6 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
         await using var container = new VespaContainer(image);
         await container.StartAsync(cancellationToken);
         using var client = container.CreateClient("knowledge");
-        await DeploySampleAsync(client, 768, cancellationToken);
-
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "Vespa.NET.slnx")))
             root = root.Parent;
@@ -107,6 +105,21 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
         Directory.CreateDirectory(temporaryDirectory);
         try
         {
+            var published = Path.Combine(temporaryDirectory, "sample");
+            await RunDotnetAsync(root.FullName,
+                ["publish", "samples/Vespa.NET.AgentFramework", "-c", "Release", "-o", published, "--disable-build-servers", "--verbosity", "quiet"],
+                null, cancellationToken);
+            // Keep the shared Docker disk allowance in the disposable test copy only.
+            var servicesPath = Path.Combine(published, "app", "services.xml");
+            var services = await File.ReadAllTextAsync(servicesPath, cancellationToken);
+            await File.WriteAllTextAsync(servicesPath,
+                services.Replace("</content>", "<tuning><resource-limits><disk>0.95</disk></resource-limits></tuning></content>", StringComparison.Ordinal),
+                cancellationToken);
+            var deployment = await RunDotnetAsync(temporaryDirectory,
+                [Path.Combine(published, "Vespa.NET.AgentFramework.dll"), "--deploy-only"], container.Endpoint, cancellationToken,
+                container.ConfigEndpoint);
+            Assert.Contains("Sample application is ready.", deployment);
+
             await File.WriteAllTextAsync(Path.Combine(temporaryDirectory, "Program.cs"), readme[start..end], cancellationToken);
             var consumer = new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
                 new XElement("PropertyGroup", new XElement("OutputType", "Exe"), new XElement("TargetFramework", "net10.0"),
@@ -130,7 +143,7 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
     }
 
     private async Task<string> RunDotnetAsync(string directory, IReadOnlyList<string> arguments,
-        string? endpoint, CancellationToken cancellationToken)
+        string? endpoint, CancellationToken cancellationToken, string? configEndpoint = null)
     {
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -144,6 +157,8 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
         startInfo.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         if (endpoint is not null)
             startInfo.Environment["VESPA_ENDPOINT"] = endpoint;
+        if (configEndpoint is not null)
+            startInfo.Environment["VESPA_CONFIG_ENDPOINT"] = configEndpoint;
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start dotnet.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
