@@ -37,7 +37,7 @@ public sealed class VespaVectorStore : VectorStore
 
     public override VectorStoreCollection<object, Dictionary<string, object?>> GetDynamicCollection(
         string name, VectorStoreCollectionDefinition definition) =>
-        throw new NotSupportedException("The prototype supports typed records with string keys, not dynamic collections.");
+        throw new NotSupportedException("The provider supports typed records with string keys, not dynamic collections.");
 
     public override IAsyncEnumerable<string> ListCollectionNamesAsync(CancellationToken cancellationToken = default) =>
         throw VespaVectorValidation.SchemaLifecycle();

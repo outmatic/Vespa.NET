@@ -11,7 +11,9 @@ API and standalone `Microsoft.Extensions.VectorData.Abstractions`. The base clie
 and models acquire no connector dependencies. Agent Framework and OllamaSharp
 remain consumers in the sample, and Agent Framework is used in integration tests.
 
-The package has its own experimental version. Keeping its project and tests here
+The package starts at `1.0.0` and has its own version, independent of the base
+client's `3.1.0`. Version changes describe compatibility of the connector API;
+they do not mirror SDK or Microsoft dependency versions. Keeping its project and tests here
 allows changes to be checked against the client in one build. It can move to a
 separate repository when independent maintainers or release scheduling justify
 that overhead: replace its client project reference with a NuGet dependency and
@@ -56,5 +58,27 @@ and verifies document cleanup. Running this test requires the .NET 10 SDK as wel
 as Docker. The test application's relaxed disk threshold is not applied to the
 sample application distributed to users.
 
-The repository's existing release workflow does not publish the experimental
-connector. Packaging locally is separate from publishing it.
+## Prepare a NuGet package
+
+Version `1.0.0` is being prepared and has not been published. Pack only the
+connector; its `Vespa.NET >= 3.1.0` dependency is already available on nuget.org:
+
+```sh
+dotnet pack src/Vespa.NET.VectorData -c Release -o artifacts/packages
+python3 scripts/verify-vector-data-package.py artifacts/packages
+```
+
+The verifier checks the package metadata, both target frameworks and the embedded
+README. It then runs the existing non-Docker tests against the actual package on
+.NET 8 and .NET 10, restoring the client from nuget.org into an isolated cache.
+It requires Python 3, both .NET runtimes, the .NET 10 SDK and network access.
+
+The manual **Package VectorData** workflow (`package-vectordata.yml`) performs
+these checks and uploads only the connector's `.nupkg` as a downloadable artifact.
+It contains no NuGet publication step and is not triggered by a push or tag.
+The existing `CI` workflow still builds/tests on a push to `main`; its `v*` tags
+publish the three base SDK packages, so do not create such a tag for the connector.
+
+Publishing the connector is a separate, explicit release decision. Before that
+release, remove the unpublished notice from the package README, review the final
+artifact and configure NuGet publishing for this package independently of the SDK.

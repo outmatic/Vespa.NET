@@ -2,7 +2,7 @@ using Microsoft.Extensions.AI;
 
 namespace Vespa.VectorData;
 
-/// <summary>Configuration for the experimental provider over existing Vespa schemas.</summary>
+/// <summary>Configuration for the provider over existing Vespa schemas.</summary>
 public sealed record VespaVectorStoreOptions
 {
     /// <summary>Document namespace. Dedicate each connected schema to this namespace.</summary>

@@ -26,13 +26,13 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
         if (_key.PropertyType != typeof(string))
             throw new NotSupportedException("Exactly one caller-assigned string key is required.");
         if (vectors.Length != 1)
-            throw new NotSupportedException("The prototype supports exactly one dense vector property per collection.");
+            throw new NotSupportedException("The provider supports exactly one dense vector property per collection.");
         var vector = vectors[0];
         var vectorType = ResolveProperty(vector).PropertyType;
         if (vectorType != typeof(ReadOnlyMemory<float>) && vectorType != typeof(float[]))
             throw new NotSupportedException("Vector properties must be ReadOnlyMemory<float> or float[].");
         if (vector.DistanceFunction is not null && vector.DistanceFunction != DistanceFunction.CosineSimilarity)
-            throw new NotSupportedException("The prototype supports CosineSimilarity over a Vespa angular tensor field.");
+            throw new NotSupportedException("The provider supports CosineSimilarity over a Vespa angular tensor field.");
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(vector.Dimensions);
         Dimensions = vector.Dimensions;
         _properties = definitions.Where(p => p is not VectorStoreKeyProperty).Select(p =>

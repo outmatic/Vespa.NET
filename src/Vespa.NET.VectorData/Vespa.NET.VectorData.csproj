@@ -4,9 +4,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>Vespa.NET.VectorData</PackageId>
-    <Version>0.1.0-alpha.1</Version>
+    <Version>1.0.0</Version>
     <RootNamespace>Vespa.VectorData</RootNamespace>
-    <Description>Experimental Microsoft.Extensions.VectorData provider for existing Vespa application schemas.</Description>
+    <Description>Microsoft.Extensions.VectorData provider for existing Vespa application schemas, with typed records and cosine vector search.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
   </PropertyGroup>

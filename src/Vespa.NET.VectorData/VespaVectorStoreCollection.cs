@@ -23,7 +23,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         VectorStoreCollectionDefinition? definition)
     {
         if (typeof(TKey) != typeof(string))
-            throw new NotSupportedException("The prototype supports string keys only.");
+            throw new NotSupportedException("The provider supports string keys only.");
         VespaVectorValidation.Identifier(name, nameof(name));
         _client = client;
         Name = name;
@@ -104,7 +104,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         ArgumentNullException.ThrowIfNull(filter);
         ValidateWindow(top, options?.Skip ?? 0);
         if (options?.OrderBy is not null)
-            throw new NotSupportedException("Ordered filtered retrieval is not supported by this prototype.");
+            throw new NotSupportedException("Ordered filtered retrieval is not supported by this provider.");
         var request = Request(new VespaVectorFilter<TRecord>(_mapper).Translate(filter), top, options?.Skip ?? 0, options?.IncludeVectors == true);
         foreach (var hit in await QueryAsync(request, nameof(GetAsync), cancellationToken))
         {

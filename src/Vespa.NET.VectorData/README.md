@@ -5,7 +5,7 @@ Use an existing Vespa application through the standalone
 them by key, and search their vectors with application-defined filters. The same
 collection can supply retrieval tools to Microsoft Agent Framework.
 
-**Experimental `0.1.0-alpha.1`; not published to NuGet.** This is an optional,
+**Version `1.0.0` is being prepared; not yet published to NuGet.** This is an optional,
 separate package for .NET 8 and .NET 10 with a restricted VectorData implementation.
 It depends on `Vespa.NET` and `Microsoft.Extensions.VectorData.Abstractions`.
 It does not depend on Semantic Kernel, Agent Framework, or an embedding provider.
@@ -23,20 +23,18 @@ dotnet add ../VespaVectorQuickstart reference src/Vespa.NET.VectorData/Vespa.NET
 
 The connector also targets `net8.0`; the Agent Framework sample below requires
 .NET 10. The project reference is the simplest way to try the unpublished code.
-To produce local NuGet packages instead, pack the connector and its two local
-dependencies into the same directory:
+To produce a local NuGet package instead, pack only the connector:
 
 ```sh
-dotnet pack src/Vespa.NET.Models -c Release -o artifacts/packages
-dotnet pack src/Vespa.NET -c Release -o artifacts/packages
 dotnet pack src/Vespa.NET.VectorData -c Release -o artifacts/packages
 ```
 
 In a separate consumer project, add the absolute path to `artifacts/packages` as
 a NuGet source alongside nuget.org, then install `Vespa.NET.VectorData` with
-`--version 0.1.0-alpha.1`. The local feed must contain all three packages; Microsoft
-and other dependencies are restored from nuget.org. These commands build packages
-locally and do not publish them.
+`--version 1.0.0`. The client dependency (`Vespa.NET >= 3.1.0`) and other
+dependencies are restored from nuget.org. These commands build the package
+locally and do not publish it. The connector has its own version; it does not
+follow the base client's version number.
 
 ## Deploy the schema first
 
@@ -265,7 +263,7 @@ all collections that use them and dispose them yourself; disposing a collection
 or store does not dispose either dependency. Configure endpoints, authentication,
 HTTP resilience, and telemetry through the base client.
 
-This alpha implements only part of the VectorData surface. Schema lifecycle,
+This provider implements only part of the VectorData surface. Schema lifecycle,
 schema discovery/existence, other key or vector types, other distance metrics,
 multiple vectors, deep export, and hybrid search interfaces are unsupported.
 Use the [base Vespa.NET client](https://github.com/outmatic/Vespa.NET) for native
