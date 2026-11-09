@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Repeated `AddVespaClient` calls now replace the previous configuration instead
+  of throwing for an unnamed client or combining named configurations. The last
+  call supplies the options, HTTP callback and resilience strategy without
+  stacking handlers or retry policies. Switching to or from
+  `AddVespaClientWithResilienceStrategy` also replaces the unnamed configuration.
+
 ## [3.1.0] - 2026-10-17
 
 ### Added

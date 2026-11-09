@@ -1,8 +1,13 @@
+using System.Net;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Http;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
+using Polly;
 using Vespa;
+using Vespa.Tests.Helpers;
 using Xunit;
 
 namespace Vespa.Tests.Unit;
@@ -322,48 +327,139 @@ public class VespaServiceCollectionExtensionsTests
 
     #endregion
 
-    #region Duplicate registration / options collision Tests
+    #region Repeated registration / options collision Tests
 
     [Fact]
-    public void AddVespaClient_CalledTwiceUnnamed_Throws()
+    public void AddVespaClient_CalledRepeatedly_UsesOnlyTheLastConfiguration()
     {
-        // Stacked unnamed registrations silently combine both configurations
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions
+        {
+            Endpoint = "http://original:8080",
+            ApiKey = "old-key",
+            DefaultRequestHeaders = new Dictionary<string, string> { ["X-Old"] = "old" }
+        }, client => client.DefaultRequestHeaders.Add("X-Old-Callback", "old"));
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://intermediate:8080" });
+
+        var options = new VespaClientOptions
+        {
+            Endpoint = "http://replacement:8080",
+            Timeout = TimeSpan.FromSeconds(42),
+            DefaultRequestHeaders = new Dictionary<string, string> { ["X-Tenant"] = "new" }
+        };
+        services.AddVespaClient(options, client => client.DefaultRequestHeaders.Add("X-New-Callback", "new"));
+        using var provider = services.BuildServiceProvider();
+
+        var httpClient = GetUnderlyingHttpClient(Assert.Single(provider.GetServices<IVespaClient>()));
+        Assert.Equal(new Uri(options.Endpoint), httpClient.BaseAddress);
+        Assert.Equal(options.Timeout, httpClient.Timeout);
+        Assert.Null(httpClient.DefaultRequestHeaders.Authorization);
+        Assert.False(httpClient.DefaultRequestHeaders.Contains("X-Old"));
+        Assert.False(httpClient.DefaultRequestHeaders.Contains("X-Old-Callback"));
+        Assert.Equal("new", Assert.Single(httpClient.DefaultRequestHeaders.GetValues("X-Tenant")));
+        Assert.Equal("new", Assert.Single(httpClient.DefaultRequestHeaders.GetValues("X-New-Callback")));
+        Assert.Same(options, Assert.Single(provider.GetServices<VespaClientOptions>()));
+    }
+
+    [Fact]
+    public async Task AddVespaClientWithResilienceStrategy_AfterDefault_ReplacesRetryPolicy()
+    {
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://original:8080", MaxRetryAttempts = 5 });
+        var handler = new MockHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var options = new VespaClientOptions { Endpoint = "http://replacement:8080" };
+        services.AddVespaClientWithResilienceStrategy(options, (_, _) => { })
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+
+        var httpClient = GetUnderlyingHttpClient(Assert.Single(provider.GetServices<IVespaClient>()));
+        using var response = await httpClient.GetAsync("/state/v1/health");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Single(handler.Requests);
+        Assert.Same(options, provider.GetRequiredService<VespaClientOptions>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AddVespaClient_AfterPreviousStrategy_UsesOnlyTheLatestRetryCount(bool customFirst)
+    {
+        var services = new ServiceCollection();
+        var oldOptions = new VespaClientOptions { Endpoint = "http://original:8080", MaxRetryAttempts = 5 };
+        if (customFirst)
+            services.AddVespaClientWithResilienceStrategy(oldOptions, (_, _) =>
+                throw new InvalidOperationException("The previous strategy must not be configured."));
+        else
+            services.AddVespaClient(oldOptions);
+
+        var handler = new MockHttpMessageHandler();
+        handler.QueueResponses(
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            new HttpResponseMessage(HttpStatusCode.OK));
+        services.AddVespaClient(new VespaClientOptions
+        {
+            Endpoint = "http://replacement:8080",
+            MaxRetryAttempts = 1,
+            EnableCircuitBreaker = false
+        }).ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+
+        var httpClient = GetUnderlyingHttpClient(Assert.Single(provider.GetServices<IVespaClient>()));
+        using var response = await httpClient.GetAsync("/state/v1/health");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AddVespaClientWithResilienceStrategy_CalledTwice_UsesOnlyTheLastStrategy()
+    {
         var services = new ServiceCollection();
         var options = new VespaClientOptions { Endpoint = "http://localhost:8080" };
+        services.AddVespaClientWithResilienceStrategy(options, (_, _) =>
+            throw new InvalidOperationException("The previous strategy must not be configured."));
 
-        services.AddVespaClient(options);
+        var handler = new MockHttpMessageHandler();
+        handler.QueueResponses(
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            new HttpResponseMessage(HttpStatusCode.OK));
+        services.AddVespaClientWithResilienceStrategy(options, (pipeline, _) =>
+            pipeline.AddRetry(new HttpRetryStrategyOptions
+            {
+                MaxRetryAttempts = 1,
+                Delay = TimeSpan.Zero,
+                UseJitter = false
+            })).ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            services.AddVespaClient(new VespaClientOptions { Endpoint = "http://other:8080" }));
-        Assert.Contains("named overload", ex.Message);
+        var httpClient = GetUnderlyingHttpClient(Assert.Single(provider.GetServices<IVespaClient>()));
+        using var response = await httpClient.GetAsync("/state/v1/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Fact]
-    public void AddVespaClientWithResilienceStrategy_AfterAddVespaClient_Throws()
+    public void AddVespaClient_ReplacingNamedClient_PreservesOtherClientsAndHttpServices()
     {
         var services = new ServiceCollection();
-        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://localhost:8080" });
-
-        Assert.Throws<InvalidOperationException>(() =>
-            services.AddVespaClientWithResilienceStrategy(
-                new VespaClientOptions { Endpoint = "http://other:8080" },
-                (_, _) => { }));
-    }
-
-    [Fact]
-    public void AddVespaClient_NamedRegistrations_AreNotAffectedByTheGuard()
-    {
-        var services = new ServiceCollection();
+        services.AddHttpClient("external", client => client.BaseAddress = new Uri("http://external:8080"))
+            .AddResilienceHandler("external-policy", (_, _) => { });
         services.AddVespaClient("a", new VespaClientOptions { Endpoint = "http://a:8080" });
         services.AddVespaClient("b", new VespaClientOptions { Endpoint = "http://b:8080" });
-
-        // Unnamed registration after named ones is still allowed
         services.AddVespaClient(new VespaClientOptions { Endpoint = "http://localhost:8080" });
+        var options = new VespaClientOptions { Endpoint = "http://replacement:8080" };
+        services.AddVespaClient("a", options);
+        services.AddVespaClient("a", options);
+        using var provider = services.BuildServiceProvider();
 
-        var provider = services.BuildServiceProvider();
-        Assert.NotNull(provider.GetKeyedService<IVespaClient>("a"));
-        Assert.NotNull(provider.GetKeyedService<IVespaClient>("b"));
-        Assert.NotNull(provider.GetService<IVespaClient>());
+        Assert.Equal(new Uri(options.Endpoint),
+            GetUnderlyingHttpClient(Assert.Single(provider.GetKeyedServices<IVespaClient>("a"))).BaseAddress);
+        Assert.Same(options, Assert.Single(provider.GetKeyedServices<VespaClientOptions>("a")));
+        Assert.Equal(new Uri("http://b:8080"), GetUnderlyingHttpClient(provider.GetRequiredKeyedService<IVespaClient>("b")).BaseAddress);
+        Assert.Equal(new Uri("http://localhost:8080"), GetUnderlyingHttpClient(provider.GetRequiredService<IVespaClient>()).BaseAddress);
+        using var external = provider.GetRequiredService<IHttpClientFactory>().CreateClient("external");
+        Assert.Equal(new Uri("http://external:8080"), external.BaseAddress);
     }
 
     [Fact]
@@ -377,6 +473,7 @@ public class VespaServiceCollectionExtensionsTests
         services.AddSingleton(consumerOptions);
 
         var vespaOptions = new VespaClientOptions { Endpoint = "http://localhost:8080" };
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://original:8080" });
         services.AddVespaClient(vespaOptions);
 
         var provider = services.BuildServiceProvider();
@@ -384,6 +481,59 @@ public class VespaServiceCollectionExtensionsTests
 
         var client = provider.GetRequiredService<IVespaClient>();
         Assert.Equal(new Uri("http://localhost:8080"), GetUnderlyingHttpClient(client).BaseAddress);
+    }
+
+    [Fact]
+    public void AddVespaClient_InvalidReplacement_PreservesPreviousConfiguration()
+    {
+        var services = new ServiceCollection();
+        var options = new VespaClientOptions { Endpoint = "http://original:8080" };
+        services.AddVespaClient(options);
+
+        Assert.Throws<ArgumentException>(() => services.AddVespaClient(new VespaClientOptions { Endpoint = "relative" }));
+        using var provider = services.BuildServiceProvider();
+        Assert.Same(options, provider.GetRequiredService<VespaClientOptions>());
+        Assert.Equal(new Uri(options.Endpoint), GetUnderlyingHttpClient(provider.GetRequiredService<IVespaClient>()).BaseAddress);
+    }
+
+    [Fact]
+    public void AddVespaClient_Replacement_DoesNotChangeAnExistingProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://original:8080" });
+        using var originalProvider = services.BuildServiceProvider();
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://replacement:8080" });
+        using var replacementProvider = services.BuildServiceProvider();
+
+        Assert.Equal(new Uri("http://original:8080"),
+            GetUnderlyingHttpClient(originalProvider.GetRequiredService<IVespaClient>()).BaseAddress);
+        Assert.Equal(new Uri("http://replacement:8080"),
+            GetUnderlyingHttpClient(replacementProvider.GetRequiredService<IVespaClient>()).BaseAddress);
+    }
+
+    [Fact]
+    public void AddVespaClient_Replacement_ConfiguresTransportFromLatestOptions()
+    {
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions { Endpoint = "http://original:8080", UseCompression = true });
+        var builder = services.AddVespaClient(new VespaClientOptions
+        {
+            Endpoint = "http://replacement:8080",
+            UseCompression = false,
+            UseConnectionPooling = false
+        });
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var handlerBuilder = scope.ServiceProvider.GetRequiredService<HttpMessageHandlerBuilder>();
+        handlerBuilder.Name = builder.Name;
+        var factoryOptions = provider.GetRequiredService<IOptionsMonitor<HttpClientFactoryOptions>>().Get(builder.Name);
+        foreach (var action in factoryOptions.HttpMessageHandlerBuilderActions)
+            action(handlerBuilder);
+        using var handler = Assert.IsType<SocketsHttpHandler>(handlerBuilder.PrimaryHandler);
+
+        Assert.Equal(DecompressionMethods.None, handler.AutomaticDecompression);
+        Assert.Equal(TimeSpan.Zero, handler.PooledConnectionLifetime);
+        Assert.Single(handlerBuilder.AdditionalHandlers.OfType<ResilienceHandler>());
     }
 
     #endregion
