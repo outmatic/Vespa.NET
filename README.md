@@ -422,6 +422,25 @@ public class ProductService(IVespaClient vespa)
 }
 ```
 
+Calling `AddVespaClient` again replaces the previous Vespa configuration: the last
+call supplies the options, `configureHttpClient` callback and resilience strategy.
+This lets an application override a registration supplied by a shared setup method:
+
+```csharp
+builder.Services.AddVespaClient(new VespaClientOptions { Endpoint = "http://default-vespa:8080" });
+builder.Services.AddVespaClient(new VespaClientOptions { Endpoint = "https://production-vespa.example.com" });
+// IVespaClient uses the production endpoint; only one client registration remains.
+```
+
+The same rule applies to named clients with the same name, and when switching
+between `AddVespaClient` and `AddVespaClientWithResilienceStrategy`. Other named
+clients are unaffected. Vespa handlers and retry policies are registered once,
+so repeated calls do not stack them. Additional configuration applied through
+the returned `IHttpClientBuilder` follows the usual .NET composition rules.
+Register clients before building the service provider; existing providers retain
+their configuration. Consumer-registered unnamed `VespaClientOptions` singletons
+are preserved and do not override the options passed to `AddVespaClient`.
+
 </details>
 
 <details>

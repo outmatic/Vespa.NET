@@ -19,6 +19,8 @@ public static partial class VespaServiceCollectionExtensions
     /// <summary>Logical name of the default (unnamed) Vespa HttpClient registration.</summary>
     private const string DefaultHttpClientName = "Vespa.NET";
 
+    private static readonly object DefaultRegistrationKey = new();
+
     /// <summary>
     /// Adds VespaClient to the service collection with IHttpClientFactory integration and default resilience strategy
     /// </summary>
@@ -27,15 +29,14 @@ public static partial class VespaServiceCollectionExtensions
     /// <param name="configureHttpClient">Optional additional HttpClient configuration</param>
     /// <returns>An IHttpClientBuilder for further configuration</returns>
     /// <remarks>
-    /// Call this overload once per container: it registers a single unnamed
-    /// <see cref="IVespaClient"/> and throws <see cref="InvalidOperationException"/> on a
-    /// second call (stacked registrations would silently combine both configurations).
+    /// Registers a single unnamed <see cref="IVespaClient"/>. Repeated calls replace
+    /// the previous options, HttpClient callback and resilience strategy; the last call wins.
     /// To talk to multiple Vespa endpoints, use the named overload
     /// (<see cref="AddVespaClient(IServiceCollection, string, VespaClientOptions, Action{HttpClient})"/>)
     /// and resolve clients with <c>GetRequiredKeyedService&lt;IVespaClient&gt;(name)</c>.
     /// <para>The <paramref name="options"/> instance is captured directly by the client
-    /// factory; it is additionally exposed via <c>TryAddSingleton</c> for diagnostics, so a
-    /// consumer-registered <see cref="VespaClientOptions"/> singleton never affects the client.</para>
+    /// factory; it is additionally exposed as a singleton for diagnostics without replacing
+    /// consumer-registered <see cref="VespaClientOptions"/>, which never affect the client.</para>
     /// </remarks>
     public static IHttpClientBuilder AddVespaClient(
         this IServiceCollection services,
@@ -46,26 +47,7 @@ public static partial class VespaServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(options);
 
         options.Validate();
-        ThrowIfUnnamedClientRegistered(services);
-
-        // TryAdd: exposed for diagnostics only — the client factory captures `options`
-        // in a closure, so a pre-existing consumer registration cannot collide with it.
-        services.TryAddSingleton(options);
-
-        // Configure HttpClient with factory. Registered as a NAMED client +
-        // AddTypedClient: the generic AddHttpClient<IVespaClient, VespaClient>
-        // would leave a second IVespaClient registration activated through the
-        // public constructor, which re-applies defaults over the factory config.
-        var builder = services.AddHttpClient(DefaultHttpClientName,
-                httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
-            .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
-            .AddHttpMessageHandler(() => new VespaMetricsHandler())
-            .AddTypedClient(CreatePreconfiguredVespaClient(options));
-
-        // Add default resilience strategy based on options
-        ConfigureDefaultResilience(builder, options);
-
-        return builder;
+        return AddVespaClientCore(services, null, options, configureHttpClient, null);
     }
 
     private static Func<HttpClient, IServiceProvider, IVespaClient> CreatePreconfiguredVespaClient(
@@ -76,14 +58,6 @@ public static partial class VespaServiceCollectionExtensions
             sp.GetService<ILogger<VespaClient>>(),
             httpClientPreconfigured: true);
 
-    private static void ThrowIfUnnamedClientRegistered(IServiceCollection services)
-    {
-        if (services.Any(d => !d.IsKeyedService && d.ServiceType == typeof(IVespaClient)))
-            throw new InvalidOperationException(
-                "An unnamed IVespaClient is already registered. Call AddVespaClient once per container, " +
-                "or use the named overload AddVespaClient(name, options) to talk to multiple Vespa endpoints.");
-    }
-
     /// <summary>
     /// Adds named VespaClient to the service collection with IHttpClientFactory integration
     /// </summary>
@@ -92,6 +66,10 @@ public static partial class VespaServiceCollectionExtensions
     /// <param name="options">VespaClient configuration options</param>
     /// <param name="configureHttpClient">Optional additional HttpClient configuration</param>
     /// <returns>An IHttpClientBuilder for further configuration</returns>
+    /// <remarks>
+    /// Repeated calls with the same name replace the previous Vespa configuration.
+    /// Registrations with other names and the unnamed client are unaffected.
+    /// </remarks>
     public static IHttpClientBuilder AddVespaClient(
         this IServiceCollection services,
         string name,
@@ -104,28 +82,7 @@ public static partial class VespaServiceCollectionExtensions
 
         options.Validate();
 
-        // Register options with name
-        services.AddKeyedSingleton(name, options);
-
-        // Configure HttpClient with factory
-        var builder = services.AddHttpClient(name,
-                httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
-            .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
-            .AddHttpMessageHandler(() => new VespaMetricsHandler());
-
-        // Add default resilience strategy based on options
-        ConfigureDefaultResilience(builder, options);
-
-        // Register factory for named VespaClient
-        services.AddKeyedTransient<IVespaClient>(name, (sp, key) =>
-        {
-            var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient(name);
-            var namedOptions = sp.GetRequiredKeyedService<VespaClientOptions>(name);
-            var logger = sp.GetService<ILogger<VespaClient>>();
-            return new VespaClient(httpClient, namedOptions, logger, httpClientPreconfigured: true);
-        });
-
-        return builder;
+        return AddVespaClientCore(services, name, options, configureHttpClient, null);
     }
 
     /// <summary>
@@ -136,6 +93,10 @@ public static partial class VespaServiceCollectionExtensions
     /// <param name="configureResilience">Configure custom resilience pipeline</param>
     /// <param name="configureHttpClient">Optional additional HttpClient configuration</param>
     /// <returns>An IHttpClientBuilder for further configuration</returns>
+    /// <remarks>
+    /// Replaces any previous unnamed Vespa registration, including its options,
+    /// HttpClient callback and resilience strategy.
+    /// </remarks>
     public static IHttpClientBuilder AddVespaClientWithResilienceStrategy(
         this IServiceCollection services,
         VespaClientOptions options,
@@ -147,23 +108,82 @@ public static partial class VespaServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configureResilience);
 
         options.Validate();
-        ThrowIfUnnamedClientRegistered(services);
+        return AddVespaClientCore(services, null, options, configureHttpClient, configureResilience);
+    }
 
-        // TryAdd: exposed for diagnostics only — see AddVespaClient
-        services.TryAddSingleton(options);
+    private static IHttpClientBuilder AddVespaClientCore(
+        IServiceCollection services,
+        string? name,
+        VespaClientOptions options,
+        Action<HttpClient>? configureHttpClient,
+        Action<ResiliencePipelineBuilder<HttpResponseMessage>, ResilienceHandlerContext>? configureResilience)
+    {
+        var registrationKey = name is null ? DefaultRegistrationKey : (object)name;
+        var previous = services.FirstOrDefault(d => d.IsKeyedService &&
+            d.ServiceType == typeof(VespaClientRegistration) && Equals(d.ServiceKey, registrationKey))
+            ?.KeyedImplementationInstance as VespaClientRegistration;
 
-        // Configure HttpClient with factory (named + AddTypedClient — see AddVespaClient)
-        var builder = services.AddHttpClient(DefaultHttpClientName,
-                httpClient => ConfigureHttpClient(httpClient, options, configureHttpClient))
-            .ConfigurePrimaryHttpMessageHandler(() => BuildSocketsHttpHandler(options))
-            .AddHttpMessageHandler(() => new VespaMetricsHandler())
-            .AddTypedClient(CreatePreconfiguredVespaClient(options));
+        // Replace only our diagnostics options; consumer-registered options remain untouched.
+        if (previous?.OptionsDescriptor is { } previousOptions)
+            services.Remove(previousOptions);
 
-        // Apply custom resilience strategy
-        builder.AddResilienceHandler("vespa-custom-resilience", configureResilience);
+        ServiceDescriptor? optionsDescriptor = null;
+        if (name is not null || !services.Any(d => !d.IsKeyedService && d.ServiceType == typeof(VespaClientOptions)))
+        {
+            optionsDescriptor = name is null
+                ? ServiceDescriptor.Singleton(options)
+                : ServiceDescriptor.KeyedSingleton(name, options);
+            services.Add(optionsDescriptor);
+        }
+
+        services.RemoveAllKeyed<VespaClientRegistration>(registrationKey);
+        services.AddKeyedSingleton(registrationKey,
+            new VespaClientRegistration(options, configureHttpClient, configureResilience, optionsDescriptor));
+
+        var builder = services.AddHttpClient(name ?? DefaultHttpClientName);
+        if (previous is null)
+        {
+            // Register the HTTP actions and pipeline once. Resolve an immutable registration
+            // from DI so replacement does not stack handlers or mutate existing providers.
+            builder.ConfigureHttpClient((sp, httpClient) =>
+                {
+                    var registration = sp.GetRequiredKeyedService<VespaClientRegistration>(registrationKey);
+                    ConfigureHttpClient(httpClient, registration.Options, registration.ConfigureHttpClient);
+                })
+                .ConfigurePrimaryHttpMessageHandler(sp =>
+                    BuildSocketsHttpHandler(sp.GetRequiredKeyedService<VespaClientRegistration>(registrationKey).Options))
+                .AddHttpMessageHandler(() => new VespaMetricsHandler())
+                .AddResilienceHandler("vespa-resilience", (pipeline, context) =>
+                {
+                    var registration = context.ServiceProvider.GetRequiredKeyedService<VespaClientRegistration>(registrationKey);
+                    if (registration.ConfigureResilience is { } configure)
+                        configure(pipeline, context);
+                    else
+                        ConfigureDefaultResilience(pipeline, context, registration.Options);
+                });
+        }
+
+        if (name is null)
+        {
+            services.RemoveAll<IVespaClient>();
+            builder.AddTypedClient(CreatePreconfiguredVespaClient(options));
+        }
+        else
+        {
+            services.RemoveAllKeyed<IVespaClient>(name);
+            var createClient = CreatePreconfiguredVespaClient(options);
+            services.AddKeyedTransient<IVespaClient>(name, (sp, _) =>
+                createClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient(name), sp));
+        }
 
         return builder;
     }
+
+    private sealed record VespaClientRegistration(
+        VespaClientOptions Options,
+        Action<HttpClient>? ConfigureHttpClient,
+        Action<ResiliencePipelineBuilder<HttpResponseMessage>, ResilienceHandlerContext>? ConfigureResilience,
+        ServiceDescriptor? OptionsDescriptor);
 
     private static void ConfigureHttpClient(
         HttpClient httpClient,
@@ -222,59 +242,59 @@ public static partial class VespaServiceCollectionExtensions
     /// <summary>
     /// Configure default resilience strategy based on VespaClientOptions
     /// </summary>
-    private static void ConfigureDefaultResilience(IHttpClientBuilder builder, VespaClientOptions options)
+    private static void ConfigureDefaultResilience(
+        ResiliencePipelineBuilder<HttpResponseMessage> resilienceBuilder,
+        ResilienceHandlerContext context,
+        VespaClientOptions options)
     {
-        builder.AddResilienceHandler("vespa-default-resilience", (resilienceBuilder, context) =>
+        var logger = context.ServiceProvider.GetService<ILogger<VespaClient>>();
+
+        // Add retry policy if enabled
+        if (options is { EnableRetry: true, MaxRetryAttempts: > 0 })
         {
-            var logger = context.ServiceProvider.GetService<ILogger<VespaClient>>();
-
-            // Add retry policy if enabled
-            if (options is { EnableRetry: true, MaxRetryAttempts: > 0 })
+            resilienceBuilder.AddRetry(new HttpRetryStrategyOptions
             {
-                resilienceBuilder.AddRetry(new HttpRetryStrategyOptions
+                MaxRetryAttempts = options.MaxRetryAttempts,
+                Delay = TimeSpan.FromMilliseconds(100),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                ShouldHandle = args =>
                 {
-                    MaxRetryAttempts = options.MaxRetryAttempts,
-                    Delay = TimeSpan.FromMilliseconds(100),
-                    BackoffType = DelayBackoffType.Exponential,
-                    UseJitter = true,
-                    ShouldHandle = args =>
-                    {
-                        // Retry on transient failures + 429 Too Many Requests
-                        if (args.Outcome.Result?.StatusCode == (HttpStatusCode)429)
-                            return ValueTask.FromResult(true);
-                        return DefaultRetryOptions.ShouldHandle(args);
-                    },
-                    OnRetry = args =>
-                    {
-                        VespaClientMetrics.RetryAttempts.Add(1);
-                        if (logger != null)
-                            LogRetryAttempt(logger, args.AttemptNumber, args.RetryDelay.TotalMilliseconds);
-                        return ValueTask.CompletedTask;
-                    }
-                });
-            }
+                    // Retry on transient failures + 429 Too Many Requests
+                    if (args.Outcome.Result?.StatusCode == (HttpStatusCode)429)
+                        return ValueTask.FromResult(true);
+                    return DefaultRetryOptions.ShouldHandle(args);
+                },
+                OnRetry = args =>
+                {
+                    VespaClientMetrics.RetryAttempts.Add(1);
+                    if (logger != null)
+                        LogRetryAttempt(logger, args.AttemptNumber, args.RetryDelay.TotalMilliseconds);
+                    return ValueTask.CompletedTask;
+                }
+            });
+        }
 
-            // Add circuit breaker if enabled
-            if (options.EnableCircuitBreaker)
+        // Add circuit breaker if enabled
+        if (options.EnableCircuitBreaker)
+        {
+            resilienceBuilder.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
             {
-                resilienceBuilder.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
+                FailureRatio = 0.5,
+                MinimumThroughput = options.CircuitBreakerFailureThreshold,
+                BreakDuration = options.CircuitBreakerDuration,
+                OnOpened = args =>
                 {
-                    FailureRatio = 0.5,
-                    MinimumThroughput = options.CircuitBreakerFailureThreshold,
-                    BreakDuration = options.CircuitBreakerDuration,
-                    OnOpened = args =>
-                    {
-                        if (logger != null) LogCircuitBreakerOpened(logger);
-                        return ValueTask.CompletedTask;
-                    },
-                    OnClosed = args =>
-                    {
-                        if (logger != null) LogCircuitBreakerClosed(logger);
-                        return ValueTask.CompletedTask;
-                    }
-                });
-            }
-        });
+                    if (logger != null) LogCircuitBreakerOpened(logger);
+                    return ValueTask.CompletedTask;
+                },
+                OnClosed = args =>
+                {
+                    if (logger != null) LogCircuitBreakerClosed(logger);
+                    return ValueTask.CompletedTask;
+                }
+            });
+        }
     }
 
     /// <summary>
