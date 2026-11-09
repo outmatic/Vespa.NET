@@ -65,6 +65,10 @@ def main():
             for item in list(group):
                 if item.tag in ("ProjectReference", "None"):
                     group.remove(item)
+                elif item.tag == "Compile" and "Include" in item.attrib:
+                    source = (tests / item.get("Include")).resolve()
+                    require(source.is_file(), f"Linked test source is missing: {source}")
+                    item.set("Include", str(source))
         ET.SubElement(tree.find("ItemGroup"), "PackageReference", Include="Vespa.NET.VectorData")
         tree.write(consumer / "PackageTests.csproj")
         central = ET.parse(root / "Directory.Packages.props")

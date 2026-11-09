@@ -3,11 +3,11 @@ namespace Vespa.Models.Schema;
 /// <summary>Maps CLR scalar types and identifies supported collection shapes for schema generation.</summary>
 internal static class VespaTypeMapper
 {
-    private static readonly HashSet<string> _primitiveVespaTypes =
+    private static readonly HashSet<string> PrimitiveVespaTypes =
         ["bool", "string", "int", "long", "byte", "float", "double"];
 
     /// <summary>Vespa primitive types — the only types allowed as struct-field attributes and map keys.</summary>
-    internal static bool IsPrimitiveVespaType(string vespaType) => _primitiveVespaTypes.Contains(vespaType);
+    internal static bool IsPrimitiveVespaType(string vespaType) => PrimitiveVespaTypes.Contains(vespaType);
 
     /// <summary>
     /// Unwraps single-dimensional arrays and the common (read-only) collection shapes

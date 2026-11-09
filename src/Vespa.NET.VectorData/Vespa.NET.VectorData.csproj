@@ -7,6 +7,7 @@
     <Version>1.0.0</Version>
     <RootNamespace>Vespa.VectorData</RootNamespace>
     <Description>Microsoft.Extensions.VectorData provider for existing Vespa application schemas, with typed records and cosine vector search.</Description>
+    <PackageReleaseNotes>Initial release with typed record operations, cosine vector search, scalar filters, text queries through a caller-provided embedding generator, and Microsoft Agent Framework examples for retrieval and persistent user preferences. Requires an existing Vespa application schema.</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
   </PropertyGroup>

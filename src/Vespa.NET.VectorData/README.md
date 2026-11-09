@@ -3,15 +3,26 @@
 Use an existing Vespa application through the standalone
 `Microsoft.Extensions.VectorData` abstractions: write typed records, retrieve
 them by key, and search their vectors with application-defined filters. The same
-collection can supply retrieval tools to Microsoft Agent Framework.
+collection can supply retrieval tools to Microsoft Agent Framework, including
+application-defined tools that save and recall a user's preferences.
 
-**Version `1.0.0` is being prepared; not yet published to NuGet.** This is an optional,
-separate package for .NET 8 and .NET 10 with a restricted VectorData implementation.
+This is an optional, separate package for .NET 8 and .NET 10 with a restricted
+VectorData implementation.
 It depends on `Vespa.NET` and `Microsoft.Extensions.VectorData.Abstractions`.
 It does not depend on Semantic Kernel, Agent Framework, or an embedding provider.
 Installing the base `Vespa.NET` client does not install this connector.
 
-## Try it from source
+## Install
+
+```sh
+dotnet add package Vespa.NET.VectorData --version 1.0.0
+```
+
+The connector has its own version, independent of the base client. See the
+[1.0.0 release notes](https://github.com/outmatic/Vespa.NET/blob/main/src/Vespa.NET.VectorData/CHANGELOG.md)
+for its supported surface and examples.
+
+## Build from source
 
 Use a checkout containing `src/Vespa.NET.VectorData`. Run these commands from the
 repository root to create a console application beside the checkout:
@@ -22,7 +33,7 @@ dotnet add ../VespaVectorQuickstart reference src/Vespa.NET.VectorData/Vespa.NET
 ```
 
 The connector also targets `net8.0`; the Agent Framework sample below requires
-.NET 10. The project reference is the simplest way to try the unpublished code.
+.NET 10. The project reference uses the connector from your checkout.
 To produce a local NuGet package instead, pack only the connector:
 
 ```sh
@@ -31,10 +42,9 @@ dotnet pack src/Vespa.NET.VectorData -c Release -o artifacts/packages
 
 In a separate consumer project, add the absolute path to `artifacts/packages` as
 a NuGet source alongside nuget.org, then install `Vespa.NET.VectorData` with
-`--version 1.0.0`. The client dependency (`Vespa.NET >= 3.1.0`) and other
+`--version 1.0.0`. The client dependency (`Vespa.NET >= 3.1.1`) and other
 dependencies are restored from nuget.org. These commands build the package
-locally and do not publish it. The connector has its own version; it does not
-follow the base client's version number.
+locally and do not publish it.
 
 ## Deploy the schema first
 
@@ -328,6 +338,16 @@ integration; the connector itself needs no Agent Framework dependency.
 Retrieval code that needs only search can accept `IVectorSearchable<Article>`
 instead of the concrete collection, leaving collection management to the caller.
 
+The sample also has an opt-in `--memory` mode. Its `remember_preference` tool
+embeds and stores a user's explicitly stated code-example language preference;
+`recall_preferences` searches it for the application-configured user in a later
+run. This uses the separate `memory` schema in the same sample application, a
+stable user/topic key for updates, and user/topic search filters. The tools are
+sample application code, not a built-in Agent Framework context provider.
+See the [sample README](https://github.com/outmatic/Vespa.NET/tree/main/samples/Vespa.NET.AgentFramework#remember-a-preference-across-runs)
+for the two commands and the demo scope's authentication limitations. The default
+documentation-retrieval mode remains independent of this memory example.
+
 ## Verify the connector
 
 From the repository root:
@@ -339,11 +359,14 @@ VESPA_VECTOR_DATA_INTEGRATION_TESTS=1 dotnet test tests/Vespa.NET.VectorData.Tes
 
 The default suite tests HTTP request bodies, mapping, filters, scores, errors,
 cancellation, ownership, and a real Agent Framework tool loop with deterministic
-chat/embedding test doubles. It does not download or run models.
+chat/embedding test doubles. Memory tests save a preference, recreate the clients
+and agent without the earlier conversation, and verify recall, replacement and
+user filters. The suite does not download or run models.
 
 The opt-in Docker tests create their own Vespa containers. One exercises the
-connector and retrieval tool against a three-dimensional schema; the other runs
-the published sample with `--deploy-only`, then executes the complete C# quickstart
+connector, retrieval tool and preference memory across fresh agents against
+three-dimensional schemas. The other runs the published sample with
+`--deploy-only`, then executes the complete C# quickstart
 against its application. They are reported skipped unless enabled and never deploy
 to an existing instance.
 Set `VESPA_VECTOR_DATA_IMAGE` to select the test image.

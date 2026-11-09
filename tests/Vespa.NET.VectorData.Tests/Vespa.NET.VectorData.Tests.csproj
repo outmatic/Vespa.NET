@@ -13,5 +13,6 @@
     <ProjectReference Include="../../src/Vespa.NET.VectorData/Vespa.NET.VectorData.csproj" />
     <ProjectReference Include="../../src/Vespa.NET.Testcontainers/Vespa.NET.Testcontainers.csproj" />
     <None Include="../../samples/Vespa.NET.AgentFramework/app/**/*" Link="app/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="../../samples/Vespa.NET.AgentFramework/PreferenceMemory.cs" Link="Sample/PreferenceMemory.cs" />
   </ItemGroup>
 </Project>

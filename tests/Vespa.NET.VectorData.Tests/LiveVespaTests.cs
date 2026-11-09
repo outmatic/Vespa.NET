@@ -4,6 +4,7 @@ using System.Xml.Linq;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
+using Vespa.AgentFrameworkSample;
 using Vespa.Testcontainers;
 using Xunit;
 using Xunit.Abstractions;
@@ -76,9 +77,34 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
         Assert.Contains("[a:1] Nearest neighbor search", response.Text);
         Assert.Equal(2, model.Calls);
 
+        const string preference = "The user prefers code examples in C#.";
+        using (var memories = PreferenceMemoryTests.GetCollection(store))
+        using (var rememberModel = new MemoryToolCallingChatClient("remember_preference", "preference", preference))
+        {
+            var memory = new PreferenceMemory(memories, embeddings, "memory-test-user");
+            var remembered = await memory.CreateAgent(rememberModel).RunAsync(
+                "Remember that I prefer code examples in C#.", cancellationToken: cancellationToken);
+            Assert.Contains("Preference saved.", remembered.Text);
+        }
+
+        using (var nextStore = new VespaVectorStore(client, TestHarness.Options with { EmbeddingGenerator = embeddings }))
+        using (var memories = PreferenceMemoryTests.GetCollection(nextStore))
+        using (var recallModel = new MemoryToolCallingChatClient("recall_preferences", "query", "code-example language"))
+        {
+            var memory = new PreferenceMemory(memories, embeddings, "memory-test-user");
+            var recalled = await memory.CreateAgent(recallModel).RunAsync(
+                "Which language should you use for my examples?", cancellationToken: cancellationToken);
+            Assert.DoesNotContain("C#", recallModel.InitialMessages);
+            Assert.Contains(preference, recalled.Text);
+            var otherUser = new PreferenceMemory(memories, embeddings, "another-test-user");
+            Assert.Equal("No saved preference found.", await otherUser.RecallAsync("code examples", cancellationToken));
+            await memory.RememberAsync("The user now prefers F# examples.", cancellationToken);
+            Assert.Equal("The user now prefers F# examples.", await memory.RecallAsync("code examples", cancellationToken));
+        }
+
         await articles.DeleteAsync("b", cancellationToken);
         Assert.Null(await articles.GetAsync("b", cancellationToken: cancellationToken));
-        output.WriteLine("Verified CRUD, cased/escaped metadata filters, cosine scores, pagination, vector projection and a real Agent Framework tool loop.");
+        output.WriteLine("Verified CRUD, filters, cosine scores, pagination, vector projection, retrieval tools and preference memory across fresh agents.");
     }
 
     [VespaIntegrationFact]
