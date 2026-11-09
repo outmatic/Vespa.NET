@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-09
+
 ### Changed
 
 - Repeated `AddVespaClient` calls now replace the previous configuration instead
