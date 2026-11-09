@@ -8,6 +8,7 @@
     <redundancy>1</redundancy>
     <documents>
       <document type="article" mode="index" />
+      <document type="memory" mode="index" />
     </documents>
     <nodes>
       <node distribution-key="0" hostalias="node1" />

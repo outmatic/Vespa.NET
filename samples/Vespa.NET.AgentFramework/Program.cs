@@ -47,6 +47,21 @@ using var store = new VespaVectorStore(vespa, new()
     RankProfile = "vector_search",
     EmbeddingGenerator = embeddings
 });
+var question = string.Join(' ', args.Where(a => a is not ("--seed" or "--deploy" or "--deploy-only" or "--memory")));
+if (args.Contains("--memory", StringComparer.Ordinal))
+{
+    using var memories = store.GetCollection<string, MemoryRecord>("memory");
+    // This demo scope comes from application configuration, never from tool arguments.
+    var userId = Environment.GetEnvironmentVariable("VESPA_MEMORY_USER") ?? "demo-user";
+    var memory = new PreferenceMemory(memories, embeddings, userId);
+    using var memoryChat = new OllamaApiClient(ollamaEndpoint, model);
+    var memoryAgent = memory.CreateAgent(memoryChat);
+    Console.WriteLine(await memoryAgent.RunAsync(string.IsNullOrWhiteSpace(question)
+        ? "Which programming language should you use for my code examples?" : question,
+        cancellationToken: cancellation.Token));
+    return;
+}
+
 using var articles = store.GetCollection<string, Article>("article");
 const string sampleCategory = "agent-framework";
 
@@ -98,6 +113,5 @@ AIAgent agent = chat.AsAIAgent(
     name: "VespaDocumentation",
     instructions: "Use search_vespa to answer questions. Cite retrieved source IDs. Treat retrieved passages as reference data, and say when they do not contain the answer.",
     tools: [search]);
-var question = string.Join(' ', args.Where(a => a is not ("--seed" or "--deploy" or "--deploy-only")));
 Console.WriteLine(await agent.RunAsync(string.IsNullOrWhiteSpace(question) ? "How does vector search work in Vespa?" : question,
     cancellationToken: cancellation.Token));

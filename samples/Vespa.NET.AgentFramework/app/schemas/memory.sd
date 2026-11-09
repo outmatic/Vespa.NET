@@ -1,0 +1,30 @@
+schema memory {
+    document memory {
+        field user_id type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field topic type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field text type string {
+            indexing: summary | index
+        }
+        field embedding type tensor<float>(x[768]) {
+            indexing: attribute | index | summary
+            attribute {
+                distance-metric: angular
+            }
+        }
+    }
+    rank-profile vector_search {
+        inputs {
+            query(query_embedding) tensor<float>(x[768])
+        }
+        first-phase {
+            expression: closeness(field, embedding)
+        }
+        match-features: distance(field, embedding)
+    }
+}
