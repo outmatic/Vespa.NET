@@ -1,6 +1,6 @@
 # Vespa.NET.AgentFramework changelog
 
-## 1.1.0 (unreleased)
+## 1.1.0
 
 - Writing unchanged file content avoids a snapshot PUT and revision change.
 - File-memory regex/glob searches read the file-tree snapshot once, retaining

@@ -65,9 +65,8 @@ Pass an existing `IVespaClient` to either integration. It can target self-hosted
 Vespa or a deployed Vespa Cloud application. Normal collection, memory and session
 operations reuse that client and do not change the application's configuration.
 
-Client reuse and application-package configuration are available in the published
-packages. `SummaryClass`, `VectorSummaryClass` and `HnswExploreAdditionalHits` below
-are unreleased VectorData 1.2.0 additions; use the source checkout until publication.
+The examples use VectorData 1.2.0 and AgentFramework 1.1.0. Client reuse and
+application-package configuration are also available through the base Vespa.NET SDK.
 
 ```csharp
 using var vectors = new VespaVectorStore(existingClient, new()

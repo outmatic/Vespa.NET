@@ -4,7 +4,7 @@ Vespa persistence for Microsoft Agent Framework: complete sessions, ordered chat
 history and file memory. Targets .NET 8 and .NET 10; uses Microsoft.Agents.AI 1.26.0
 and Vespa.NET 3.1.1 or later.
 
-Version 1.1.0 is unreleased. Rewriting identical file content skips the snapshot PUT.
+Version 1.1.0 skips the snapshot PUT when rewriting identical file content.
 File-memory searches read one snapshot for all files,
 with a five-second regex match budget and a ten-second overall search budget.
 Before-retrieval reducers only write a new history revision when content changes.
@@ -12,7 +12,13 @@ Before-retrieval reducers only write a new history revision when content changes
 See the [conversation patterns guide](https://github.com/outmatic/Vespa.NET/blob/main/docs/agent-framework.md) and runnable
 [sample](https://github.com/outmatic/Vespa.NET/tree/main/samples/Vespa.NET.AgentFramework) for configuration and caveats.
 
-Build or pack this optional project from the repository root:
+Install the optional integration:
+
+```sh
+dotnet add package Vespa.NET.AgentFramework --version 1.1.0
+```
+
+To build or pack from source, run these commands from the repository root:
 
 ```sh
 dotnet build src/Vespa.NET.AgentFramework -c Release

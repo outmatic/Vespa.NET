@@ -13,16 +13,14 @@ embedding provider are configured by the consuming application.
 ## Install
 
 ```sh
-dotnet add package Vespa.NET.VectorData --version 1.1.0
+dotnet add package Vespa.NET.VectorData --version 1.2.0
 ```
 
 The connector has its own version, independent of the base client. See the
 [release notes](https://github.com/outmatic/Vespa.NET/blob/main/src/Vespa.NET.VectorData/CHANGELOG.md)
 for its supported surface and examples.
 
-The defaults and options documented below describe unreleased 1.2.0. Build from
-this checkout to use them; 1.1.0 remains the published NuGet version and does not
-provide the same summary defaults or bounded batch options.
+The examples and options below describe version 1.2.0.
 
 ## Build from source
 

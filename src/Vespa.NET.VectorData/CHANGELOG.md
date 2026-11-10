@@ -2,7 +2,7 @@
 
 This package is versioned independently of the base Vespa.NET SDK.
 
-## 1.2.0 (unreleased)
+## 1.2.0
 
 - Collection-specific options let one store/client bind schemas with different
   ranking, summary and required-field contracts without changing store defaults.
