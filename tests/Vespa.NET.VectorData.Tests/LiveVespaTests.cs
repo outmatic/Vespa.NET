@@ -14,6 +14,111 @@ namespace Vespa.VectorData.Tests;
 public sealed class LiveVespaTests(ITestOutputHelper output)
 {
     [VespaIntegrationFact]
+    public async Task MicrosoftChatHistoryMemoryProvider_StoresRecallsAndScopesHistoryAgainstRealVespa()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(8));
+        var ct = timeout.Token;
+        await using var container = new VespaContainer(Environment.GetEnvironmentVariable("VESPA_VECTOR_DATA_IMAGE") ?? VespaContainer.DefaultImage);
+        await container.StartAsync(ct);
+        using var client = container.CreateClient("test");
+        await DeploySampleAsync(client, 3, ct);
+        while (!await client.IsReadyAsync(ct))
+            await Task.Delay(500, ct);
+
+        using var embeddings = new BatchEmbeddingGenerator();
+        using var store = new VespaVectorStore(client, TestHarness.Options with { EmbeddingGenerator = embeddings });
+        const string preference = "Please use C# for my examples.";
+        using (var provider = NativeMemoryProviderTests.CreateProvider(store, "Alice", "first-session"))
+        using (var model = new NativeContextChatClient())
+        {
+            var agent = model.AsAIAgent(new ChatClientAgentOptions { AIContextProviders = [provider] });
+            await agent.RunAsync(preference, cancellationToken: ct);
+        }
+
+        using var observer = store.GetDynamicCollection("chathistory", new()
+        {
+            Properties =
+            [
+                new VectorStoreKeyProperty("Key", typeof(Guid)),
+                new VectorStoreDataProperty("UserId", typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty("SessionId", typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty("Content", typeof(string)),
+                new VectorStoreVectorProperty("ContentEmbedding", typeof(ReadOnlyMemory<float>), 3)
+            ]
+        });
+        List<Dictionary<string, object?>> saved;
+        do
+        {
+            saved = await observer.GetAsync(row => (string?)row["SessionId"] == "first-session", 10,
+                cancellationToken: ct).Collect();
+            if (saved.Count < 2)
+                await Task.Delay(250, ct);
+        } while (saved.Count < 2);
+        Assert.Contains(saved, row => (string?)row["Content"] == preference);
+        foreach (var record in saved)
+        {
+            var key = Assert.IsType<Guid>(record["Key"]);
+            var loaded = await observer.GetAsync(key, new() { IncludeVectors = true }, ct);
+            Assert.NotNull(loaded);
+            Assert.Equal(3, Assert.IsType<ReadOnlyMemory<float>>(loaded["ContentEmbedding"]).Length);
+        }
+
+        using var nextClient = container.CreateClient("test");
+        using var nextStore = new VespaVectorStore(nextClient, TestHarness.Options with { EmbeddingGenerator = embeddings });
+        using (var provider = NativeMemoryProviderTests.CreateProvider(nextStore, "Alice", "next-session"))
+        using (var model = new NativeContextChatClient())
+        {
+            var agent = model.AsAIAgent(new ChatClientAgentOptions { AIContextProviders = [provider] });
+            await agent.RunAsync("Which language should you use?", cancellationToken: ct);
+            Assert.Contains(preference, model.LastInput);
+            Assert.Contains("NATIVE_MEMORY_CONTEXT", model.LastInput);
+            Assert.Equal(1, model.Calls);
+        }
+        using (var provider = NativeMemoryProviderTests.CreateProvider(nextStore, "alice", "other-session"))
+        using (var model = new NativeContextChatClient())
+        {
+            var agent = model.AsAIAgent(new ChatClientAgentOptions { AIContextProviders = [provider] });
+            await agent.RunAsync("Which language should you use?", cancellationToken: ct);
+            Assert.DoesNotContain(preference, model.LastInput);
+            Assert.DoesNotContain("NATIVE_MEMORY_CONTEXT", model.LastInput);
+        }
+        using (var provider = NativeMemoryProviderTests.CreateProvider(nextStore, "Alice", "on-demand-session", true))
+        using (var model = new MemoryToolCallingChatClient("recall_history", "userQuestion", "my examples"))
+        {
+            var agent = model.AsAIAgent(new ChatClientAgentOptions { AIContextProviders = [provider] });
+            var result = await agent.RunAsync("What do you remember?", cancellationToken: ct);
+            Assert.Contains(preference, result.Text);
+            Assert.Equal(2, model.Calls);
+        }
+        var deleteKey = Assert.IsType<Guid>(saved[0]["Key"]);
+        await observer.DeleteAsync(deleteKey, ct);
+        Assert.Null(await observer.GetAsync(deleteKey, cancellationToken: ct));
+        output.WriteLine("Verified the unmodified Microsoft provider with real Vespa: automatic memory, on-demand recall, Guid CRUD and case-sensitive user scopes.");
+    }
+
+    [VespaIntegrationFact]
+    public async Task EnsureCollectionExists_ValidatesAnEmptyCollectionAndRejectsAnUndeployedSchema()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(8));
+        var ct = timeout.Token;
+        await using var container = new VespaContainer(Environment.GetEnvironmentVariable("VESPA_VECTOR_DATA_IMAGE") ?? VespaContainer.DefaultImage);
+        await container.StartAsync(ct);
+        using var client = container.CreateClient("test");
+        await DeploySampleAsync(client, 3, ct);
+        while (!await client.IsReadyAsync(ct))
+            await Task.Delay(500, ct);
+
+        using var store = new VespaVectorStore(client, TestHarness.Options);
+        using var existing = store.GetCollection<string, Article>("article");
+        await existing.EnsureCollectionExistsAsync(ct);
+        Assert.Empty(await existing.GetAsync(row => row.Published, 1, cancellationToken: ct).Collect());
+        using var missing = store.GetCollection<string, Article>("missing_schema");
+        var exception = await Assert.ThrowsAsync<VectorStoreException>(() => missing.EnsureCollectionExistsAsync(ct));
+        Assert.Equal(nameof(missing.EnsureCollectionExistsAsync), exception.OperationName);
+        output.WriteLine(exception.Message);
+    }
+
+    [VespaIntegrationFact]
     public async Task ExistingSchema_CRUD_Filtering_Scores_AndAgentTool_WorkAgainstRealVespa()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(8));
@@ -142,7 +247,7 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
                 services.Replace("</content>", "<tuning><resource-limits><disk>0.95</disk></resource-limits></tuning></content>", StringComparison.Ordinal),
                 cancellationToken);
             var deployment = await RunDotnetAsync(temporaryDirectory,
-                [Path.Combine(published, "Vespa.NET.AgentFramework.dll"), "--deploy-only"], container.Endpoint, cancellationToken,
+                [Path.Combine(published, "Vespa.NET.AgentFramework.Sample.dll"), "--deploy-only"], container.Endpoint, cancellationToken,
                 container.ConfigEndpoint);
             Assert.Contains("Sample application is ready.", deployment);
 

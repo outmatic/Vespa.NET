@@ -4,7 +4,7 @@ namespace Vespa.VectorData;
 
 /// <summary>
 /// A VectorData provider for pre-deployed Vespa schemas. The supplied client and
-/// embedding generator remain owned by the caller. Schema lifecycle is unsupported.
+/// embedding generator remain owned by the caller. Schema deployment is external.
 /// </summary>
 public sealed class VespaVectorStore : VectorStore
 {
@@ -36,8 +36,12 @@ public sealed class VespaVectorStore : VectorStore
     }
 
     public override VectorStoreCollection<object, Dictionary<string, object?>> GetDynamicCollection(
-        string name, VectorStoreCollectionDefinition definition) =>
-        throw new NotSupportedException("The provider supports typed records with string keys, not dynamic collections.");
+        string name, VectorStoreCollectionDefinition definition)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(definition);
+        return new VespaVectorStoreCollection<object, Dictionary<string, object?>>(_client, name, _options, definition);
+    }
 
     public override IAsyncEnumerable<string> ListCollectionNamesAsync(CancellationToken cancellationToken = default) =>
         throw VespaVectorValidation.SchemaLifecycle();
@@ -77,6 +81,6 @@ internal static class VespaVectorValidation
     }
 
     internal static NotSupportedException SchemaLifecycle() => new(
-        "Collection discovery and schema lifecycle require application deployment. " +
-        "Deploy and validate the complete Vespa application separately; this provider only connects to existing schemas.");
+        "Collection discovery and schema creation/deletion require application deployment. " +
+        "Deploy the complete Vespa application separately; this provider connects to existing schemas.");
 }

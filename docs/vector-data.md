@@ -11,7 +11,12 @@ API and standalone `Microsoft.Extensions.VectorData.Abstractions`. The base clie
 and models acquire no connector dependencies. Agent Framework and OllamaSharp
 remain consumers in the sample, and Agent Framework is used in integration tests.
 
-The package starts at `1.0.0` and has its own version, independent of the base
+The separate `Vespa.NET.AgentFramework` package implements chronological history,
+session persistence and file memory. Its Microsoft dependency does not flow into
+VectorData or the base client. See the [conversation patterns guide](agent-framework.md)
+for the pattern map and caveats.
+
+The package has its own version, independent of the base
 client's `3.1.1`. Version changes describe compatibility of the connector API;
 they do not mirror SDK or Microsoft dependency versions. Keeping its project and tests here
 allows changes to be checked against the client in one build. It can move to a
@@ -21,8 +26,13 @@ move its tests, sample and documentation. No internal client APIs are required.
 
 ## Implementation choices
 
-- The provider connects to deployed schemas; lifecycle/discovery calls fail
-  explicitly. Schema deployment belongs to the complete Vespa application.
+- The provider connects to deployed schemas. `EnsureCollectionExistsAsync` checks
+  that the named source is searchable and caches success per collection instance.
+  Creation, deletion, discovery and `CollectionExistsAsync` remain unsupported.
+  Schema deployment belongs to the complete Vespa application.
+- Typed and dynamic dictionary records share mapping and validation. String and
+  `Guid` keys are caller-assigned. Dynamic string vector inputs are embedded in a
+  single batch before writes; precomputed vectors bypass the generator.
 - Filter translation accepts a restricted scalar subset. It rejects lossy casts,
   null/empty-string predicates and array comparisons before any embedding I/O.
   Supported constant promotions retain their actual numeric value.
@@ -47,7 +57,9 @@ dotnet pack src/Vespa.NET.VectorData -c Release
 
 The default tests read actual HTTP request bodies and cover mapping, filters,
 numeric conversions, errors, lifetime, cancellation and an Agent Framework tool
-loop with deterministic model/embedding doubles. Docker tests are reported skipped
+loop with deterministic model/embedding doubles. Native memory tests use Microsoft's
+unmodified `ChatHistoryMemoryProvider` in automatic and on-demand modes, plus
+`TextSearchProvider` alongside session reuse and serialization. Docker tests are reported skipped
 until enabled. Each creates and disposes a dedicated Vespa container; they never
 deploy to another running application. Set `VESPA_VECTOR_DATA_IMAGE` to pin an image.
 
@@ -59,6 +71,10 @@ project, executes it against the deployed 768-dimensional schema, and verifies
 document cleanup. Running this test requires the .NET 10 SDK as well
 as Docker. The test application's relaxed disk threshold is not applied to the
 sample application distributed to users.
+
+Two further Docker tests verify schema checks (including empty and undeployed
+schemas) and Microsoft's native memory provider: message persistence, automatic
+recall, on-demand retrieval, case-sensitive user scopes and `Guid` CRUD.
 
 The [Agent Framework sample](../samples/Vespa.NET.AgentFramework/README.md) supports
 `--deploy --seed` for its first run and `--deploy-only` to prepare a dedicated
@@ -72,6 +88,13 @@ replaces an earlier preference, and writes wait for search visibility. Run the t
 commands in the sample README as separate processes to demonstrate persistence
 without replaying the previous conversation. `VESPA_MEMORY_USER` is a demo scope,
 not authentication or a tenant boundary.
+
+The `--history-memory` mode uses `ChatHistoryMemoryProvider` with the checked-in
+`chathistory` schema. The provider supplies dictionary records and scope filters;
+the connector handles mapping, `Guid` keys and string-to-vector generation. Its
+document/query prefix options let the sample apply Nomic preprocessing without
+changing the provider. Storage records each session while search spans the
+configured user's sessions. This is semantic recall, not chronological replay.
 
 ## Prepare a NuGet package
 
@@ -117,5 +140,5 @@ NuGet policy must allow a new `Vespa.NET.VectorData` package, not only new versi
 of the base SDK packages. No publication occurs on a normal push, pull request,
 or a manual run with `publish_vector_data=false`.
 
-Use `connector-v1.0.0` if tagging this connector release. Do not use a tag starting
+Use `connector-v1.1.0` if tagging this connector release. Do not use a tag starting
 with lowercase `v`: the existing `v*` trigger publishes the three base SDK packages.

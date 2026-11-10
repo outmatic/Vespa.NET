@@ -229,12 +229,11 @@ public sealed class ConnectorTests
     }
 
     [Fact]
-    public async Task LifecycleOperations_DoNotAccessAdminOrPretendToSucceed()
+    public async Task DiscoveryAndDestructiveLifecycleOperations_RemainUnsupported()
     {
         using var harness = new TestHarness();
         Assert.Throws<NotSupportedException>(() => harness.Store.ListCollectionNamesAsync());
         await Assert.ThrowsAsync<NotSupportedException>(() => harness.Store.CollectionExistsAsync("article"));
-        await Assert.ThrowsAsync<NotSupportedException>(() => harness.Collection.EnsureCollectionExistsAsync());
         await Assert.ThrowsAsync<NotSupportedException>(() => harness.Collection.EnsureCollectionDeletedAsync());
         Assert.Empty(harness.Handler.Requests);
     }

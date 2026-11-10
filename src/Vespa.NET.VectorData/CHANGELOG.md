@@ -2,6 +2,22 @@
 
 This package is versioned independently of the base Vespa.NET SDK.
 
+## 1.1.0
+
+- Dynamic dictionary collections with explicit property definitions, storage names
+  and indexed scalar filters.
+- Caller-assigned `Guid` keys in typed and dynamic collections.
+- Embedding generation for dynamic string vector properties, including batch
+  generation, mixed precomputed/text inputs and validation before document writes.
+- Optional document and query embedding prefixes for models such as Nomic.
+- Read-only `EnsureCollectionExistsAsync` validation of an already deployed schema.
+  Application deployment remains external to the connector.
+- Microsoft Agent Framework's unmodified `ChatHistoryMemoryProvider`, with automatic
+  and on-demand recall, scope filters and persistence across sessions. The sample
+  includes a complete schema and `--history-memory` mode.
+- Tests for native memory, `TextSearchProvider` and session serialization, including
+  native memory against a real Vespa instance.
+
 ## 1.0.0
 
 - Typed `Microsoft.Extensions.VectorData` collections over existing Vespa schemas,

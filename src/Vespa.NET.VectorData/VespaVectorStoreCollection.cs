@@ -9,7 +9,7 @@ using Vespa.Models;
 
 namespace Vespa.VectorData;
 
-/// <summary>A typed binding to an existing schema containing one float32 angular vector.</summary>
+/// <summary>A record binding to an existing schema containing one float32 angular vector.</summary>
 [SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "Matches the VectorData VectorStoreCollection abstraction.")]
 public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreCollection<TKey, TRecord> where TKey : notnull where TRecord : class
 {
@@ -17,18 +17,20 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     private readonly VespaVectorStoreOptions _options;
     private readonly VespaVectorRecordMapper<TRecord> _mapper;
     private readonly IEmbeddingGenerator<string, Embedding<float>>? _embeddingGenerator;
+    private readonly SemaphoreSlim _initializationLock = new(1, 1);
+    private bool _collectionInitialized;
     private bool _disposed;
 
     internal VespaVectorStoreCollection(IVespaClient client, string name, VespaVectorStoreOptions options,
         VectorStoreCollectionDefinition? definition)
     {
-        if (typeof(TKey) != typeof(string))
-            throw new NotSupportedException("The provider supports string keys only.");
         VespaVectorValidation.Identifier(name, nameof(name));
         _client = client;
         Name = name;
         _options = options;
         _mapper = new(definition);
+        if (typeof(TKey) != _mapper.KeyType && !(typeof(TKey) == typeof(object) && _mapper.IsDynamic))
+            throw new NotSupportedException("The collection key type must match the mapped string or Guid key; dynamic collections use object keys.");
         var generator = definition?.Properties.OfType<VectorStoreVectorProperty>().Single().EmbeddingGenerator
             ?? definition?.EmbeddingGenerator ?? options.EmbeddingGenerator;
         _embeddingGenerator = generator switch
@@ -44,8 +46,28 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     public override Task<bool> CollectionExistsAsync(CancellationToken cancellationToken = default) =>
         throw VespaVectorValidation.SchemaLifecycle();
 
-    public override Task EnsureCollectionExistsAsync(CancellationToken cancellationToken = default) =>
-        throw VespaVectorValidation.SchemaLifecycle();
+    public override async Task EnsureCollectionExistsAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        await _initializationLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_collectionInitialized)
+                return;
+            await QueryAsync(new VespaSearchRequest
+            {
+                Yql = $"select documentid from sources {Name} where true",
+                ModelRestrict = Name,
+                Hits = 0
+            }.WithTimeout(_options.SearchTimeout), nameof(EnsureCollectionExistsAsync), cancellationToken);
+            _collectionInitialized = true;
+        }
+        finally
+        {
+            _initializationLock.Release();
+        }
+    }
 
     public override Task EnsureCollectionDeletedAsync(CancellationToken cancellationToken = default) =>
         throw VespaVectorValidation.SchemaLifecycle();
@@ -55,12 +77,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(record);
-        var key = _mapper.GetKey(record);
-        var fields = _mapper.ToFields(record);
-        var response = await ExecuteAsync(nameof(UpsertAsync), () =>
-            _client.Documents.PutAsync(FullId(key), fields, Name, _options.Namespace, cancellationToken: cancellationToken), cancellationToken);
-        if (response.HadIgnoredFields)
-            throw Failure(nameof(UpsertAsync), "Vespa ignored one or more mapped fields. Check the deployed schema. The write may already have been partially applied; no rollback was performed.");
+        await UpsertAsync([record], cancellationToken);
     }
 
     public override async Task UpsertAsync(IEnumerable<TRecord> records, CancellationToken cancellationToken = default)
@@ -68,10 +85,43 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(records);
+        List<(string Key, Dictionary<string, object?> Fields)> documents = [];
         foreach (var record in records)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await UpsertAsync(record, cancellationToken);
+            ArgumentNullException.ThrowIfNull(record);
+            documents.Add((_mapper.GetKey(record), _mapper.ToFields(record)));
+        }
+        var pending = documents.Where(d => d.Fields[_mapper.VectorProperty.StorageName] is string).ToArray();
+        if (pending.Length > 0)
+        {
+            if (_embeddingGenerator is null)
+                throw new NotSupportedException("Upserting string vector fields requires an IEmbeddingGenerator<string, Embedding<float>>.");
+            var texts = pending.Select(d => _options.DocumentEmbeddingPrefix + (string)d.Fields[_mapper.VectorProperty.StorageName]!);
+            var embeddings = await _embeddingGenerator.GenerateAsync(texts, cancellationToken: cancellationToken);
+            if (embeddings.Count != pending.Length)
+                throw Failure(nameof(UpsertAsync), "The embedding generator returned a different number of vectors than input records.");
+            for (var i = 0; i < pending.Length; i++)
+            {
+                var vector = embeddings[i].Vector.ToArray();
+                try
+                {
+                    _mapper.ValidateVector(vector);
+                }
+                catch (ArgumentException exception)
+                {
+                    throw Failure(nameof(UpsertAsync), "The embedding generator returned an invalid vector.", exception);
+                }
+                pending[i].Fields[_mapper.VectorProperty.StorageName] = VespaVectorRecordMapper<TRecord>.Tensor(vector);
+            }
+        }
+        foreach (var document in documents)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var response = await ExecuteAsync(nameof(UpsertAsync), () =>
+                _client.Documents.PutAsync(FullId(document.Key), document.Fields, Name, _options.Namespace, cancellationToken: cancellationToken), cancellationToken);
+            if (response.HadIgnoredFields)
+                throw Failure(nameof(UpsertAsync), "Vespa ignored one or more mapped fields. Check the deployed schema. The write may already have been partially applied; no rollback was performed.");
         }
     }
 
@@ -80,7 +130,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
-        var id = Key(key);
+        var id = _mapper.FormatKey(key);
         var document = await ExecuteAsync(nameof(GetAsync), () =>
             _client.Documents.GetAsync<Dictionary<string, JsonElement>>(
                 FullId(id), Name, _options.Namespace, cancellationToken: cancellationToken), cancellationToken);
@@ -91,7 +141,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
-        var id = Key(key);
+        var id = _mapper.FormatKey(key);
         await ExecuteAsync(nameof(DeleteAsync), () =>
             _client.Documents.DeleteAsync(FullId(id), Name, _options.Namespace, cancellationToken: cancellationToken), cancellationToken);
     }
@@ -124,9 +174,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
             throw new ArgumentException("The score threshold must be finite.", nameof(options));
         if (options?.VectorProperty is { } selector)
         {
-            var expression = selector.Body is UnaryExpression { NodeType: ExpressionType.Convert } convert ? convert.Operand : selector.Body;
-            if (expression is not MemberExpression member || member.Expression != selector.Parameters[0] ||
-                member.Member.Name != _mapper.VectorProperty.Property.Name)
+            if (!new VespaVectorFilter<TRecord>(_mapper).IsVectorSelector(selector))
                 throw new NotSupportedException("Select the collection's mapped vector property directly.");
         }
         var filterPredicate = options?.Filter is { } filter
@@ -135,7 +183,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         {
             ReadOnlyMemory<float> memory => memory.ToArray(),
             float[] array => (float[])array.Clone(),
-            string text when _embeddingGenerator is not null => (await _embeddingGenerator.GenerateVectorAsync(text, cancellationToken: cancellationToken)).ToArray(),
+            string text when _embeddingGenerator is not null => (await _embeddingGenerator.GenerateVectorAsync(_options.QueryEmbeddingPrefix + text, cancellationToken: cancellationToken)).ToArray(),
             string => throw new NotSupportedException("Text queries require an IEmbeddingGenerator<string, Embedding<float>>."),
             _ => throw new NotSupportedException("Queries must be float[], ReadOnlyMemory<float>, or text with an embedding generator.")
         };
@@ -173,6 +221,8 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     protected override void Dispose(bool disposing)
     {
         _disposed = true;
+        if (disposing)
+            _initializationLock.Dispose();
         base.Dispose(disposing);
     }
 
@@ -251,11 +301,4 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     }
 
     private string FullId(string key) => $"id:{_options.Namespace}:{Name}::{key}";
-
-    private static string Key(TKey key)
-    {
-        var value = (string?)(object?)key;
-        ArgumentException.ThrowIfNullOrWhiteSpace(value, nameof(key));
-        return value;
-    }
 }

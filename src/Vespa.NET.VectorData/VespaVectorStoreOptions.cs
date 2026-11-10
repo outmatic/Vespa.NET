@@ -26,6 +26,12 @@ public sealed record VespaVectorStoreOptions
     /// <summary>Vespa query timeout, independent of the supplied HTTP client's timeout.</summary>
     public TimeSpan SearchTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
-    /// <summary>Optional, caller-owned generator for text queries.</summary>
+    /// <summary>Optional, caller-owned generator for text queries and dynamic string vector fields.</summary>
     public IEmbeddingGenerator<string, Embedding<float>>? EmbeddingGenerator { get; init; }
+
+    /// <summary>Prefix added to string vector inputs before embedding generation during upsert.</summary>
+    public string? DocumentEmbeddingPrefix { get; init; }
+
+    /// <summary>Prefix added to text queries before embedding generation during search.</summary>
+    public string? QueryEmbeddingPrefix { get; init; }
 }

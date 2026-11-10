@@ -10,6 +10,16 @@ using Vespa.VectorData;
 var vespaEndpoint = Environment.GetEnvironmentVariable("VESPA_ENDPOINT") ?? "http://localhost:8080";
 var configEndpoint = Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT")
     ?? new UriBuilder(vespaEndpoint) { Port = 19071 }.Uri.AbsoluteUri;
+var historyMemory = args.Contains("--history-memory", StringComparer.Ordinal);
+var onDemand = args.Contains("--on-demand", StringComparer.Ordinal);
+var pattern = ReadOption("--pattern");
+var compaction = ReadOption("--compact");
+if (historyMemory && args.Contains("--memory", StringComparer.Ordinal))
+    throw new ArgumentException("Choose --history-memory or --memory for this run.");
+if (onDemand && !historyMemory && pattern != "text-search")
+    throw new ArgumentException("Use --on-demand with --history-memory or --pattern text-search.");
+if (pattern is not null && (historyMemory || args.Contains("--memory", StringComparer.Ordinal)))
+    throw new ArgumentException("Choose --pattern, --history-memory or --memory for this run.");
 using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 using var vespa = new VespaClient(new VespaClientOptions
 {
@@ -45,9 +55,43 @@ using var store = new VespaVectorStore(vespa, new()
 {
     Namespace = "knowledge",
     RankProfile = "vector_search",
-    EmbeddingGenerator = embeddings
+    EmbeddingGenerator = embeddings,
+    DocumentEmbeddingPrefix = historyMemory ? "search_document: " : null,
+    QueryEmbeddingPrefix = historyMemory ? "search_query: " : null
 });
-var question = string.Join(' ', args.Where(a => a is not ("--seed" or "--deploy" or "--deploy-only" or "--memory")));
+var questionParts = new List<string>();
+for (var i = 0; i < args.Length; i++)
+    if (args[i] is "--pattern" or "--compact")
+        i++;
+    else if (args[i] is not ("--seed" or "--deploy" or "--deploy-only" or "--memory" or "--history-memory" or "--on-demand" or "--stream" or "--reduce-history"))
+        questionParts.Add(args[i]);
+var question = string.Join(' ', questionParts);
+if (historyMemory)
+{
+    var userId = Environment.GetEnvironmentVariable("VESPA_MEMORY_USER") ?? "demo-user";
+    var sessionId = Guid.NewGuid().ToString("D");
+    using var provider = new ChatHistoryMemoryProvider(store, "chathistory", 768,
+        _ => new ChatHistoryMemoryProvider.State(
+            new() { ApplicationId = "vespa-sample", AgentId = "history-memory", UserId = userId, SessionId = sessionId },
+            new() { ApplicationId = "vespa-sample", AgentId = "history-memory", UserId = userId }),
+        new()
+        {
+            SearchTime = onDemand ? ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling
+                : ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+        });
+    using var historyChat = new OllamaApiClient(ollamaEndpoint, model);
+    var historyAgent = historyChat.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "HistoryMemoryAssistant",
+        ChatOptions = new() { Instructions = "Answer using the conversation and retrieved memories. Say when no relevant preference is available." },
+        AIContextProviders = [provider]
+    });
+    Console.WriteLine(await historyAgent.RunAsync(string.IsNullOrWhiteSpace(question)
+        ? "Which programming language should you use for my code examples?" : question,
+        cancellationToken: cancellation.Token));
+    return;
+}
+
 if (args.Contains("--memory", StringComparer.Ordinal))
 {
     using var memories = store.GetCollection<string, MemoryRecord>("memory");
@@ -96,6 +140,15 @@ if (args.Contains("--seed", StringComparer.Ordinal))
     Console.WriteLine("Three sample documents are searchable.");
 }
 
+if (pattern is not null)
+{
+    using var patternChat = new OllamaApiClient(ollamaEndpoint, model);
+    await ConversationPatterns.RunAsync(pattern, compaction, args.Contains("--reduce-history", StringComparer.Ordinal), onDemand,
+        args.Contains("--stream", StringComparer.Ordinal), string.IsNullOrWhiteSpace(question) ? "Continue our conversation." : question,
+        vespa, patternChat, embeddings, store, cancellation.Token);
+    return;
+}
+
 // nomic-embed-text recommends different prefixes for query and document inputs.
 var search = AIFunctionFactory.Create(
     [Description("Search Vespa documentation and return source IDs with supporting text.")]
@@ -115,3 +168,13 @@ AIAgent agent = chat.AsAIAgent(
     tools: [search]);
 Console.WriteLine(await agent.RunAsync(string.IsNullOrWhiteSpace(question) ? "How does vector search work in Vespa?" : question,
     cancellationToken: cancellation.Token));
+
+string? ReadOption(string name)
+{
+    var index = Array.IndexOf(args, name);
+    if (index < 0)
+        return null;
+    if (index + 1 == args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        throw new ArgumentException($"{name} requires a value.");
+    return args[index + 1];
+}
