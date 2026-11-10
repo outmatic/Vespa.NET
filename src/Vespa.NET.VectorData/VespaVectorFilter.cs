@@ -9,16 +9,25 @@ internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord
 {
     internal string Translate(Expression<Func<TRecord, bool>> filter) => Visit(filter.Body, filter.Parameters[0]);
 
+    internal bool IsVectorSelector(LambdaExpression selector)
+    {
+        var expression = selector.Body;
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert, Type: var type } convert && type == typeof(object))
+            expression = convert.Operand;
+        return TryPropertyName(Unwrap(expression, selector.Parameters[0]), selector.Parameters[0], out var name)
+            && mapper.Property(name).IsVector;
+    }
+
     private string Visit(Expression expression, ParameterExpression parameter)
     {
-        expression = Unwrap(expression);
+        expression = Unwrap(expression, parameter);
         if (expression is BinaryExpression { NodeType: ExpressionType.AndAlso or ExpressionType.OrElse } logic)
             return $"({Visit(logic.Left, parameter)} {(logic.NodeType == ExpressionType.AndAlso ? "and" : "or")} {Visit(logic.Right, parameter)})";
         if (expression is UnaryExpression { NodeType: ExpressionType.Not } not)
             return $"!({Visit(not.Operand, parameter)})";
         if (expression is ConstantExpression { Value: bool constant })
             return constant ? "true" : "false";
-        if (TryProperty(expression, parameter, out var booleanProperty) && booleanProperty.Property.PropertyType == typeof(bool))
+        if (TryProperty(expression, parameter, out var booleanProperty) && booleanProperty.Type == typeof(bool))
             return $"{booleanProperty.StorageName} = true";
         if (expression is not BinaryExpression comparison || comparison.NodeType is not
             (ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.GreaterThan or
@@ -28,9 +37,9 @@ internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord
         var nodeType = comparison.NodeType;
         Expression valueExpression;
         VespaVectorRecordMapper<TRecord>.MappedProperty property;
-        if (TryProperty(Unwrap(comparison.Left), parameter, out property))
+        if (TryProperty(Unwrap(comparison.Left, parameter), parameter, out property))
             valueExpression = comparison.Right;
-        else if (TryProperty(Unwrap(comparison.Right), parameter, out property))
+        else if (TryProperty(Unwrap(comparison.Right, parameter), parameter, out property))
         {
             valueExpression = comparison.Left;
             nodeType = nodeType switch
@@ -81,20 +90,49 @@ internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord
     private bool TryProperty(Expression expression, ParameterExpression parameter,
         out VespaVectorRecordMapper<TRecord>.MappedProperty property)
     {
-        if (expression is MemberExpression member && member.Expression == parameter)
+        if (TryPropertyName(expression, parameter, out var name))
         {
-            property = mapper.DataProperty(member.Member.Name);
+            property = mapper.DataProperty(name);
             return true;
         }
         property = null!;
         return false;
     }
 
-    private static Expression Unwrap(Expression expression)
+    private bool TryPropertyName(Expression expression, ParameterExpression parameter, out string name)
+    {
+        if (!mapper.IsDynamic && expression is MemberExpression member && member.Expression == parameter)
+        {
+            name = member.Member.Name;
+            return true;
+        }
+        Expression? key = expression switch
+        {
+            MethodCallExpression { Object: var target, Method.Name: "get_Item", Arguments.Count: 1 } call when mapper.IsDynamic && target == parameter => call.Arguments[0],
+            IndexExpression { Object: var target, Arguments.Count: 1 } index when mapper.IsDynamic && target == parameter => index.Arguments[0],
+            _ => null
+        };
+        if (key is not null && Value(key) is string propertyName)
+        {
+            name = propertyName;
+            return true;
+        }
+        name = "";
+        return false;
+    }
+
+    private Expression Unwrap(Expression expression, ParameterExpression parameter)
     {
         while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
         {
-            ValidateConversion(convert);
+            if (mapper.IsDynamic && convert.Method is null && convert.Operand.Type == typeof(object) &&
+                TryPropertyName(convert.Operand, parameter, out var name))
+            {
+                if (mapper.Property(name).Type != convert.Type)
+                    throw new NotSupportedException("A dictionary field cast must match its declared collection type.");
+            }
+            else
+                ValidateConversion(convert);
             expression = convert.Operand;
         }
         return expression;

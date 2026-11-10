@@ -9,6 +9,8 @@
     <documents>
       <document type="article" mode="index" />
       <document type="memory" mode="index" />
+      <document type="chathistory" mode="index" />
+      <document type="agentstate" mode="store-only" />
     </documents>
     <nodes>
       <node distribution-key="0" hostalias="node1" />

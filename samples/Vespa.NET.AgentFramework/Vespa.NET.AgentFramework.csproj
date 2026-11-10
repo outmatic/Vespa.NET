@@ -5,11 +5,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <AssemblyName>Vespa.NET.AgentFramework.Sample</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Vespa.NET.AgentFramework.Tests" />
     <PackageReference Include="Microsoft.Agents.AI" />
+    <PackageReference Include="Microsoft.Agents.AI.Harness" />
     <PackageReference Include="OllamaSharp" />
     <ProjectReference Include="../../src/Vespa.NET.VectorData/Vespa.NET.VectorData.csproj" />
+    <ProjectReference Include="../../src/Vespa.NET.AgentFramework/Vespa.NET.AgentFramework.csproj" />
     <None Update="app/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -514,9 +514,14 @@ set `VESPA_INTEGRATION_TESTS=1`; this flag is not required by the helper itself.
 ## Documentation
 
 The [VectorData connector](src/Vespa.NET.VectorData/README.md) is a
-separate optional package for typed vector-store access and Microsoft Agent
-Framework tools for retrieval and persistent user preferences. See its README
+separate optional package for typed and dictionary vector-store access, retrieval
+and preference tools, and Microsoft Agent Framework's native chat-history memory. See its README
 for installation, examples and supported operations.
+
+The [Agent Framework integration](src/Vespa.NET.AgentFramework/README.md) adds
+session snapshots, chronological history and file memory. The
+[conversation patterns guide](docs/agent-framework.md) covers Microsoft's .NET
+patterns, runnable examples and caveats.
 
 | Guide | Content |
 |---|---|

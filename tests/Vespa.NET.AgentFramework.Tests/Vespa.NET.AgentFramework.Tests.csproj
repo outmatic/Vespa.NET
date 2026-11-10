@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Agents.AI.Harness" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <ProjectReference Include="../../src/Vespa.NET.AgentFramework/Vespa.NET.AgentFramework.csproj" />
+    <ProjectReference Include="../../samples/Vespa.NET.AgentFramework/Vespa.NET.AgentFramework.csproj" />
+    <ProjectReference Include="../../src/Vespa.NET.Testcontainers/Vespa.NET.Testcontainers.csproj" />
+    <None Include="../../samples/Vespa.NET.AgentFramework/app/**/*" Link="app/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

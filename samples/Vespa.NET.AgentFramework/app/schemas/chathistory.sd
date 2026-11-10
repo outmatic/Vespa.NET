@@ -1,0 +1,54 @@
+schema chathistory {
+    document chathistory {
+        field Role type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field MessageId type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field AuthorName type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field ApplicationId type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field AgentId type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field UserId type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field SessionId type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field CreatedAt type string {
+            indexing: attribute | summary
+            match: cased
+        }
+        field Content type string {
+            indexing: summary | index
+        }
+        field ContentEmbedding type tensor<float>(x[768]) {
+            indexing: attribute | index | summary
+            attribute {
+                distance-metric: angular
+            }
+        }
+    }
+    rank-profile vector_search {
+        inputs {
+            query(query_embedding) tensor<float>(x[768])
+        }
+        first-phase {
+            expression: closeness(field, ContentEmbedding)
+        }
+        match-features: distance(field, ContentEmbedding)
+    }
+}

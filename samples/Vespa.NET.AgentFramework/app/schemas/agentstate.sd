@@ -1,0 +1,19 @@
+schema agentstate {
+    document agentstate {
+        field format_version type int {
+            indexing: summary
+        }
+        field scope type string {
+            indexing: summary
+        }
+        field key type string {
+            indexing: summary
+        }
+        field revision type string {
+            indexing: summary
+        }
+        field payload type string {
+            indexing: summary
+        }
+    }
+}
