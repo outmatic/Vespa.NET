@@ -20,6 +20,10 @@ The connector has its own version, independent of the base client. See the
 [release notes](https://github.com/outmatic/Vespa.NET/blob/main/src/Vespa.NET.VectorData/CHANGELOG.md)
 for its supported surface and examples.
 
+The summary-class and HNSW exploration options documented below are unreleased
+1.2.0 changes. Build from this checkout to use them; 1.1.0 remains the published
+NuGet version. The standalone quickstart uses APIs available in 1.1.0.
+
 ## Build from source
 
 Run these commands from the repository root to create a console application
@@ -40,7 +44,7 @@ dotnet pack src/Vespa.NET.VectorData -c Release -o artifacts/packages
 
 In a separate consumer project, add the absolute path to `artifacts/packages` as
 a NuGet source alongside nuget.org, then install `Vespa.NET.VectorData` with
-`--version 1.1.0`. The client dependency (`Vespa.NET >= 3.1.1`) and other
+`--version 1.2.0`. The client dependency (`Vespa.NET >= 3.1.1`) and other
 dependencies are restored from nuget.org.
 
 ## Deploy the schema first
@@ -246,6 +250,33 @@ between -1 and 1, with larger values indicating closer vectors. It does not use
 raw Vespa relevance as a cosine score. Unrelated reranking would violate the
 ordering contract.
 
+### Filter indexes and summaries
+
+For frequently used selective filters, such as a user or session ID, use
+`attribute: fast-search` to build posting lists. Add `rank: filter` when a field
+only restricts matching and does not contribute term-based ranking. The sample
+uses these settings on `category`, `user_id`, `UserId` and `SessionId`.
+Indexing every metadata field increases RAM and write costs; choose indexes for
+the filters your application uses. See [Vespa's tuning guidance](https://docs.vespa.ai/en/performance/feature-tuning.html#when-to-use-fast-search-for-attribute-fields).
+
+The sample schemas define a `vector_data` document summary containing the data
+fields and `documentid`, without the embedding. Set `SummaryClass = "vector_data"`
+to use it for searches and filtered reads when `IncludeVectors` is false.
+`VectorSummaryClass` independently selects the summary for `IncludeVectors = true`;
+leave it unset to use Vespa's default summary, which includes the sample vectors.
+These options do not affect key-based document reads.
+
+YQL field selection alone filters the result in the container after fetching a
+complete summary from the content node. A named summary avoids fetching unneeded
+vector fields between those services. The sample summary still reads content and
+document IDs from disk; it is not an attribute-only summary.
+See [document summaries](https://docs.vespa.ai/en/querying/document-summaries.html).
+
+Both summary settings default to `null`, preserving the behavior of existing
+deployments. Deploy the named summary before enabling its option. Keep every
+mapped data field and `documentid` in that summary, and the vector field in the
+summary used for vector reads. Missing summaries fail as backend query errors.
+
 ## Dictionary records and generated embeddings
 
 `GetDynamicCollection(name, definition)` returns a collection of
@@ -317,6 +348,9 @@ remains cancellation; unsupported operations and invalid arguments fail locally.
 | `RankProfile` | Required deployed angular-proximity profile with distance match feature |
 | `QueryTensorName` | Query input name; default `query_embedding` |
 | `Approximate` | Use approximate nearest-neighbor search; default `true` |
+| `HnswExploreAdditionalHits` | Optional nonnegative extra HNSW exploration; applies to approximate search. Default `null` leaves Vespa's default unchanged |
+| `SummaryClass` | Optional deployed summary for searches/filtered reads without vectors; default `null` uses Vespa's default |
+| `VectorSummaryClass` | Independent deployed summary for `IncludeVectors = true`; default `null` uses Vespa's default |
 | `MaxResults` | Maximum `top + Skip`; default `400`. Vespa's query profile must also permit the requested hits and offset |
 | `SearchTimeout` | Vespa per-query timeout; default five seconds. The HTTP client's timeout applies independently |
 | `EmbeddingGenerator` | Optional caller-owned `IEmbeddingGenerator<string, Embedding<float>>` for text queries and dynamic string vector inputs |
@@ -327,6 +361,17 @@ The caller owns the `IVespaClient` and embedding generator. Keep them alive for
 all collections that use them and dispose them yourself; disposing a collection
 or store does not dispose either dependency. Configure endpoints, authentication,
 HTTP resilience, and telemetry through the base client.
+
+Reuse the same `IVespaClient` for multiple stores or schema configurations. Store
+options are fixed when a wrapper is constructed; changing a rank profile or summary
+does not require another HTTP client or another Vespa deployment. The selected
+profile/summary must already exist. HNSW construction settings and filter indexes
+belong to the deployed schema, while `HnswExploreAdditionalHits` is a query-time
+setting. Tune approximate-search recall against exact search before choosing it.
+
+See [existing deployments, application configuration and Cloud](https://github.com/outmatic/Vespa.NET/blob/main/docs/agent-framework.md#reuse-an-existing-client-and-deployment)
+for client reuse, DI, application packages and the distinction between Cloud data
+access and Cloud deployment.
 
 This provider implements only part of the VectorData surface. Schema deployment,
 deletion and discovery, `CollectionExistsAsync`, other key or vector types, other distance metrics,

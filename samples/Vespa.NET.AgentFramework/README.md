@@ -8,6 +8,11 @@ All modes use Ollama for embeddings and chat. Run these commands from the reposi
 See the [conversation patterns guide](../../docs/agent-framework.md) for the full
 .NET pattern map, configuration and caveats.
 
+For an existing cluster, [reuse the deployed application and configure the client](../../docs/agent-framework.md#reuse-an-existing-client-and-deployment).
+The guide also covers custom `services.xml`, generated application options, Cloud
+data-plane access and deployment through the Cloud CLI/control plane. The sample's
+`--deploy` path targets a self-hosted config server.
+
 ## First run
 
 Install .NET 10, Docker and Ollama, start Ollama, then start a dedicated Vespa instance:

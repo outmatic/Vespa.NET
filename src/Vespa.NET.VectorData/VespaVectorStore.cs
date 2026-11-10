@@ -21,6 +21,12 @@ public sealed class VespaVectorStore : VectorStore
             throw new ArgumentException("A document namespace cannot contain ':'.", nameof(options));
         VespaVectorValidation.Identifier(options.RankProfile, nameof(options.RankProfile));
         VespaVectorValidation.Identifier(options.QueryTensorName, nameof(options.QueryTensorName));
+        if (options.SummaryClass is { } summary)
+            ArgumentException.ThrowIfNullOrWhiteSpace(summary, nameof(options.SummaryClass));
+        if (options.VectorSummaryClass is { } vectorSummary)
+            ArgumentException.ThrowIfNullOrWhiteSpace(vectorSummary, nameof(options.VectorSummaryClass));
+        if (options.HnswExploreAdditionalHits is { } exploration)
+            ArgumentOutOfRangeException.ThrowIfNegative(exploration, nameof(options.HnswExploreAdditionalHits));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxResults);
         if (options.SearchTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(options), "SearchTimeout must be positive.");

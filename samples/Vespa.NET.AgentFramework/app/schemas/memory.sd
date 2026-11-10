@@ -2,6 +2,8 @@ schema memory {
     document memory {
         field user_id type string {
             indexing: attribute | summary
+            attribute: fast-search
+            rank: filter
             match: cased
         }
         field topic type string {
@@ -17,6 +19,13 @@ schema memory {
                 distance-metric: angular
             }
         }
+    }
+    document-summary vector_data {
+        from-disk
+        summary documentid {}
+        summary user_id {}
+        summary topic {}
+        summary text {}
     }
     rank-profile vector_search {
         inputs {

@@ -59,6 +59,192 @@ or embedding model. Deployment replaces the application's configuration on that 
 (Vespa 8.178 or newer). See the official [conditional writes guide](https://docs.vespa.ai/en/writing/document-v1-api-guide.html#conditional-writes).
 Neither integration package deploys an application through collection operations.
 
+## Reuse an existing client and deployment
+
+Pass an existing `IVespaClient` to either integration. It can target self-hosted
+Vespa or a deployed Vespa Cloud application. Normal collection, memory and session
+operations reuse that client and do not change the application's configuration.
+
+Client reuse and application-package configuration are available in the published
+packages. `SummaryClass`, `VectorSummaryClass` and `HnswExploreAdditionalHits` below
+are unreleased VectorData 1.2.0 additions; use the source checkout until publication.
+
+```csharp
+using var vectors = new VespaVectorStore(existingClient, new()
+{
+    Namespace = "knowledge",
+    RankProfile = "vector_search",
+    QueryTensorName = "query_embedding",
+    SummaryClass = "vector_data",
+    VectorSummaryClass = "default",
+    Approximate = true,
+    HnswExploreAdditionalHits = 64,
+    SearchTimeout = TimeSpan.FromSeconds(5),
+    EmbeddingGenerator = embeddings
+});
+var snapshots = new VespaAgentStateStore(existingClient, new()
+{
+    Namespace = "knowledge",
+    Schema = "agentstate",
+    Scope = authenticatedScope,
+    MaxPayloadBytes = 4 * 1024 * 1024
+});
+```
+
+The caller owns the client and embedding generator. Dispose them at the end of
+their application lifetime, after their stores/collections. Different store wrappers
+can share the same client while using different rank profiles, summaries or
+namespaces; creating a wrapper does not create another HTTP transport.
+
+For DI, resolve the client already registered by `AddVespaClient`:
+
+```csharp
+IVespaClient existingClient = serviceProvider.GetRequiredService<IVespaClient>();
+```
+
+Named registrations use
+`serviceProvider.GetRequiredKeyedService<IVespaClient>("my-vespa")`.
+Keep endpoint authentication, resilience and telemetry in that registration.
+See [client configuration](configuration.md) for registration and certificate options.
+
+The console sample connects to `VESPA_ENDPOINT` and performs deployment only when
+`--deploy` or `--deploy-only` is supplied. For an existing compatible deployment,
+run the desired mode without either flag. Its environment variables are sample
+configuration; library consumers use the options objects and injected dependencies.
+
+### Which settings change where
+
+| Setting | Configuration point | Deployment needed? |
+|---|---|---|
+| Endpoint, certificates/token, HTTP timeout, retries | Existing `VespaClient` or its DI registration | No schema deployment; the server must authorize the credential |
+| Namespace and schema/collection name | Store options and `GetCollection`/provider constructor | The named schema must exist; namespace must satisfy the connector's dedicated-schema contract |
+| Rank profile and query tensor name | `VespaVectorStoreOptions` | Only when introducing/changing their definitions |
+| Summary class names | `SummaryClass` and `VectorSummaryClass` | Named summaries must exist before selecting them |
+| Approximate/exact search, extra HNSW exploration, search timeout | `VespaVectorStoreOptions` | No |
+| Embedding model, dimensions and preprocessing | Generator, record definition and tensor schema | Dimensions require schema changes; changing model requires re-embedding existing data |
+| Filter indexes, HNSW construction and tensor storage | `.sd` schema or base SDK schema attributes | Yes; restart/re-feed requirements depend on the change |
+| Nodes, redundancy, resources, clients and routing | Application package (`services.xml`, plus deployment files) | Yes; not a per-query client setting |
+| Snapshot payload limit, provider state key and authorized scope | Agent Framework store/provider options | No schema deployment; changing scope/state keys changes which stored data is addressed |
+
+Options are read when a store/provider is constructed. To use a different set,
+construct another wrapper over the same client. For native search options beyond
+the VectorData surface, use the base client's `Search` API and rank profiles.
+
+### Select lightweight summaries
+
+The supplied `article`, `memory` and `chathistory` schemas define a `vector_data`
+summary without embeddings. Opt in with `SummaryClass = "vector_data"` after
+deploying the updated schema. `VectorSummaryClass` is independent: unset, it uses
+Vespa's default summary for `IncludeVectors = true`. Both options default to `null`,
+so existing deployments retain their previous behavior.
+
+To adopt the optimized schemas, deploy the new summary definitions and selected
+filter indexes first, allow any required content-node restart to complete, then
+enable the summary option. These changes keep the document fields, tensor dimensions
+and embedding model unchanged. Adding `fast-search` requires restart, not re-feeding;
+adding named summaries over the existing summary fields does not require generating
+new embeddings. Follow the deployment plan reported by your Vespa environment.
+
+This matters because YQL projection only filters fields after the content node
+returns the summary. A dedicated summary avoids transferring vectors when the
+agent needs only text and metadata. It must include all mapped data fields and
+`documentid`. The summary used for vector reads must also include the embedding.
+See the [Vespa summary documentation](https://docs.vespa.ai/en/querying/document-summaries.html#selecting-summary-fields-in-yql).
+
+The supplied scope indexes use `fast-search` and `rank: filter` for frequently
+selective user/session/category filters. Other metadata retains its existing
+mapping. These indexes cost memory and write work; tune them for the actual query
+patterns. `HnswExploreAdditionalHits` increases approximate graph exploration,
+trading additional computations for potential recall improvements; it is ignored
+in exact mode. HNSW graph construction remains an application-schema setting.
+
+### Configure application deployment from C#
+
+For self-hosted deployment, `client.Admin.DeployAsync` accepts a complete ZIP,
+including your own `services.xml`, schemas, hosts and other application files:
+
+```csharp
+using var package = new MemoryStream();
+ZipFile.CreateFromDirectory("my-application", package);
+package.Position = 0;
+await existingClient.Admin.DeployAsync(package, cancellationToken: ct);
+```
+
+Configure the client's `ConfigServerEndpoint` for the target config server.
+Deployment replaces the application's configuration, so combine the integration
+schemas with the rest of that application's package before deploying. A tenant
+override on `DeployAsync` addresses a config-server tenant; it does not select a
+Vespa Cloud control-plane application.
+
+When generating schemas from base SDK models, `ApplicationPackageOptions` already
+controls topology:
+
+```csharp
+var packageOptions = new ApplicationPackageOptions
+{
+    Redundancy = 2,
+    NodeCount = 3,
+    HostNames = ["vespa-1.example.com", "vespa-2.example.com", "vespa-3.example.com"]
+};
+using var generated = File.Create("application.zip");
+VespaSchemaBuilder.GenerateApplicationPackage(generated, [typeof(MyDocument)], packageOptions);
+```
+
+`MyDocument` represents a base SDK model using `[VespaDocument]`, `[VespaField]`
+and related attributes. VectorData attributes alone do not generate `.sd` files.
+The checked-in integration schemas can be maintained directly as application files.
+
+`CustomServicesXml` supplies a complete services document; `ContainerOptions` and
+`ContentOptions` inject fragments into the generated template when no custom XML
+is supplied. `AdditionalFiles` includes files such as models and `deployment.xml`.
+See [application package options](schema.md#application-package-options).
+Generated host-based node configuration assumes provisioned self-hosted machines;
+`NodeCount` does not provision servers or configure Cloud capacity.
+
+The checked-in `services.xml` uses one node and redundancy 1 for the local demo.
+Production topology, redundancy, resources and access configuration belong to the
+owning application's deployment. The integration imposes no single-node requirement.
+
+### Vespa Cloud access and deployment
+
+The base client supports Cloud **data-plane** operations using mTLS or an authorized
+bearer token. Reuse that configured client for vectors, history and snapshots:
+
+```csharp
+using var cloudClient = new VespaClient(new VespaClientOptions
+{
+    Endpoint = "https://your-application-endpoint.vespa-app.cloud",
+    CertificatePath = "/path/to/data-plane-public-cert.pem",
+    ClientKeyPath = "/path/to/data-plane-private-key.pem"
+});
+```
+
+Use the endpoint shown for the deployed application and a credential authorized
+by its client configuration. `VespaClientOptions.ApiKey` supplies a data-plane
+bearer token as an alternative to mTLS; it is not a Cloud deployment Application Key.
+Cloud private endpoints also require the application's configured network access.
+
+Cloud **deployment** uses the separate control plane. `Admin.DeployAsync` implements
+the self-hosted config-server API, not the Vespa Cloud deployment API. Deploy the
+complete application with the Vespa CLI or Cloud CI/CD, then connect the .NET client
+to the resulting data-plane endpoint. For a Cloud development application:
+
+```sh
+vespa config set target cloud
+vespa config set application your-tenant.your-application.default
+vespa auth login
+vespa auth cert ./my-application
+vespa deploy --wait 600 ./my-application
+```
+
+Adapt `services.xml`, resource settings, client permissions and any `deployment.xml`
+to Cloud before deployment. Keep private keys outside the application package;
+only public client certificates belong in its security configuration. Production
+deployment uses the Cloud deployment pipeline and its control-plane credentials.
+See [Cloud deployment](https://docs.vespa.ai/en/basics/deploy-an-application.html),
+[production deployment](https://docs.vespa.ai/en/operations/production-deployment.html)
+and the [data/control-plane security guide](https://docs.vespa.ai/en/security/guide.html).
+
 ## Session snapshots
 
 `VespaAgentSessionStore` implements Microsoft's hosted-store contract and can also
@@ -111,6 +297,12 @@ scopes, so switching modes does not reinterpret an earlier mode's state.
   revision rejects the stale branch instead of overwriting the first. Serialize
   runs per conversation, or handle conflicts by reloading and rerunning the agent.
   Retrying only the final save cannot reconcile an answer based on stale context.
+- Vespa provides per-document conditional writes and best-effort read consistency,
+  not linearizable reads or multi-document transactions. Replica outages and
+  failover can expose stale versions. Conditional writes are not a distributed
+  lock or a guarantee of exactly-once tool execution. Serialize runs per conversation
+  at the application boundary; strict transactional workflows may require a store
+  with stronger guarantees. See the [Vespa consistency model](https://docs.vespa.ai/en/content/consistency.html).
 - The framework's hosted contract has no revision parameter for deletes. Delete
   reads the latest revision and conditionally removes it. Coordinate deletion with
   active requests; it is not a transaction with an agent invocation.

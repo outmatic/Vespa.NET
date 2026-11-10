@@ -155,6 +155,10 @@ public record ProductFields
 
 ## Generate and Deploy
 
+`client.Admin` deploys to a self-hosted config server. To deploy a generated package
+to Vespa Cloud, use the Cloud CLI or CI/CD pipeline, then connect the client to
+the deployed application's endpoint. See [deployment configuration](agent-framework.md#configure-application-deployment-from-c).
+
 ```csharp
 // Deploy directly from type
 await client.Admin.DeploySchemaAsync<Product>();

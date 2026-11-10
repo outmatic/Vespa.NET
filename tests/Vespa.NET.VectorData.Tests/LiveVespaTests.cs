@@ -1,10 +1,12 @@
 using System.IO.Compression;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Vespa.AgentFrameworkSample;
+using Vespa.Models;
 using Vespa.Testcontainers;
 using Xunit;
 using Xunit.Abstractions;
@@ -26,7 +28,7 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
             await Task.Delay(500, ct);
 
         using var embeddings = new BatchEmbeddingGenerator();
-        using var store = new VespaVectorStore(client, TestHarness.Options with { EmbeddingGenerator = embeddings });
+        using var store = new VespaVectorStore(client, TestHarness.Options with { EmbeddingGenerator = embeddings, SummaryClass = "vector_data" });
         const string preference = "Please use C# for my examples.";
         using (var provider = NativeMemoryProviderTests.CreateProvider(store, "Alice", "first-session"))
         using (var model = new NativeContextChatClient())
@@ -64,7 +66,7 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
         }
 
         using var nextClient = container.CreateClient("test");
-        using var nextStore = new VespaVectorStore(nextClient, TestHarness.Options with { EmbeddingGenerator = embeddings });
+        using var nextStore = new VespaVectorStore(nextClient, TestHarness.Options with { EmbeddingGenerator = embeddings, SummaryClass = "vector_data" });
         using (var provider = NativeMemoryProviderTests.CreateProvider(nextStore, "Alice", "next-session"))
         using (var model = new NativeContextChatClient())
         {
@@ -133,7 +135,7 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
             await Task.Delay(500, cancellationToken);
 
         using var embeddings = new FixedEmbeddingGenerator();
-        using var store = new VespaVectorStore(client, TestHarness.Options with { EmbeddingGenerator = embeddings });
+        using var store = new VespaVectorStore(client, TestHarness.Options with { EmbeddingGenerator = embeddings, SummaryClass = "vector_data" });
         using var articles = store.GetCollection<string, Article>("article");
         await articles.UpsertAsync([
             new Article { Id = "a:1", Title = "Nearest neighbor search", Category = "Docs", Priority = 3, Published = true, Embedding = new float[] { 1, 0, 0 } },
@@ -156,6 +158,36 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
         Assert.Equal(1, hits[0].Score!.Value, 6);
         Assert.Equal(0, hits[2].Score!.Value, 6);
         Assert.Equal(-1, hits[3].Score!.Value, 6);
+
+        var light = await client.Search.SearchAsync<Dictionary<string, JsonElement>>(new VespaSearchRequest
+        {
+            Yql = "select * from sources article where true",
+            PresentationSummary = "vector_data",
+            Hits = 4
+        }, cancellationToken);
+        Assert.Equal(4, light.Root.Children.Count);
+        Assert.All(light.Root.Children, hit =>
+        {
+            Assert.NotNull(hit.Fields);
+            Assert.True(hit.Fields.ContainsKey("documentid"));
+            Assert.True(hit.Fields.ContainsKey("title"));
+            Assert.False(hit.Fields.ContainsKey("embedding"));
+        });
+
+        using (var approximateStore = new VespaVectorStore(client, TestHarness.Options with
+        {
+            Approximate = true,
+            HnswExploreAdditionalHits = 64,
+            SummaryClass = "vector_data",
+            VectorSummaryClass = "default"
+        }))
+        using (var approximate = approximateStore.GetCollection<string, Article>("article"))
+        {
+            var nearest = Assert.Single(await approximate.SearchAsync(new float[] { 1, 0, 0 }, 1,
+                new() { Filter = row => row.Category == "Docs", IncludeVectors = true }, cancellationToken).Collect());
+            Assert.Equal("a:1", nearest.Record.Id);
+            Assert.Equal(3, nearest.Record.Embedding.Length);
+        }
 
         var filtered = await articles.SearchAsync(new float[] { 1, 0, 0 }, 4,
             new() { Filter = a => a.Category == "Docs" && a.Priority >= 2 && a.Published, IncludeVectors = true }, cancellationToken).Collect();

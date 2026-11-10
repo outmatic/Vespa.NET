@@ -109,26 +109,25 @@ public class ProductService(IVespaClient vespa)
 
 ## Vespa Cloud (mTLS)
 
+This configures data-plane access for document, feed and search operations.
+`ApiKey` means a data-plane bearer token, not the Cloud control-plane Application Key.
+Cloud deployment uses the CLI/control plane; `client.Admin` targets a self-hosted
+config server. See [Cloud access and deployment](agent-framework.md#vespa-cloud-access-and-deployment).
+
 ```csharp
 var options = new VespaClientOptions
 {
-    Endpoint = "https://myapp.vespa-cloud.com",
-
-    // Option A: PEM certificate + private key
-    CertificatePath = "/path/to/cert.pem",
-    ClientKeyPath   = "/path/to/key.pem",
-
-    // Option B: PFX file
-    CertificatePath     = "/path/to/cert.pfx",
-    CertificatePassword = "passphrase",
-
-    // Option C: pre-loaded X509Certificate2
-    ClientCertificate = myCert,
-
-    // Bearer token auth (alternative to mTLS)
-    ApiKey = Environment.GetEnvironmentVariable("VESPA_API_KEY")
+    Endpoint = "https://your-application-endpoint.vespa-app.cloud",
+    CertificatePath = "/path/to/data-plane-public-cert.pem",
+    ClientKeyPath = "/path/to/data-plane-private-key.pem"
 };
+using var client = new VespaClient(options);
 ```
+
+Use the endpoint of your deployed application. For PFX/P12, set `CertificatePath`
+and `CertificatePassword`, leaving `ClientKeyPath` unset. For a certificate loaded
+by the application, set `ClientCertificate`. Token-enabled endpoints instead use
+`ApiKey` with an authorized data-plane token and no client certificate.
 
 ---
 

@@ -22,10 +22,14 @@ schema chathistory {
         }
         field UserId type string {
             indexing: attribute | summary
+            attribute: fast-search
+            rank: filter
             match: cased
         }
         field SessionId type string {
             indexing: attribute | summary
+            attribute: fast-search
+            rank: filter
             match: cased
         }
         field CreatedAt type string {
@@ -41,6 +45,19 @@ schema chathistory {
                 distance-metric: angular
             }
         }
+    }
+    document-summary vector_data {
+        from-disk
+        summary documentid {}
+        summary Role {}
+        summary MessageId {}
+        summary AuthorName {}
+        summary ApplicationId {}
+        summary AgentId {}
+        summary UserId {}
+        summary SessionId {}
+        summary CreatedAt {}
+        summary Content {}
     }
     rank-profile vector_search {
         inputs {

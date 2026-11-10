@@ -2,6 +2,15 @@
 
 This package is versioned independently of the base Vespa.NET SDK.
 
+## 1.2.0 (unreleased)
+
+- Optional `SummaryClass` and `VectorSummaryClass` settings select deployed document
+  summaries independently for reads/searches without and with vectors.
+- Optional `HnswExploreAdditionalHits` tunes approximate query exploration.
+- Sample schemas include summaries without embeddings and indexed scope filters.
+- Configuration guidance covers existing client/deployment reuse, application
+  package options, Cloud access and deployment, and Vespa consistency limits.
+
 ## 1.1.0
 
 - Dynamic dictionary collections with explicit property definitions, storage names

@@ -20,6 +20,15 @@ public sealed record VespaVectorStoreOptions
     /// <summary>Use HNSW approximate search. Set false for exact search.</summary>
     public bool Approximate { get; init; } = true;
 
+    /// <summary>Extra HNSW exploration hits for approximate search. Null uses Vespa's default.</summary>
+    public int? HnswExploreAdditionalHits { get; init; }
+
+    /// <summary>Deployed summary class used when vectors are not requested. Null uses Vespa's default summary.</summary>
+    public string? SummaryClass { get; init; }
+
+    /// <summary>Deployed summary class used with IncludeVectors=true. Independent of SummaryClass; null uses Vespa's default.</summary>
+    public string? VectorSummaryClass { get; init; }
+
     /// <summary>Maximum top + skip accepted, bounded by the deployed query profile.</summary>
     public int MaxResults { get; init; } = 400;
 

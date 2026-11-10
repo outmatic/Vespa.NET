@@ -189,8 +189,10 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         };
         _mapper.ValidateVector(vector);
         var target = top + (options?.Skip ?? 0);
+        var exploration = _options.Approximate && _options.HnswExploreAdditionalHits is { } additional
+            ? string.Create(CultureInfo.InvariantCulture, $",hnsw.exploreAdditionalHits:{additional}") : "";
         var nearest = string.Create(CultureInfo.InvariantCulture,
-            $"({{totalTargetHits:{target},approximate:{(_options.Approximate ? "true" : "false")}}}nearestNeighbor({_mapper.VectorProperty.StorageName}, {_options.QueryTensorName}))");
+            $"({{totalTargetHits:{target},approximate:{(_options.Approximate ? "true" : "false")}{exploration}}}nearestNeighbor({_mapper.VectorProperty.StorageName}, {_options.QueryTensorName}))");
         var predicate = filterPredicate is not null ? $"({filterPredicate}) and {nearest}" : nearest;
         var request = Request(predicate, top, options?.Skip ?? 0, options?.IncludeVectors == true);
         request.Ranking = new RankingConfig { Profile = _options.RankProfile };
@@ -230,6 +232,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     {
         Yql = $"select {_mapper.Projection(includeVectors)} from sources * where {predicate}",
         ModelRestrict = Name,
+        PresentationSummary = includeVectors ? _options.VectorSummaryClass : _options.SummaryClass,
         Hits = top,
         Offset = skip
     }.WithTimeout(_options.SearchTimeout);
