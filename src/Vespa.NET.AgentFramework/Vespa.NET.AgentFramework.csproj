@@ -3,14 +3,16 @@
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <RootNamespace>Vespa.AgentFramework</RootNamespace>
     <Description>Vespa persistence for Microsoft Agent Framework sessions, ordered chat history and file memory.</Description>
+    <PackageReleaseNotes>Searches file memory from one snapshot, skips unchanged file writes and unchanged before-retrieval history reductions, and retains Microsoft glob, line, timeout and cancellation semantics.</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
     <ProjectReference Include="../Vespa.NET/Vespa.NET.csproj" />
     <None Update="$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../README.md'))" Pack="false" />
     <None Remove="README.md" />

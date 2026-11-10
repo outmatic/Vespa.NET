@@ -127,7 +127,11 @@ using var client = new VespaClient(options);
 Use the endpoint of your deployed application. For PFX/P12, set `CertificatePath`
 and `CertificatePassword`, leaving `ClientKeyPath` unset. For a certificate loaded
 by the application, set `ClientCertificate`. Token-enabled endpoints instead use
-`ApiKey` with an authorized data-plane token and no client certificate.
+`ApiKey` with an authorized data-plane token and no client certificate. Set
+`Endpoint` to the application's endpoint marked **Token** in Vespa Cloud; adding a
+bearer header to its mTLS endpoint is not sufficient. Configure token permissions
+in the application's `services.xml` clients before connecting. See the official
+[token endpoint guide](https://docs.vespa.ai/en/security/guide.html#using-tokens).
 
 ---
 

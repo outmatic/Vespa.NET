@@ -31,20 +31,40 @@ move its tests, sample and documentation. No internal client APIs are required.
   Creation, deletion, discovery and `CollectionExistsAsync` remain unsupported.
   Schema deployment belongs to the complete Vespa application.
 - Typed and dynamic dictionary records share mapping and validation. String and
-  `Guid` keys are caller-assigned. Dynamic string vector inputs are embedded in a
-  single batch before writes; precomputed vectors bypass the generator.
+  `Guid` keys are caller-assigned. Dynamic string vector inputs use bounded
+  embedding batches within bounded upsert chunks; precomputed vectors bypass the
+  generator. Write concurrency is configurable.
 - Filter translation accepts a restricted scalar subset. It rejects lossy casts,
   null/empty-string predicates and array comparisons before any embedding I/O.
   Supported constant promotions retain their actual numeric value.
 - Read errors and backend execution failures use contextual `VectorStoreException`
   with the original cause; caller cancellation remains cancellation.
 - A write with ignored fields is reported as failure even though Vespa may have
-  accepted the other fields. Batches are sequential and do not roll back.
+  accepted the other fields. Batches can partially succeed and do not roll back.
+- Summary selection is optional; both summary settings default to `null`, using
+  the application's backend summary. The console sample explicitly selects its
+  `vector_data` summary. Performance relative to explicit YQL projection
+  depends on the deployed Vespa version and should be measured. Current Vespa can
+  merge projected fields outside the selected summary through a backend fallback.
+  Vector summaries remain independent. Requested vectors must be present and valid
+  in the actual response; legitimately unset optional data fields remain supported.
+- Mandatory data is declared through storage names in `RequiredDataFields` or
+  typed C# `required` data properties. A hit alone cannot reveal whether an optional
+  field is unset or omitted by a wrongly configured summary.
+- Upsert failures expose indexed outcomes, including duplicate keys, through
+  `VespaVectorUpsertException` or `VespaVectorUpsertCanceledException`. A failed
+  attempted write is unconfirmed, not proven unapplied. Payload buffering is
+  bounded by chunks; outcome metadata grows with the number of consumed inputs.
+  See the [batch contract](../src/Vespa.NET.VectorData/README.md#bounded-writes-and-partial-outcomes).
 - Results expose cosine scores computed from angular distance, and verify
   document identity. The namespace restriction remains an application contract,
   not a server-side tenant boundary.
 
 ## Verify changes
+
+The [ANN benchmark](vector-search-benchmarks.md) measures exact/approximate
+agreement and latency with configurable filters, summaries and datasets. It is a
+separate workload from correctness tests and does not establish universal HNSW defaults.
 
 From the repository root:
 
@@ -84,7 +104,8 @@ the VectorData provider.
 
 The sample's `--memory` mode registers application-defined tools for saving and
 recalling one programming-language preference per user. A stable user/topic key
-replaces an earlier preference, and writes wait for search visibility. Run the two
+replaces an earlier preference. Recall reads that key, checks its user/topic metadata
+and needs no query embedding or search-visibility polling. Run the two
 commands in the sample README as separate processes to demonstrate persistence
 without replaying the previous conversation. `VESPA_MEMORY_USER` is a demo scope,
 not authentication or a tenant boundary.
@@ -140,5 +161,5 @@ NuGet policy must allow a new `Vespa.NET.VectorData` package, not only new versi
 of the base SDK packages. No publication occurs on a normal push, pull request,
 or a manual run with `publish_vector_data=false`.
 
-Use `connector-v1.1.0` if tagging this connector release. Do not use a tag starting
+Use `connector-v<version>` if tagging a reviewed connector release. Do not use a tag starting
 with lowercase `v`: the existing `v*` trigger publishes the three base SDK packages.

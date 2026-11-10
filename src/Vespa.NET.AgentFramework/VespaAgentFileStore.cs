@@ -1,6 +1,8 @@
 #pragma warning disable MAAI001 // AgentFileStore is an experimental Microsoft contract.
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.FileSystemGlobbing;
 using Vespa.Models;
 
 namespace Vespa.AgentFramework;
@@ -8,6 +10,9 @@ namespace Vespa.AgentFramework;
 /// <summary>A bounded, versioned file tree for FileMemoryProvider and HarnessAgent.</summary>
 public sealed class VespaAgentFileStore : AgentFileStore
 {
+    // Match Microsoft's AgentFileStore search budgets (SDK 1.26.0).
+    private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(5);
     private readonly VespaAgentStateStore _store;
     private readonly string _key;
 
@@ -27,6 +32,8 @@ public sealed class VespaAgentFileStore : AgentFileStore
         {
             if (tree.Directories.Contains(path))
                 throw new IOException("A directory already exists at this path.");
+            if (tree.Files.TryGetValue(path, out var existing) && string.Equals(existing, content, StringComparison.Ordinal))
+                return false;
             AddParents(tree, path);
             tree.Files[path] = content;
             return true;
@@ -47,6 +54,43 @@ public sealed class VespaAgentFileStore : AgentFileStore
 
     public override async Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default) =>
         await ReadAsync(path, cancellationToken) is not null;
+
+    public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern,
+        string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+    {
+        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, RegexTimeout);
+        directory = Normalize(directory, true);
+        var prefix = directory.Length == 0 ? "" : directory + "/";
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(SearchTimeout);
+        try
+        {
+            timeout.Token.ThrowIfCancellationRequested();
+            // All file contents already live in this snapshot. Avoid a full-tree GET per file/directory.
+            var tree = await ReadTreeAsync(timeout.Token).WaitAsync(timeout.Token);
+            Matcher? matcher = globPattern is null ? null : new Matcher(StringComparison.OrdinalIgnoreCase).AddInclude(globPattern);
+            List<FileSearchResult> results = [];
+            foreach (var (path, content) in tree.Files)
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                if (!path.StartsWith(prefix, StringComparison.Ordinal))
+                    continue;
+                var name = path[prefix.Length..];
+                if ((!recursive && name.Contains('/', StringComparison.Ordinal)) ||
+                    matcher is not null && !matcher.Match(name).HasMatches)
+                    continue;
+                if (ScanContent(name, content, regex, timeout.Token) is { } result)
+                    results.Add(result);
+            }
+            timeout.Token.ThrowIfCancellationRequested();
+            return results;
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new RegexMatchTimeoutException(string.Empty, regexPattern, SearchTimeout);
+        }
+    }
 
     public override async Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(string directory, CancellationToken cancellationToken = default)
     {

@@ -32,7 +32,8 @@ public sealed class QueryConfigurationTests
     [Fact]
     public async Task LightSummary_DoesNotAffectRequestsForVectorsOrKeyBasedReads()
     {
-        using var harness = new TestHarness((_, _) => TestHarness.Json(TestHarness.Hit()));
+        using var harness = new TestHarness((request, _) => TestHarness.Json(request.Method == HttpMethod.Get
+            ? """{"fields":{"embedding":{"values":[1,0,0]}}}""" : TestHarness.Hit()));
         using var store = new VespaVectorStore(harness.Client, TestHarness.Options with { SummaryClass = "vector_data" });
         using var collection = store.GetCollection<string, Article>("article");
         var results = await collection.SearchAsync(new float[] { 1, 0, 0 }, 1, new() { IncludeVectors = true }).Collect();
@@ -47,12 +48,22 @@ public sealed class QueryConfigurationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task UnconfiguredSummaries_PreserveTheVespaDefault(bool includeVectors)
+    public async Task DefaultSearchAndFilteredReads_LeaveSummaryAndExplorationToVespa(bool includeVectors)
     {
         using var harness = new TestHarness((_, _) => TestHarness.Json(TestHarness.Hit()));
-        await harness.Collection.SearchAsync(new float[] { 1, 0, 0 }, 1, new() { IncludeVectors = includeVectors }).Collect();
-        using var body = JsonDocument.Parse(Assert.Single(harness.Handler.Requests).Body!);
-        Assert.False(body.RootElement.TryGetProperty("presentation.summary", out _));
+        using var store = new VespaVectorStore(harness.Client, new() { Namespace = "test", RankProfile = "vector_search" });
+        using var collection = store.GetCollection<string, Article>("article");
+        await collection.SearchAsync(new float[] { 1, 0, 0 }, 1, new() { IncludeVectors = includeVectors }).Collect();
+        await collection.GetAsync(row => row.Published, 1, new() { IncludeVectors = includeVectors }).Collect();
+        Assert.Equal(2, harness.Handler.Requests.Count);
+        foreach (var request in harness.Handler.Requests)
+        {
+            using var body = JsonDocument.Parse(request.Body!);
+            Assert.False(body.RootElement.TryGetProperty("presentation.summary", out _));
+            Assert.DoesNotContain("hnsw.exploreAdditionalHits", body.RootElement.GetProperty("yql").GetString());
+        }
+        using var searchBody = JsonDocument.Parse(harness.Handler.Requests[0].Body!);
+        Assert.Contains("approximate:true", searchBody.RootElement.GetProperty("yql").GetString());
     }
 
     [Theory]

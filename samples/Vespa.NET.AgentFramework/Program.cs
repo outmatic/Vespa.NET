@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO.Compression;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using OllamaSharp;
 using Vespa;
 using Vespa.AgentFrameworkSample;
@@ -55,6 +56,7 @@ using var store = new VespaVectorStore(vespa, new()
 {
     Namespace = "knowledge",
     RankProfile = "vector_search",
+    SummaryClass = "vector_data",
     EmbeddingGenerator = embeddings,
     DocumentEmbeddingPrefix = historyMemory ? "search_document: " : null,
     QueryEmbeddingPrefix = historyMemory ? "search_query: " : null
@@ -68,6 +70,9 @@ for (var i = 0; i < args.Length; i++)
 var question = string.Join(' ', questionParts);
 if (historyMemory)
 {
+    using var loggerFactory = LoggerFactory.Create(builder => builder
+        .SetMinimumLevel(LogLevel.Warning)
+        .AddProvider(new SampleDiagnosticLoggerProvider()));
     var userId = Environment.GetEnvironmentVariable("VESPA_MEMORY_USER") ?? "demo-user";
     var sessionId = Guid.NewGuid().ToString("D");
     using var provider = new ChatHistoryMemoryProvider(store, "chathistory", 768,
@@ -78,7 +83,7 @@ if (historyMemory)
         {
             SearchTime = onDemand ? ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling
                 : ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
-        });
+        }, loggerFactory: loggerFactory);
     using var historyChat = new OllamaApiClient(ollamaEndpoint, model);
     var historyAgent = historyChat.AsAIAgent(new ChatClientAgentOptions
     {

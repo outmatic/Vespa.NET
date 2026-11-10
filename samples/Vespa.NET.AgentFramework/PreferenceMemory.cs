@@ -45,24 +45,17 @@ public sealed class PreferenceMemory(
             Embedding = vector
         }, cancellationToken);
 
-        // A successful document write can precede search visibility, including for updates.
-        while (true)
-        {
-            await foreach (var saved in _collection.GetAsync(m => m.UserId == _userId && m.Topic == Topic, 1,
-                cancellationToken: cancellationToken))
-                if (saved.Text == preference)
-                    return "Preference saved.";
-            await Task.Delay(250, cancellationToken);
-        }
+        return "Preference saved.";
     }
 
-    public async Task<string> RecallAsync(string query, CancellationToken cancellationToken = default)
+    public async Task<string> RecallAsync(CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(query);
-        await foreach (var hit in _collection.SearchAsync("search_query: " + query, 1,
-            new() { Filter = m => m.UserId == _userId && m.Topic == Topic }, cancellationToken))
-            return hit.Record.Text;
-        return "No saved preference found.";
+        var saved = await _collection.GetAsync($"{_userId}:{Topic}", cancellationToken: cancellationToken);
+        if (saved is null)
+            return "No saved preference found.";
+        if (saved.UserId != _userId || saved.Topic != Topic)
+            throw new InvalidOperationException("The saved preference does not match the requested user and topic.");
+        return saved.Text;
     }
 }
 

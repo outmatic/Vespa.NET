@@ -28,6 +28,8 @@ public sealed class PreferenceMemoryTests
             Assert.Equal(2, model.Calls);
             Assert.Equal("search_document: " + preference, Assert.Single(embeddings.Inputs));
             Assert.Single(backend.Records);
+            Assert.Single(harness.Handler.Requests);
+            Assert.Equal(HttpMethod.Post, harness.Handler.Requests[0].Method);
         }
 
         // Recreate every client, collection, memory helper and agent. Only backend data survives.
@@ -35,7 +37,7 @@ public sealed class PreferenceMemoryTests
         using var nextEmbeddings = new FixedEmbeddingGenerator();
         using var nextStore = new VespaVectorStore(nextHarness.Client, TestHarness.Options with { EmbeddingGenerator = nextEmbeddings });
         using var nextCollection = GetCollection(nextStore);
-        using var nextModel = new MemoryToolCallingChatClient("recall_preferences", "query", "preferred code-example language");
+        using var nextModel = new MemoryToolCallingChatClient("recall_preferences");
         var nextMemory = new PreferenceMemory(nextCollection, nextEmbeddings, "alice");
         var nextAgent = nextMemory.CreateAgent(nextModel);
         var recalled = await nextAgent.RunAsync("Which language should you use for my examples?", cancellationToken: timeout.Token);
@@ -43,16 +45,14 @@ public sealed class PreferenceMemoryTests
         Assert.Equal(2, nextModel.Calls);
         Assert.DoesNotContain(preference, nextModel.InitialMessages);
         Assert.DoesNotContain("C#", nextModel.InitialMessages);
-        Assert.Equal("search_query: preferred code-example language", Assert.Single(nextEmbeddings.Inputs));
+        Assert.Empty(nextEmbeddings.Inputs);
         var request = Assert.Single(nextHarness.Handler.Requests);
-        using var query = JsonDocument.Parse(request.Body!);
-        var yql = query.RootElement.GetProperty("yql").GetString();
-        Assert.Contains("user_id contains", yql);
-        Assert.Contains("\"alice\"", yql);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/document/v1/test/memory/docid/alice:example-language", Uri.UnescapeDataString(request.Uri.AbsolutePath));
     }
 
     [Fact]
-    public async Task PreferenceUpdate_ReplacesOldValue_AndRecallFiltersByApplicationUser()
+    public async Task PreferenceUpdate_ReplacesOldValue_AndRecallUsesApplicationUserKey()
     {
         var backend = new MemoryBackend();
         using var harness = new TestHarness(backend.Respond);
@@ -65,9 +65,30 @@ public sealed class PreferenceMemoryTests
         await alice.RememberAsync("Use F# for code examples.", timeout.Token);
 
         Assert.Single(backend.Records);
-        Assert.Equal("Use F# for code examples.", await alice.RecallAsync("code examples", timeout.Token));
+        Assert.Equal("Use F# for code examples.", await alice.RecallAsync(timeout.Token));
         var bob = new PreferenceMemory(collection, embeddings, "bob");
-        Assert.Equal("No saved preference found.", await bob.RecallAsync("code examples", timeout.Token));
+        Assert.Equal("No saved preference found.", await bob.RecallAsync(timeout.Token));
+        Assert.Equal(2, embeddings.Inputs.Count);
+        Assert.All(harness.Handler.Requests, request => Assert.Contains("/document/v1/", request.Uri.AbsolutePath));
+    }
+
+    [Theory]
+    [InlineData("bob", "example-language")]
+    [InlineData("alice", "other-topic")]
+    public async Task Recall_RejectsUnexpectedStoredScope(string storedUser, string storedTopic)
+    {
+        using var harness = new TestHarness((_, _) => TestHarness.Json(JsonSerializer.Serialize(new
+        {
+            id = "id:test:memory::alice:example-language",
+            fields = new { user_id = storedUser, topic = storedTopic, text = "Unrelated preference" }
+        })));
+        using var embeddings = new FixedEmbeddingGenerator();
+        using var store = new VespaVectorStore(harness.Client, TestHarness.Options);
+        using var collection = GetCollection(store);
+        var memory = new PreferenceMemory(collection, embeddings, "alice");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => memory.RecallAsync());
+        Assert.Empty(embeddings.Inputs);
     }
 
     internal static VectorStoreCollection<string, MemoryRecord> GetCollection(VespaVectorStore store) =>
@@ -92,39 +113,22 @@ file sealed class MemoryBackend
 
     internal HttpResponseMessage Respond(HttpRequestMessage request, string? body)
     {
-        using var json = JsonDocument.Parse(body!);
-        if (request.RequestUri!.AbsolutePath.Contains("/document/v1/", StringComparison.Ordinal))
+        Assert.Contains("/document/v1/", request.RequestUri!.AbsolutePath);
+        var key = Uri.UnescapeDataString(request.RequestUri.AbsolutePath.Split("/docid/", 2)[1]);
+        if (request.Method == HttpMethod.Get)
         {
-            Assert.Equal(HttpMethod.Post, request.Method);
-            var key = Uri.UnescapeDataString(request.RequestUri.AbsolutePath.Split("/docid/", 2)[1]);
-            Records[key] = json.RootElement.GetProperty("fields").Clone();
-            return TestHarness.Json("{}");
+            if (!Records.TryGetValue(key, out var fields))
+                return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+            return TestHarness.Json(JsonSerializer.Serialize(new { id = $"id:test:memory::{key}", fields }));
         }
-
-        var yql = json.RootElement.GetProperty("yql").GetString()!;
-        Assert.Contains("user_id contains", yql);
-        Assert.Contains("topic contains", yql);
-        var hits = Records.Where(pair =>
-            yql.Contains(JsonSerializer.Serialize(pair.Value.GetProperty("user_id").GetString()), StringComparison.Ordinal)
-            && yql.Contains("\"example-language\"", StringComparison.Ordinal))
-            .Select(pair => new
-            {
-                id = "index:content/0/memory",
-                relevance = 1.0,
-                fields = new Dictionary<string, object>
-                {
-                    ["documentid"] = $"id:test:memory::{pair.Key}",
-                    ["user_id"] = pair.Value.GetProperty("user_id"),
-                    ["topic"] = pair.Value.GetProperty("topic"),
-                    ["text"] = pair.Value.GetProperty("text"),
-                    ["matchfeatures"] = new Dictionary<string, double> { ["distance(field,embedding)"] = 0 }
-                }
-            }).ToArray();
-        return TestHarness.Json(JsonSerializer.Serialize(new { root = new { children = hits } }));
+        Assert.Equal(HttpMethod.Post, request.Method);
+        using var json = JsonDocument.Parse(body!);
+        Records[key] = json.RootElement.GetProperty("fields").Clone();
+        return TestHarness.Json("{}");
     }
 }
 
-internal sealed class MemoryToolCallingChatClient(string toolName, string argumentName, string argumentValue) : IChatClient
+internal sealed class MemoryToolCallingChatClient(string toolName, string? argumentName = null, string? argumentValue = null) : IChatClient
 {
     internal int Calls { get; private set; }
     internal string InitialMessages { get; private set; } = "";
@@ -139,7 +143,9 @@ internal sealed class MemoryToolCallingChatClient(string toolName, string argume
         var result = history.SelectMany(m => m.Contents).OfType<FunctionResultContent>().LastOrDefault();
         var response = result is null
             ? new ChatMessage(ChatRole.Assistant,
-                [new FunctionCallContent("call-memory", toolName, new Dictionary<string, object?> { [argumentName] = argumentValue })])
+                [new FunctionCallContent("call-memory", toolName, argumentName is null
+                    ? new Dictionary<string, object?>()
+                    : new Dictionary<string, object?> { [argumentName] = argumentValue })])
             : new ChatMessage(ChatRole.Assistant, result.Result?.ToString());
         return Task.FromResult(new ChatResponse(response));
     }

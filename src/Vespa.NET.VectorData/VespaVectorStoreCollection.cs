@@ -28,7 +28,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         _client = client;
         Name = name;
         _options = options;
-        _mapper = new(definition);
+        _mapper = new(definition, options.RequiredDataFields);
         if (typeof(TKey) != _mapper.KeyType && !(typeof(TKey) == typeof(object) && _mapper.IsDynamic))
             throw new NotSupportedException("The collection key type must match the mapped string or Guid key; dynamic collections use object keys.");
         var generator = definition?.Properties.OfType<VectorStoreVectorProperty>().Single().EmbeddingGenerator
@@ -75,7 +75,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     public override async Task UpsertAsync(TRecord record, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfUpsertCanceled(cancellationToken);
         ArgumentNullException.ThrowIfNull(record);
         await UpsertAsync([record], cancellationToken);
     }
@@ -83,25 +83,72 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     public override async Task UpsertAsync(IEnumerable<TRecord> records, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfUpsertCanceled(cancellationToken);
         ArgumentNullException.ThrowIfNull(records);
-        List<(string Key, Dictionary<string, object?> Fields)> documents = [];
-        foreach (var record in records)
+        List<VespaVectorUpsertOutcome> completed = [];
+        List<PendingDocument> chunk = [];
+        var inputFullyEnumerated = false;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            ArgumentNullException.ThrowIfNull(record);
-            documents.Add((_mapper.GetKey(record), _mapper.ToFields(record)));
+            using var input = records.GetEnumerator();
+            while (true)
+            {
+                chunk.Clear();
+                while (chunk.Count < _options.UpsertBatchSize)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!input.MoveNext())
+                    {
+                        inputFullyEnumerated = true;
+                        break;
+                    }
+                    var document = new PendingDocument(completed.Count + (long)chunk.Count);
+                    chunk.Add(document);
+                    var record = input.Current;
+                    ArgumentNullException.ThrowIfNull(record);
+                    document.Key = _mapper.GetKey(record);
+                    document.Fields = _mapper.ToFields(record);
+                }
+                if (chunk.Count == 0)
+                    return;
+                await GenerateEmbeddingsAsync(chunk, cancellationToken);
+                await WriteChunkAsync(chunk, cancellationToken);
+                var error = chunk.Select(d => d.Outcome).FirstOrDefault(o => o.Status == VespaVectorUpsertStatus.Unconfirmed)?.Error;
+                completed.AddRange(chunk.Select(d => d.Outcome));
+                chunk.Clear();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (error is not null)
+                    throw new VespaVectorUpsertException(Name, completed, inputFullyEnumerated, error);
+                if (inputFullyEnumerated)
+                    return;
+            }
         }
-        var pending = documents.Where(d => d.Fields[_mapper.VectorProperty.StorageName] is string).ToArray();
-        if (pending.Length > 0)
+        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
-            if (_embeddingGenerator is null)
-                throw new NotSupportedException("Upserting string vector fields requires an IEmbeddingGenerator<string, Embedding<float>>.");
-            var texts = pending.Select(d => _options.DocumentEmbeddingPrefix + (string)d.Fields[_mapper.VectorProperty.StorageName]!);
+            throw new VespaVectorUpsertCanceledException([.. completed, .. chunk.Select(d => d.Outcome)],
+                inputFullyEnumerated, exception, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not VespaVectorUpsertException &&
+            completed.Any(o => o.Status != VespaVectorUpsertStatus.NotAttempted))
+        {
+            throw new VespaVectorUpsertException(Name, [.. completed, .. chunk.Select(d => d.Outcome)], inputFullyEnumerated, exception);
+        }
+    }
+
+    private async Task GenerateEmbeddingsAsync(List<PendingDocument> chunk, CancellationToken cancellationToken)
+    {
+        var pending = chunk.Where(d => d.Fields![_mapper.VectorProperty.StorageName] is string).ToArray();
+        if (pending.Length == 0)
+            return;
+        if (_embeddingGenerator is null)
+            throw new NotSupportedException("Upserting string vector fields requires an IEmbeddingGenerator<string, Embedding<float>>.");
+        foreach (var batch in pending.Chunk(_options.EmbeddingBatchSize))
+        {
+            var texts = batch.Select(d => _options.DocumentEmbeddingPrefix + (string)d.Fields![_mapper.VectorProperty.StorageName]!);
             var embeddings = await _embeddingGenerator.GenerateAsync(texts, cancellationToken: cancellationToken);
-            if (embeddings.Count != pending.Length)
+            if (embeddings.Count != batch.Length)
                 throw Failure(nameof(UpsertAsync), "The embedding generator returned a different number of vectors than input records.");
-            for (var i = 0; i < pending.Length; i++)
+            for (var i = 0; i < batch.Length; i++)
             {
                 var vector = embeddings[i].Vector.ToArray();
                 try
@@ -112,17 +159,51 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
                 {
                     throw Failure(nameof(UpsertAsync), "The embedding generator returned an invalid vector.", exception);
                 }
-                pending[i].Fields[_mapper.VectorProperty.StorageName] = VespaVectorRecordMapper<TRecord>.Tensor(vector);
+                batch[i].Fields![_mapper.VectorProperty.StorageName] = VespaVectorRecordMapper<TRecord>.Tensor(vector);
             }
         }
-        foreach (var document in documents)
+    }
+
+    private Task WriteChunkAsync(List<PendingDocument> chunk, CancellationToken cancellationToken) =>
+        Parallel.ForEachAsync(chunk.GroupBy(d => d.Key, StringComparer.Ordinal),
+            new ParallelOptions { MaxDegreeOfParallelism = _options.UpsertConcurrency }, async (group, _) =>
+            {
+                foreach (var document in group)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        return;
+                    try
+                    {
+                        var response = await ExecuteAsync(nameof(UpsertAsync), () =>
+                            _client.Documents.PutAsync(FullId(document.Key!), document.Fields!, Name, _options.Namespace,
+                                cancellationToken: cancellationToken), cancellationToken);
+                        if (response.HadIgnoredFields)
+                            throw Failure(nameof(UpsertAsync), "Vespa ignored mapped fields. Check the deployed schema; the write may have been partially applied.");
+                        document.Outcome = document.Outcome with { Status = VespaVectorUpsertStatus.Succeeded };
+                    }
+                    catch (Exception exception)
+                    {
+                        document.Outcome = document.Outcome with { Status = VespaVectorUpsertStatus.Unconfirmed, Error = exception };
+                        return;
+                    }
+                }
+            });
+
+    private sealed class PendingDocument(long index)
+    {
+        internal string? Key
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var response = await ExecuteAsync(nameof(UpsertAsync), () =>
-                _client.Documents.PutAsync(FullId(document.Key), document.Fields, Name, _options.Namespace, cancellationToken: cancellationToken), cancellationToken);
-            if (response.HadIgnoredFields)
-                throw Failure(nameof(UpsertAsync), "Vespa ignored one or more mapped fields. Check the deployed schema. The write may already have been partially applied; no rollback was performed.");
+            get => Outcome.Key;
+            set => Outcome = Outcome with { Key = value };
         }
+        internal Dictionary<string, object?>? Fields { get; set; }
+        internal VespaVectorUpsertOutcome Outcome { get; set; } = new(index, null, VespaVectorUpsertStatus.NotAttempted);
+    }
+
+    private static void ThrowIfUpsertCanceled(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            throw new VespaVectorUpsertCanceledException([], false, new OperationCanceledException(cancellationToken), cancellationToken);
     }
 
     public override async Task<TRecord?> GetAsync(TKey key, RecordRetrievalOptions? options = null,
@@ -133,8 +214,9 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         var id = _mapper.FormatKey(key);
         var document = await ExecuteAsync(nameof(GetAsync), () =>
             _client.Documents.GetAsync<Dictionary<string, JsonElement>>(
-                FullId(id), Name, _options.Namespace, cancellationToken: cancellationToken), cancellationToken);
-        return document?.Fields is { } fields ? MapFields(id, fields, options?.IncludeVectors == true, nameof(GetAsync)) : null;
+                FullId(id), Name, _options.Namespace, fieldSet: _mapper.FieldSet(Name, options?.IncludeVectors == true),
+                cancellationToken: cancellationToken), cancellationToken);
+        return document is null ? null : MapFields(id, document.Fields ?? [], options?.IncludeVectors == true, nameof(GetAsync), "document field set");
     }
 
     public override async Task DeleteAsync(TKey key, CancellationToken cancellationToken = default)
@@ -257,10 +339,11 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         if (id is null || !VespaDocumentId.TryParse(id, out var parts) || parts.Namespace != _options.Namespace ||
             parts.DocumentType != Name || parts.Group is not null || parts.Number is not null)
             throw Failure(operation, "Search returned a document outside this collection's namespace/schema or with unsupported group/number addressing. Use a dedicated schema and namespace.");
-        return MapFields(parts.UserSpecified, fields, includeVectors, operation);
+        return MapFields(parts.UserSpecified, fields, includeVectors, operation,
+            $"summary '{(includeVectors ? _options.VectorSummaryClass : _options.SummaryClass) ?? "(backend default)"}'");
     }
 
-    private TRecord MapFields(string key, Dictionary<string, JsonElement> fields, bool includeVectors, string operation)
+    private TRecord MapFields(string key, Dictionary<string, JsonElement> fields, bool includeVectors, string operation, string source)
     {
         try
         {
@@ -268,7 +351,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         }
         catch (Exception exception) when (exception is JsonException or VectorStoreException)
         {
-            throw Failure(operation, exception.Message, exception);
+            throw Failure(operation, $"Cannot read schema '{Name}' using {source}: {exception.Message}", exception);
         }
     }
 

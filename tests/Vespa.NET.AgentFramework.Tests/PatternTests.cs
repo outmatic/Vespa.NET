@@ -325,6 +325,9 @@ internal sealed class StateFixture : IDisposable
 internal sealed class SnapshotBackend : HttpMessageHandler
 {
     internal Dictionary<string, JsonElement> Documents { get; } = [];
+    internal int GetCount { get; private set; }
+    internal int PutCount { get; private set; }
+    internal Func<CancellationToken, Task>? BeforeGetAsync { get; set; }
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var uri = request.RequestUri!;
@@ -346,7 +349,12 @@ internal sealed class SnapshotBackend : HttpMessageHandler
         }
         var exists = Documents.TryGetValue(key, out var fields);
         if (request.Method == HttpMethod.Get)
+        {
+            GetCount++;
+            if (BeforeGetAsync is { } beforeGet)
+                await beforeGet(cancellationToken);
             return exists ? Json(new { fields }) : new(HttpStatusCode.NotFound);
+        }
         var query = uri.Query.TrimStart('?').Split('&').Select(p => p.Split('=', 2))
             .Where(p => p.Length == 2).ToDictionary(p => p[0], p => Uri.UnescapeDataString(p[1]));
         var condition = query.GetValueOrDefault("condition");
@@ -357,6 +365,7 @@ internal sealed class SnapshotBackend : HttpMessageHandler
             Documents.Remove(key);
         else
         {
+            PutCount++;
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             Documents[key] = body.RootElement.GetProperty("fields").Clone();
         }

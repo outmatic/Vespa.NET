@@ -40,8 +40,14 @@ def main():
                 require(f"lib/{framework}/Vespa.NET.AgentFramework.{extension}" in archive.namelist(), "Missing assembly or API documentation.")
         groups = metadata.findall("dependencies/group")
         require(len(groups) == 2, "Expected two target framework groups.")
+        globbing_version = next(item.get("Version") for item in ET.parse(root / "Directory.Packages.props").iter("PackageVersion")
+                                if item.get("Include") == "Microsoft.Extensions.FileSystemGlobbing")
         for group in groups:
-            require({d.get("id") for d in group.findall("dependency")} == {"Vespa.NET", "Microsoft.Agents.AI"}, "Unexpected package dependencies.")
+            dependencies = {d.get("id"): d.get("version") for d in group.findall("dependency")}
+            require(set(dependencies) == {"Vespa.NET", "Microsoft.Agents.AI", "Microsoft.Extensions.FileSystemGlobbing"},
+                    "Unexpected package dependencies.")
+            require(dependencies["Microsoft.Extensions.FileSystemGlobbing"] == globbing_version,
+                    "Unexpected file-system globbing dependency version.")
     runtimes = subprocess.check_output(["dotnet", "--list-runtimes"], text=True, timeout=30)
     require(all(f"Microsoft.NETCore.App {major}." in runtimes for major in (8, 10)), "Install .NET 8 and .NET 10 runtimes.")
     with tempfile.TemporaryDirectory(prefix="vespa-agent-package-") as temporary:

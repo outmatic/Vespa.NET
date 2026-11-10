@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -173,7 +174,7 @@ internal sealed class NativeContextChatClient : IChatClient
 
 file sealed class NativeHistoryBackend
 {
-    internal Dictionary<string, JsonElement> Records { get; } = [];
+    internal ConcurrentDictionary<string, JsonElement> Records { get; } = new();
     internal int SchemaChecks { get; private set; }
     internal HttpResponseMessage Respond(HttpRequestMessage request, string? body)
     {

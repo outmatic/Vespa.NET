@@ -23,11 +23,23 @@ public sealed record VespaVectorStoreOptions
     /// <summary>Extra HNSW exploration hits for approximate search. Null uses Vespa's default.</summary>
     public int? HnswExploreAdditionalHits { get; init; }
 
-    /// <summary>Deployed summary class used when vectors are not requested. Null uses Vespa's default summary.</summary>
+    /// <summary>Optional deployed summary for searches/filtered reads without vectors. Null uses Vespa's default summary.</summary>
     public string? SummaryClass { get; init; }
 
     /// <summary>Deployed summary class used with IncludeVectors=true. Independent of SummaryClass; null uses Vespa's default.</summary>
     public string? VectorSummaryClass { get; init; }
+
+    /// <summary>Mapped storage fields that must have non-null values on reads and writes. C# required data members are also enforced.</summary>
+    public IReadOnlyCollection<string> RequiredDataFields { get; init; } = [];
+
+    /// <summary>Maximum records prepared and validated before each group of writes.</summary>
+    public int UpsertBatchSize { get; init; } = 64;
+
+    /// <summary>Maximum text inputs per embedding-generation request.</summary>
+    public int EmbeddingBatchSize { get; init; } = 32;
+
+    /// <summary>Maximum concurrent upsert requests. Writes for the same key retain input order.</summary>
+    public int UpsertConcurrency { get; init; } = 4;
 
     /// <summary>Maximum top + skip accepted, bounded by the deployed query profile.</summary>
     public int MaxResults { get; init; } = 400;

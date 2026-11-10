@@ -20,9 +20,9 @@ The connector has its own version, independent of the base client. See the
 [release notes](https://github.com/outmatic/Vespa.NET/blob/main/src/Vespa.NET.VectorData/CHANGELOG.md)
 for its supported surface and examples.
 
-The summary-class and HNSW exploration options documented below are unreleased
-1.2.0 changes. Build from this checkout to use them; 1.1.0 remains the published
-NuGet version. The standalone quickstart uses APIs available in 1.1.0.
+The defaults and options documented below describe unreleased 1.2.0. Build from
+this checkout to use them; 1.1.0 remains the published NuGet version and does not
+provide the same summary defaults or bounded batch options.
 
 ## Build from source
 
@@ -100,8 +100,7 @@ using var client = new VespaClient(new VespaClientOptions
 using var store = new VespaVectorStore(client, new()
 {
     Namespace = "knowledge",
-    RankProfile = "vector_search",
-    Approximate = false
+    RankProfile = "vector_search"
 });
 using var articles = store.GetCollection<string, Article>("article");
 using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -193,12 +192,45 @@ of a Vespa document ID: `quickstart-search` becomes
 `id:knowledge:article::quickstart-search`. The key is not a stored schema field.
 
 Vector properties are cleared to `null` for arrays or empty memory unless
-`IncludeVectors = true` is requested on reads or searches. `GetAsync(key)` returns `null` for a missing
-document. Enumerable upsert/get/delete overloads process individual documents;
-batch writes are sequential and are not transactions or the client's bulk-feed
-pipeline. A write response reporting ignored fields raises an exception, but the
-server may already have stored the remaining fields. A batch can also fail after
-earlier records were written; failures do not imply rollback.
+`IncludeVectors = true` is requested on reads or searches. A requested vector that
+is absent, null or invalid raises an error. `GetAsync(key)` returns `null` for a
+missing document, and requests only the mapped document fields it needs through
+`fieldSet`, excluding the vector unless requested. Batch writes use bounded chunks
+and concurrency; they are not transactions or the client's bulk-feed pipeline.
+A write response reporting ignored fields raises an exception, but the server may
+already have stored the remaining fields. Failures never imply rollback.
+
+### Bounded writes and partial outcomes
+
+`UpsertBatchSize` limits buffered records per chunk (default `64`),
+`EmbeddingBatchSize` limits text inputs per embedding request (default `32`), and
+`UpsertConcurrency` limits concurrent document writes (default `4`). Each chunk
+is mapped and its generated vectors validated before writing that chunk. Validation
+or embedding failure in a later chunk does not undo earlier chunks. Writes of the
+same key preserve input order, including duplicate keys; different keys can run
+concurrently. Payload buffering is bounded, while outcome metadata grows with the
+number of consumed records.
+
+Write failures and failures after earlier chunks were submitted throw
+`VespaVectorUpsertException`. Before any write, validation and embedding errors
+propagate without a partial-write report. Caller cancellation
+throws `VespaVectorUpsertCanceledException`, which remains an
+`OperationCanceledException`. Both expose `Outcomes` and `InputFullyEnumerated`.
+Each outcome contains the original zero-based `Index`, the `Key` when available,
+a `Status`, and an optional `Error`:
+
+| Status | Meaning |
+|---|---|
+| `Succeeded` | Vespa acknowledged the write |
+| `Unconfirmed` | A write was attempted but failed or timed out; it may already have been applied |
+| `NotAttempted` | The consumed record was not submitted for writing |
+
+Outcomes preserve indices and duplicate keys. Records the enumerable has not
+yielded are not listed; `InputFullyEnumerated = false` means the tail is unknown.
+Use the outcomes to reconcile the attempted writes before retrying. Do not treat
+`Unconfirmed` as proof that a document is absent or replay an entire batch assuming
+it was rolled back. This API uses document PUTs, so retrying a stale value can
+overwrite a newer application write.
 
 ## Schema and mapping contract
 
@@ -259,23 +291,47 @@ uses these settings on `category`, `user_id`, `UserId` and `SessionId`.
 Indexing every metadata field increases RAM and write costs; choose indexes for
 the filters your application uses. See [Vespa's tuning guidance](https://docs.vespa.ai/en/performance/feature-tuning.html#when-to-use-fast-search-for-attribute-fields).
 
-The sample schemas define a `vector_data` document summary containing the data
-fields and `documentid`, without the embedding. Set `SummaryClass = "vector_data"`
-to use it for searches and filtered reads when `IncludeVectors` is false.
-`VectorSummaryClass` independently selects the summary for `IncludeVectors = true`;
-leave it unset to use Vespa's default summary, which includes the sample vectors.
+The connector uses the application's backend summary by default. `SummaryClass`
+and `VectorSummaryClass` both default to `null`; choosing summary classes is optional.
+`SummaryClass` applies to searches and filtered reads when `IncludeVectors` is false,
+while `VectorSummaryClass` independently applies to `IncludeVectors = true`.
 These options do not affect key-based document reads.
 
-YQL field selection alone filters the result in the container after fetching a
-complete summary from the content node. A named summary avoids fetching unneeded
-vector fields between those services. The sample summary still reads content and
-document IDs from disk; it is not an attribute-only summary.
-See [document summaries](https://docs.vespa.ai/en/querying/document-summaries.html).
+The sample schemas define a `vector_data` summary containing the data fields and
+`documentid`, without the embedding. The console sample explicitly selects it with
+`SummaryClass = "vector_data"`, since it owns those schema definitions. The generic
+connector does not require that summary name.
 
-Both summary settings default to `null`, preserving the behavior of existing
-deployments. Deploy the named summary before enabling its option. Keep every
-mapped data field and `documentid` in that summary, and the vector field in the
-summary used for vector reads. Missing summaries fail as backend query errors.
+`vector_data` is an explicit schema convention, not a guaranteed performance gain
+over YQL projection. Vespa behavior depends on version: the
+[implementation inspected at commit ea8a0ff](https://github.com/vespa-engine/vespa/blob/ea8a0ff1603577e1f40efa86e498ec73c75f6a48/container-search/src/main/java/com/yahoo/prelude/fastsearch/PartialSummaryHandler.java)
+can request selected fields from the backend. When a projection asks for fields
+outside the named summary, it can combine those fields with the summary's fields
+and fall back to `[all]`. For example, selecting `embedding` with `vector_data`
+can still return the vector; `select *` with that summary excludes it. Inspect
+query traces and measure the deployed version instead of assuming that projection
+always transfers a complete summary. The sample summary still needs disk-backed
+content and document IDs; it is not an attribute-only summary.
+
+When selecting a named summary, deploy it first. Leaving the options unset uses
+the backend's default summary. Keep mapped data fields and `documentid` in the
+summary, and the vector in the summary intended for vector reads, to avoid
+conflicting requests and backend fallback. An incomplete or unknown summary is
+not a reliable way to trigger client validation: validate deployment configuration
+directly. The connector rejects requested vectors only when the actual response
+contains an absent, null or invalid vector.
+Unset optional data fields remain valid: a missing data field in an individual hit
+does not establish that the summary is incomplete. Validate the summary definition
+against the mapping during deployment instead of requiring every optional field
+in every document. `EnsureCollectionExistsAsync` checks searchability, not this
+complete schema contract.
+
+For mandatory data, configure `RequiredDataFields` with **storage field names**.
+Typed C# `required` data properties are also recognized automatically. A missing
+or null required data field raises an error instead of returning a CLR default.
+Optional nullable data remains valid; required-field validation is not a blanket
+non-null check on every mapped property. The requested vector has its own mandatory
+presence and validity checks regardless of this option.
 
 ## Dictionary records and generated embeddings
 
@@ -319,11 +375,13 @@ such as `Content`. With `IncludeVectors = true`, a string vector property is rea
 back as `ReadOnlyMemory<float>`. Precomputed `float[]` or `ReadOnlyMemory<float>`
 values can also be supplied to that property and bypass generation.
 
-Batch upserts generate all text vectors in one call and validate the inputs and
-generated vectors before writing any documents. Mixed text/vector batches are
-supported. Caller dictionaries are not modified. Unknown dictionary properties
-and values with incompatible types are rejected. `Guid` keys are stored as
-canonical `D`-format document IDs and returned as `Guid` values.
+Batch upserts enumerate bounded chunks and generate text vectors in bounded
+embedding batches. A chunk's inputs and generated vectors are validated before
+its writes; earlier chunks may already have been stored if a later chunk fails.
+Mixed text/vector batches are supported. Caller dictionaries are not modified.
+Unknown dictionary properties and values with incompatible types are rejected.
+`Guid` keys are stored as canonical `D`-format document IDs and returned as `Guid`
+values.
 
 ## Filters, paging, and options
 
@@ -342,6 +400,15 @@ replacement hits. Backend execution failures, query errors, and incomplete searc
 coverage raise contextual `VectorStoreException` errors. Caller cancellation
 remains cancellation; unsupported operations and invalid arguments fail locally.
 
+Start with the default search behavior: approximate search, backend summaries,
+and Vespa's default graph exploration. The upsert limits (`64` records, `32` text
+inputs per embedding request, `4` concurrent writes) bound client resource use;
+they are configurable starting points rather than workload-optimal values.
+Use the optional [benchmark](https://github.com/outmatic/Vespa.NET/blob/main/docs/vector-search-benchmarks.md)
+when specific recall or latency requirements call for search tuning.
+
+### Options reference
+
 | `VespaVectorStoreOptions` | Meaning |
 |---|---|
 | `Namespace` | Required document namespace; dedicate the schema to it |
@@ -351,20 +418,44 @@ remains cancellation; unsupported operations and invalid arguments fail locally.
 | `HnswExploreAdditionalHits` | Optional nonnegative extra HNSW exploration; applies to approximate search. Default `null` leaves Vespa's default unchanged |
 | `SummaryClass` | Optional deployed summary for searches/filtered reads without vectors; default `null` uses Vespa's default |
 | `VectorSummaryClass` | Independent deployed summary for `IncludeVectors = true`; default `null` uses Vespa's default |
+| `RequiredDataFields` | Optional storage names of mandatory data fields; typed C# `required` data properties are also enforced |
 | `MaxResults` | Maximum `top + Skip`; default `400`. Vespa's query profile must also permit the requested hits and offset |
 | `SearchTimeout` | Vespa per-query timeout; default five seconds. The HTTP client's timeout applies independently |
 | `EmbeddingGenerator` | Optional caller-owned `IEmbeddingGenerator<string, Embedding<float>>` for text queries and dynamic string vector inputs |
 | `DocumentEmbeddingPrefix` | Optional prefix added to dynamic string vector inputs before generation |
 | `QueryEmbeddingPrefix` | Optional prefix added to text queries before generation |
+| `UpsertBatchSize` | Maximum records buffered/validated per upsert chunk; default `64` |
+| `EmbeddingBatchSize` | Maximum text inputs per embedding request; default `32` |
+| `UpsertConcurrency` | Maximum concurrent document writes in a chunk; default `4` |
 
 The caller owns the `IVespaClient` and embedding generator. Keep them alive for
 all collections that use them and dispose them yourself; disposing a collection
 or store does not dispose either dependency. Configure endpoints, authentication,
 HTTP resilience, and telemetry through the base client.
 
-Reuse the same `IVespaClient` for multiple stores or schema configurations. Store
-options are fixed when a wrapper is constructed; changing a rank profile or summary
-does not require another HTTP client or another Vespa deployment. The selected
+Reuse the same `IVespaClient` for multiple stores or schema configurations. The
+concrete `VespaVectorStore` also accepts complete options per collection:
+
+```csharp
+var defaults = new VespaVectorStoreOptions
+{
+    Namespace = "knowledge",
+    RankProfile = "vector_search"
+};
+using var store = new VespaVectorStore(client, defaults);
+using var articles = store.GetCollection<string, Article>("article", definition: null,
+    options: defaults with { RequiredDataFields = ["category"] });
+```
+
+`GetDynamicCollection(name, definition, options)` provides the same override for
+dictionary records. These overloads replace the options for that collection; use
+`with` to retain the application defaults. Other collections and calls through
+the standard `VectorStore` abstraction continue to use the store defaults. Required
+field lists are copied when options are accepted. The caller still owns the client
+and embedding generators, including any collection-specific generator.
+
+Options are fixed when the store/collection is constructed. Changing a rank profile
+or summary does not require another HTTP client or another Vespa deployment. The selected
 profile/summary must already exist. HNSW construction settings and filter indexes
 belong to the deployed schema, while `HnswExploreAdditionalHits` is a query-time
 setting. Tune approximate-search recall against exact search before choosing it.
@@ -438,17 +529,23 @@ instead of the concrete collection, leaving collection management to the caller.
 The sample's `--memory` mode registers `remember_preference` to save a user's
 preferred programming language for code examples and `recall_preferences` to
 retrieve it. Records use the `memory` schema, a stable user/topic key for updates,
-and filters for the user configured by the application.
+and direct key lookup for the user configured by the application. Recall verifies
+the returned user/topic and does not generate a query embedding or poll search
+visibility.
 See the [sample README](https://github.com/outmatic/Vespa.NET/tree/main/samples/Vespa.NET.AgentFramework#remember-a-preference-across-runs)
 for the commands and user configuration.
 
 ### Native chat-history memory
 
 The sample's `--history-memory` mode uses Microsoft's unmodified
-`ChatHistoryMemoryProvider` as an `AIContextProvider`. It stores conversation
-messages in the [`chathistory` schema](https://github.com/outmatic/Vespa.NET/blob/main/samples/Vespa.NET.AgentFramework/app/schemas/chathistory.sd),
+`ChatHistoryMemoryProvider` as an `AIContextProvider`. It stores message text and
+metadata in the [`chathistory` schema](https://github.com/outmatic/Vespa.NET/blob/main/samples/Vespa.NET.AgentFramework/app/schemas/chathistory.sd),
 using the provider's dictionary definition, `Guid` keys and string vector inputs.
 The connector generates document embeddings and translates the provider's scope filters.
+This is not a complete serialized archive of messages, tool calls or multimodal
+content. The sample prints provider warning/error category, event ID and exception
+type without conversation text or exception messages. Monitor these diagnostics:
+the provider may log a storage failure while the model response still succeeds.
 
 ```sh
 dotnet run --project samples/Vespa.NET.AgentFramework -- --deploy --history-memory "I prefer code examples in C#."
@@ -478,6 +575,11 @@ See the [conversation patterns guide](https://github.com/outmatic/Vespa.NET/blob
 for chronological history, session snapshots, file memory and compaction backed by Vespa.
 
 ## Verify the connector
+
+Use the [ANN benchmark guide](https://github.com/outmatic/Vespa.NET/blob/main/docs/vector-search-benchmarks.md)
+to compare exact search with HNSW exploration settings, filter selectivity and
+summary configurations on a dedicated deployment. It reports recall against exact
+top-k and client-observed latency; use representative embeddings before tuning.
 
 From the repository root:
 

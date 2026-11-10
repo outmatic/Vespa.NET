@@ -78,7 +78,7 @@ public sealed class ReviewRegressionTests
             response.Headers.Add("X-Vespa-Ignored-Fields", "true");
             return response;
         });
-        var error = await Assert.ThrowsAsync<VectorStoreException>(() => harness.Collection.UpsertAsync(
+        var error = await Assert.ThrowsAsync<VespaVectorUpsertException>(() => harness.Collection.UpsertAsync(
             new Article { Id = "a", Embedding = new float[] { 1, 0, 0 } }));
         AssertContext(error, "UpsertAsync");
         Assert.Contains("partially applied", error.Message);
@@ -103,7 +103,7 @@ public sealed class ReviewRegressionTests
             "search" => () => collection.SearchAsync(new float[] { 1, 0, 0 }, 1).Collect(),
             _ => () => collection.GetAsync(a => a.Published, 1).Collect()
         };
-        var error = await Assert.ThrowsAsync<VectorStoreException>(action);
+        var error = await Assert.ThrowsAnyAsync<VectorStoreException>(action);
         AssertContext(error, expectedOperation);
         Assert.IsAssignableFrom<VespaException>(error.InnerException);
     }

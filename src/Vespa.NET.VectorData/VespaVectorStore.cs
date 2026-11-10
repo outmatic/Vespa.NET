@@ -15,23 +15,8 @@ public sealed class VespaVectorStore : VectorStore
     public VespaVectorStore(IVespaClient client, VespaVectorStoreOptions options)
     {
         ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(options);
-        ArgumentException.ThrowIfNullOrWhiteSpace(options.Namespace);
-        if (options.Namespace.Contains(':', StringComparison.Ordinal))
-            throw new ArgumentException("A document namespace cannot contain ':'.", nameof(options));
-        VespaVectorValidation.Identifier(options.RankProfile, nameof(options.RankProfile));
-        VespaVectorValidation.Identifier(options.QueryTensorName, nameof(options.QueryTensorName));
-        if (options.SummaryClass is { } summary)
-            ArgumentException.ThrowIfNullOrWhiteSpace(summary, nameof(options.SummaryClass));
-        if (options.VectorSummaryClass is { } vectorSummary)
-            ArgumentException.ThrowIfNullOrWhiteSpace(vectorSummary, nameof(options.VectorSummaryClass));
-        if (options.HnswExploreAdditionalHits is { } exploration)
-            ArgumentOutOfRangeException.ThrowIfNegative(exploration, nameof(options.HnswExploreAdditionalHits));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxResults);
-        if (options.SearchTimeout <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(options), "SearchTimeout must be positive.");
         _client = client;
-        _options = options;
+        _options = ValidateAndSnapshotOptions(options);
     }
 
     public override VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(
@@ -41,12 +26,30 @@ public sealed class VespaVectorStore : VectorStore
         return new VespaVectorStoreCollection<TKey, TRecord>(_client, name, _options, definition);
     }
 
+    /// <summary>Binds a collection with its own complete options, replacing the store defaults.</summary>
+    public VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(
+        string name, VectorStoreCollectionDefinition? definition, VespaVectorStoreOptions options)
+        where TKey : notnull where TRecord : class
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return new VespaVectorStoreCollection<TKey, TRecord>(_client, name, ValidateAndSnapshotOptions(options), definition);
+    }
+
     public override VectorStoreCollection<object, Dictionary<string, object?>> GetDynamicCollection(
         string name, VectorStoreCollectionDefinition definition)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(definition);
         return new VespaVectorStoreCollection<object, Dictionary<string, object?>>(_client, name, _options, definition);
+    }
+
+    /// <summary>Binds a dynamic collection with its own complete options, replacing the store defaults.</summary>
+    public VectorStoreCollection<object, Dictionary<string, object?>> GetDynamicCollection(
+        string name, VectorStoreCollectionDefinition definition, VespaVectorStoreOptions options)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(definition);
+        return new VespaVectorStoreCollection<object, Dictionary<string, object?>>(_client, name, ValidateAndSnapshotOptions(options), definition);
     }
 
     public override IAsyncEnumerable<string> ListCollectionNamesAsync(CancellationToken cancellationToken = default) =>
@@ -73,6 +76,32 @@ public sealed class VespaVectorStore : VectorStore
     {
         _disposed = true;
         base.Dispose(disposing);
+    }
+
+    private static VespaVectorStoreOptions ValidateAndSnapshotOptions(VespaVectorStoreOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Namespace);
+        if (options.Namespace.Contains(':', StringComparison.Ordinal))
+            throw new ArgumentException("A document namespace cannot contain ':'.", nameof(options));
+        VespaVectorValidation.Identifier(options.RankProfile, nameof(options.RankProfile));
+        VespaVectorValidation.Identifier(options.QueryTensorName, nameof(options.QueryTensorName));
+        if (options.SummaryClass is { } summary)
+            ArgumentException.ThrowIfNullOrWhiteSpace(summary, nameof(options.SummaryClass));
+        if (options.VectorSummaryClass is { } vectorSummary)
+            ArgumentException.ThrowIfNullOrWhiteSpace(vectorSummary, nameof(options.VectorSummaryClass));
+        if (options.HnswExploreAdditionalHits is { } exploration)
+            ArgumentOutOfRangeException.ThrowIfNegative(exploration, nameof(options.HnswExploreAdditionalHits));
+        ArgumentNullException.ThrowIfNull(options.RequiredDataFields);
+        foreach (var field in options.RequiredDataFields)
+            VespaVectorValidation.Identifier(field, nameof(options.RequiredDataFields));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.UpsertBatchSize);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.EmbeddingBatchSize);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.UpsertConcurrency);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxResults);
+        if (options.SearchTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options), "SearchTimeout must be positive.");
+        return options with { RequiredDataFields = options.RequiredDataFields.ToArray() };
     }
 }
 

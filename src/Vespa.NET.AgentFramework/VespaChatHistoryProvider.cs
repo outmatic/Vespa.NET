@@ -42,7 +42,12 @@ public sealed class VespaChatHistoryProvider : ChatHistoryProvider
         {
             messages = (await reducer.ReduceAsync(messages, cancellationToken)).ToList();
             if (snapshot is not null)
-                snapshot = await _store.WriteAsync(Key(state), JsonSerializer.SerializeToElement(messages), snapshot.Revision, cancellationToken);
+            {
+                var reduced = JsonSerializer.SerializeToElement(messages);
+                // Compare serialized content: reducers may mutate the original messages in place.
+                if (!string.Equals(reduced.GetRawText(), snapshot.Payload.GetRawText(), StringComparison.Ordinal))
+                    snapshot = await _store.WriteAsync(Key(state), reduced, snapshot.Revision, cancellationToken);
+            }
         }
         state.Revision = snapshot?.Revision;
         _state.SaveState(context.Session, state);

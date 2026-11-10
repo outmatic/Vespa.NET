@@ -95,10 +95,12 @@ public sealed class DynamicCollectionTests
             Record(Guid.NewGuid(), "embed this")
         });
         Assert.Equal("embed this", Assert.Single(generator.Inputs));
-        using var first = JsonDocument.Parse(harness.Handler.Requests[0].Body!);
-        using var second = JsonDocument.Parse(harness.Handler.Requests[1].Body!);
-        Assert.Equal(0, first.RootElement.GetProperty("fields").GetProperty("embedding").GetProperty("values")[0].GetSingle());
-        Assert.Equal(1, second.RootElement.GetProperty("fields").GetProperty("embedding").GetProperty("values")[0].GetSingle());
+        var values = harness.Handler.Requests.Select(request =>
+        {
+            using var body = JsonDocument.Parse(request.Body!);
+            return body.RootElement.GetProperty("fields").GetProperty("embedding").GetProperty("values")[0].GetSingle();
+        });
+        Assert.Equal(new float[] { 0, 1 }, values.Order());
     }
 
     [Fact]
@@ -256,15 +258,18 @@ internal sealed class BatchEmbeddingGenerator(string? failure = null) : IEmbeddi
 {
     internal int Calls { get; private set; }
     internal List<string> Inputs { get; } = [];
+    internal List<int> BatchSizes { get; } = [];
 
     public Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(IEnumerable<string> values,
         EmbeddingGenerationOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Calls++;
-        Inputs.AddRange(values);
+        var batch = values.ToArray();
+        BatchSizes.Add(batch.Length);
+        Inputs.AddRange(batch);
         GeneratedEmbeddings<Embedding<float>> result = [];
-        foreach (var value in values)
+        foreach (var value in batch)
             result.Add(new Embedding<float>(failure switch
             {
                 "dimensions" => new float[] { 1, 0 },

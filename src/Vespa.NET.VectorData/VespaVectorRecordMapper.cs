@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.VectorData;
 
@@ -9,8 +10,9 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
     private readonly MappedProperty _key;
     private readonly MappedProperty[] _properties;
     private readonly ConstructorInfo? _constructor;
+    private readonly HashSet<string> _requiredDataFields;
 
-    internal VespaVectorRecordMapper(VectorStoreCollectionDefinition? definition)
+    internal VespaVectorRecordMapper(VectorStoreCollectionDefinition? definition, IReadOnlyCollection<string> requiredDataFields)
     {
         IsDynamic = typeof(TRecord) == typeof(Dictionary<string, object?>);
         if (IsDynamic && definition is null)
@@ -53,6 +55,12 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
         if (_properties.Select(p => p.StorageName).Distinct(StringComparer.Ordinal).Count() != _properties.Length)
             throw new ArgumentException("Mapped storage field names must be unique.", nameof(definition));
         VectorProperty = _properties.Single(p => p.IsVector);
+        _requiredDataFields = requiredDataFields.ToHashSet(StringComparer.Ordinal);
+        foreach (var property in _properties.Where(p => !p.IsVector && p.Property?.IsDefined(typeof(RequiredMemberAttribute)) == true))
+            _requiredDataFields.Add(property.StorageName);
+        foreach (var name in _requiredDataFields)
+            if (!_properties.Any(p => !p.IsVector && p.StorageName == name))
+                throw new ArgumentException($"Required data field '{name}' must be a mapped data storage field.", nameof(requiredDataFields));
     }
 
     internal bool IsDynamic { get; }
@@ -63,6 +71,12 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
 
     internal string Projection(bool includeVectors) => string.Join(", ",
         _properties.Where(p => includeVectors || !p.IsVector).Select(p => p.StorageName).Prepend("documentid"));
+
+    internal string FieldSet(string schema, bool includeVectors)
+    {
+        var fields = _properties.Where(p => includeVectors || !p.IsVector).Select(p => p.StorageName).ToArray();
+        return fields.Length == 0 ? "[id]" : $"{schema}:{string.Join(',', fields)}";
+    }
 
     internal string GetKey(TRecord record) => FormatKey(GetValue(record, _key), nameof(record));
 
@@ -90,6 +104,8 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
             {
                 if (property.IsVector)
                     throw new ArgumentException("A vector or text to embed is required when upserting a record.", nameof(record));
+                if (_requiredDataFields.Contains(property.StorageName))
+                    throw new ArgumentException($"Required data field '{property.StorageName}' cannot be null or absent.", nameof(record));
                 continue;
             }
             if (property.IsVector)
@@ -110,6 +126,8 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
             }
             else if (!(Nullable.GetUnderlyingType(property.Type) ?? property.Type).IsInstanceOfType(value))
                 throw new ArgumentException($"Record field '{property.Name}' must have type '{property.Type}'.", nameof(record));
+            else if (value is Array array)
+                value = array.Clone();
             fields.Add(property.StorageName, value);
         }
         return fields;
@@ -117,6 +135,11 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
 
     internal TRecord FromFields(string key, Dictionary<string, JsonElement> fields, bool includeVectors)
     {
+        if (includeVectors && (!fields.TryGetValue(VectorProperty.StorageName, out var tensor) || tensor.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined))
+            throw new VectorStoreException($"Requested vector field '{VectorProperty.StorageName}' is missing or null. Select a summary/field set containing the vector.");
+        foreach (var name in _requiredDataFields)
+            if (!fields.TryGetValue(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                throw new VectorStoreException($"Required data field '{name}' is missing or null. Check the stored data and selected summary/field set.");
         var record = IsDynamic ? (TRecord)(object)new Dictionary<string, object?>(StringComparer.Ordinal) : (TRecord)_constructor!.Invoke(null);
         object identity = key;
         if (KeyType == typeof(Guid))
@@ -126,7 +149,7 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
             identity = guid;
         }
         SetValue(record, _key, identity);
-        if (!IsDynamic)
+        if (!IsDynamic && !includeVectors)
             SetValue(record, VectorProperty, VectorProperty.Type == typeof(float[]) ? null : (object)ReadOnlyMemory<float>.Empty);
         foreach (var property in _properties)
         {

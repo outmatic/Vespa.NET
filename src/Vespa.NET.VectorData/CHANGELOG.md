@@ -4,12 +4,30 @@ This package is versioned independently of the base Vespa.NET SDK.
 
 ## 1.2.0 (unreleased)
 
-- Optional `SummaryClass` and `VectorSummaryClass` settings select deployed document
-  summaries independently for reads/searches without and with vectors.
+- Collection-specific options let one store/client bind schemas with different
+  ranking, summary and required-field contracts without changing store defaults.
+- Requested vectors are assigned once, without first invoking setters with an
+  empty/null value; reads support setters that reject null vectors.
+- Optional `SummaryClass` and `VectorSummaryClass` independently select summaries
+  without and with vectors. Both default to `null`, using the application's backend
+  summary. The sample explicitly selects its `vector_data` summary; performance
+  relative to YQL projection is version-dependent.
+- Requested vectors actually absent, null or invalid in a response fail explicitly. Optional
+  unset data fields remain supported; deployment must validate the summary contract.
+- `RequiredDataFields` and typed C# `required` data properties enforce mandatory
+  data presence without rejecting legitimate optional fields.
+- Key-based reads use document field sets to avoid fetching unrequested vectors.
+- Bounded upsert chunks, embedding batches and write concurrency limit buffering
+  and expose partial failure instead of implying transactional writes.
+- `VespaVectorUpsertException` and cancellation-compatible
+  `VespaVectorUpsertCanceledException` expose per-input outcomes and whether input
+  enumeration completed; attempted failures remain explicitly unconfirmed.
 - Optional `HnswExploreAdditionalHits` tunes approximate query exploration.
 - Sample schemas include summaries without embeddings and indexed scope filters.
 - Configuration guidance covers existing client/deployment reuse, application
   package options, Cloud access and deployment, and Vespa consistency limits.
+- The preference sample reads its stable key without semantic search or query
+  embeddings; native-memory failures have visible diagnostics without content logging.
 
 ## 1.1.0
 

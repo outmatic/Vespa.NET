@@ -69,7 +69,8 @@ internal sealed class RecordingHandler(Func<HttpRequestMessage, string?, HttpRes
     {
         // Consume the actual body, including its asynchronous serialization and lifetime.
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-        Requests.Add((request.Method, request.RequestUri!, body));
+        lock (Requests)
+            Requests.Add((request.Method, request.RequestUri!, body));
         return respond?.Invoke(request, body) ?? TestHarness.Json("{}");
     }
 

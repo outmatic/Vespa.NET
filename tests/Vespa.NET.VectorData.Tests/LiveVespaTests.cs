@@ -147,6 +147,11 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
         var document = await articles.GetAsync("a:1", new() { IncludeVectors = true }, cancellationToken);
         Assert.NotNull(document);
         Assert.Equal(new float[] { 1, 0, 0 }, document.Embedding.ToArray());
+        var fieldsOnly = await client.Documents.GetAsync<Dictionary<string, JsonElement>>("a:1", "article", "test",
+            fieldSet: "article:title,category,priority,published", cancellationToken: cancellationToken);
+        Assert.NotNull(fieldsOnly?.Fields);
+        Assert.False(fieldsOnly.Fields.ContainsKey("embedding"));
+        Assert.Equal("Nearest neighbor search", (await articles.GetAsync("a:1", cancellationToken: cancellationToken))!.Title);
         List<VectorSearchResult<Article>> hits;
         do
         {
@@ -173,6 +178,19 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
             Assert.True(hit.Fields.ContainsKey("title"));
             Assert.False(hit.Fields.ContainsKey("embedding"));
         });
+
+        using (var incomplete = new VespaVectorStore(client, TestHarness.Options with { VectorSummaryClass = "vector_data" }))
+        {
+            // Current Vespa unions explicitly selected fields with the summary and falls back to [all].
+            var selected = Assert.Single(await incomplete.GetCollection<string, Article>("article")
+                .SearchAsync(new float[] { 1, 0, 0 }, 1, new() { IncludeVectors = true }, cancellationToken).Collect());
+            Assert.Equal(3, selected.Record.Embedding.Length);
+        }
+
+        await client.Documents.PutAsync("no-vector", new { title = "Externally written without a vector" }, "article", "test", cancellationToken: cancellationToken);
+        var missing = await Assert.ThrowsAsync<VectorStoreException>(() => articles.GetAsync("no-vector", new() { IncludeVectors = true }, cancellationToken));
+        Assert.Contains("embedding", missing.Message);
+        await articles.DeleteAsync("no-vector", cancellationToken);
 
         using (var approximateStore = new VespaVectorStore(client, TestHarness.Options with
         {
@@ -226,7 +244,7 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
 
         using (var nextStore = new VespaVectorStore(client, TestHarness.Options with { EmbeddingGenerator = embeddings }))
         using (var memories = PreferenceMemoryTests.GetCollection(nextStore))
-        using (var recallModel = new MemoryToolCallingChatClient("recall_preferences", "query", "code-example language"))
+        using (var recallModel = new MemoryToolCallingChatClient("recall_preferences"))
         {
             var memory = new PreferenceMemory(memories, embeddings, "memory-test-user");
             var recalled = await memory.CreateAgent(recallModel).RunAsync(
@@ -234,9 +252,9 @@ public sealed class LiveVespaTests(ITestOutputHelper output)
             Assert.DoesNotContain("C#", recallModel.InitialMessages);
             Assert.Contains(preference, recalled.Text);
             var otherUser = new PreferenceMemory(memories, embeddings, "another-test-user");
-            Assert.Equal("No saved preference found.", await otherUser.RecallAsync("code examples", cancellationToken));
+            Assert.Equal("No saved preference found.", await otherUser.RecallAsync(cancellationToken));
             await memory.RememberAsync("The user now prefers F# examples.", cancellationToken);
-            Assert.Equal("The user now prefers F# examples.", await memory.RecallAsync("code examples", cancellationToken));
+            Assert.Equal("The user now prefers F# examples.", await memory.RecallAsync(cancellationToken));
         }
 
         await articles.DeleteAsync("b", cancellationToken);

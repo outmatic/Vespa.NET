@@ -74,27 +74,25 @@ using var vectors = new VespaVectorStore(existingClient, new()
 {
     Namespace = "knowledge",
     RankProfile = "vector_search",
-    QueryTensorName = "query_embedding",
-    SummaryClass = "vector_data",
-    VectorSummaryClass = "default",
-    Approximate = true,
-    HnswExploreAdditionalHits = 64,
-    SearchTimeout = TimeSpan.FromSeconds(5),
     EmbeddingGenerator = embeddings
 });
 var snapshots = new VespaAgentStateStore(existingClient, new()
 {
     Namespace = "knowledge",
     Schema = "agentstate",
-    Scope = authenticatedScope,
-    MaxPayloadBytes = 4 * 1024 * 1024
+    Scope = authenticatedScope
 });
 ```
 
 The caller owns the client and embedding generator. Dispose them at the end of
 their application lifetime, after their stores/collections. Different store wrappers
 can share the same client while using different rank profiles, summaries or
-namespaces; creating a wrapper does not create another HTTP transport.
+namespaces; creating a wrapper does not create another HTTP transport. The concrete
+`VespaVectorStore` also supports `GetCollection(name, definition, options)` and
+`GetDynamicCollection(name, definition, options)` with complete per-collection options.
+Use `options with { ... }` to retain shared defaults while changing a schema's
+required fields, rank profile or summary. Other collections keep the store defaults.
+See the [collection options example](../src/Vespa.NET.VectorData/README.md#options-reference).
 
 For DI, resolve the client already registered by `AddVespaClient`:
 
@@ -126,30 +124,51 @@ configuration; library consumers use the options objects and injected dependenci
 | Nodes, redundancy, resources, clients and routing | Application package (`services.xml`, plus deployment files) | Yes; not a per-query client setting |
 | Snapshot payload limit, provider state key and authorized scope | Agent Framework store/provider options | No schema deployment; changing scope/state keys changes which stored data is addressed |
 
-Options are read when a store/provider is constructed. To use a different set,
-construct another wrapper over the same client. For native search options beyond
+Options are captured when a store/provider or a collection override is constructed.
+Use per-collection options or another wrapper over the same client for a different set.
+For native search options beyond
 the VectorData surface, use the base client's `Search` API and rank profiles.
 
-### Select lightweight summaries
+### Advanced search configuration
+
+The connector uses approximate search and leaves graph exploration and summary
+selection to Vespa by default. No HNSW tuning or custom summary is needed to start.
+`SummaryClass` and `VectorSummaryClass` both default to `null`, using the application's
+backend summary independently for requests without and with vectors.
 
 The supplied `article`, `memory` and `chathistory` schemas define a `vector_data`
-summary without embeddings. Opt in with `SummaryClass = "vector_data"` after
-deploying the updated schema. `VectorSummaryClass` is independent: unset, it uses
-Vespa's default summary for `IncludeVectors = true`. Both options default to `null`,
-so existing deployments retain their previous behavior.
+summary without embeddings. The console sample explicitly selects it through
+`SummaryClass = "vector_data"`, since it owns those schemas. For a custom application,
+keep the defaults or select its deployed summary name. Named summaries are an
+optional schema convention, not a guaranteed performance advantage over YQL projection.
 
-To adopt the optimized schemas, deploy the new summary definitions and selected
+To adopt the supplied schemas, deploy the summary definitions and selected
 filter indexes first, allow any required content-node restart to complete, then
-enable the summary option. These changes keep the document fields, tensor dimensions
+use the connector. These changes keep the document fields, tensor dimensions
 and embedding model unchanged. Adding `fast-search` requires restart, not re-feeding;
 adding named summaries over the existing summary fields does not require generating
 new embeddings. Follow the deployment plan reported by your Vespa environment.
 
-This matters because YQL projection only filters fields after the content node
-returns the summary. A dedicated summary avoids transferring vectors when the
-agent needs only text and metadata. It must include all mapped data fields and
-`documentid`. The summary used for vector reads must also include the embedding.
-See the [Vespa summary documentation](https://docs.vespa.ai/en/querying/document-summaries.html#selecting-summary-fields-in-yql).
+Keep the summary definitions aligned with the projected fields: data plus
+`documentid`, and the embedding for vector reads. Vespa's behavior depends on
+version. Its current implementation supports selected backend fields and can merge
+a conflicting projection with the summary's fields, using `[all]` as a fallback.
+Thus explicitly selecting `embedding` with `vector_data` can still return it.
+Neither an incomplete summary nor an unknown summary name reliably tests the
+connector's missing-field checks. Requested vectors that are actually absent,
+null or invalid in the response raise a contextual error.
+Unset optional data fields are legitimate. A missing data field in a hit alone
+cannot distinguish an unset value from an incomplete summary; verify the summary
+definitions against the record mapping as part of application deployment.
+Declare mandatory data fields through `RequiredDataFields` (storage names) or
+typed C# `required` data properties to reject absent/null values during mapping.
+This keeps legitimate optional fields nullable without masking missing required
+content behind CLR defaults.
+Inspect query traces and measure the deployed version; do not assume projection
+always fetches the full summary. See the
+[Vespa implementation at commit ea8a0ff](https://github.com/vespa-engine/vespa/blob/ea8a0ff1603577e1f40efa86e498ec73c75f6a48/container-search/src/main/java/com/yahoo/prelude/fastsearch/PartialSummaryHandler.java)
+and its
+[projection/summary conflict test](https://github.com/vespa-engine/vespa/blob/ea8a0ff1603577e1f40efa86e498ec73c75f6a48/container-search/src/test/java/com/yahoo/prelude/fastsearch/PartialSummaryHandlerTestCase.java).
 
 The supplied scope indexes use `fast-search` and `rank: filter` for frequently
 selective user/session/category filters. Other metadata retains its existing
@@ -157,6 +176,9 @@ mapping. These indexes cost memory and write work; tune them for the actual quer
 patterns. `HnswExploreAdditionalHits` increases approximate graph exploration,
 trading additional computations for potential recall improvements; it is ignored
 in exact mode. HNSW graph construction remains an application-schema setting.
+Only tune these parameters when specific workload requirements justify it. Use the
+optional [ANN benchmark](vector-search-benchmarks.md) with representative data and
+compare recall and latency against exact search before choosing exploration values.
 
 ### Configure application deployment from C#
 
@@ -222,6 +244,8 @@ using var cloudClient = new VespaClient(new VespaClientOptions
 Use the endpoint shown for the deployed application and a credential authorized
 by its client configuration. `VespaClientOptions.ApiKey` supplies a data-plane
 bearer token as an alternative to mTLS; it is not a Cloud deployment Application Key.
+For tokens, use the deployed endpoint marked **Token** in Vespa Cloud, not the mTLS
+endpoint. Tokens must be authorized in the application's `services.xml` clients.
 Cloud private endpoints also require the application's configured network access.
 
 Cloud **deployment** uses the separate control plane. `Admin.DeployAsync` implements
@@ -389,8 +413,9 @@ hooks to retain the framework's base behavior. Microsoft's `CompactionProvider`
 demonstrates the advanced pipeline integration in compaction mode.
 
 The separate [`--history-memory` example](../samples/Vespa.NET.AgentFramework/README.md#native-chat-history-memory)
-uses Microsoft's `ChatHistoryMemoryProvider` without modification. It saves raw
-messages and retrieves related ones across sessions. `--on-demand` exposes its own
+uses Microsoft's `ChatHistoryMemoryProvider` without modification. It stores message
+text and metadata for semantic recall, rather than complete serialized `ChatMessage`
+objects or a faithful archive of tool/multimodal content. `--on-demand` exposes its own
 recall tool. The VectorData connector supports its dictionary model, `Guid` keys,
 string-to-vector generation and indexed scope filters.
 
@@ -405,9 +430,11 @@ string-to-vector generation and indexed scope filters.
 - Query and document vectors must use the same model/dimensions with appropriate
   preprocessing. The sample configures Nomic document/query prefixes. Changing
   model or dimensions requires re-embedding stored data and deploying its schema.
-- Microsoft's memory provider handles some failures through logging. Configure
-  logging and monitor storage/search failures; a successful model response alone
-  does not prove a memory was saved. Tests assert the stored data and later recall.
+- Microsoft's memory provider handles some failures through logging. The sample
+  supplies a warning/error logger that prints only category, event ID and exception
+  type, excluding prompts, records and exception messages. Monitor these diagnostics;
+  a successful model response alone does not prove a memory was saved. Tests assert
+  the stored data and later recall.
 - `EnsureCollectionExistsAsync` checks that the schema is searchable. It does not
   create a schema or verify all fields/ranking settings. See the
   [VectorData mapping contract](../src/Vespa.NET.VectorData/README.md#schema-and-mapping-contract).
@@ -431,13 +458,23 @@ store for file memory and `VespaChatHistoryProvider` for history. Built-in todo 
 mode state is preserved through session serialization. Skills discovery and hosted
 web search are disabled in this local sample.
 
+The persistence boundary differs between a normal `ChatClientAgent` and Harness.
+The normal agent stores history after a completed run. Harness can invoke its
+history provider within the model/tool loop, once per service call. A later tool
+or model failure can therefore leave an earlier part of that run persisted.
+Session serialization happens separately after the sample fully consumes the run
+or response stream. History, files, tool side effects and the session snapshot do
+not form one transaction. On failure, inspect persisted state before retrying;
+retrying an entire run can execute tools again. A successful response also cannot
+prove persistence when a provider logs and suppresses its storage failure.
+
 ### Caveats
 
 - Paths are relative, normalized to lowercase and case-insensitive. Absolute
   paths and `.`/`..` traversal are rejected. Empty directories are retained;
   deleting files does not delete directories. No operating-system files are touched.
 - This store is for bounded text memory, not a general filesystem or large-blob
-  store. Regex search walks files through the document API; it is not a Vespa
+  store. Regex search scans one snapshot loaded through the document API; it is not a Vespa
   full-text or vector query. A larger collection needs a separate indexed design.
 - Single tree mutations retry up to five conditional-write attempts and preserve
   unrelated files. Writing the same file replaces its content. Provider operations

@@ -64,10 +64,10 @@ dotnet run --project samples/Vespa.NET.AgentFramework -- --memory "Which program
 deployment.
 
 The [memory helper](PreferenceMemory.cs) stores one preference per user under a
-stable user/topic key. Updates replace the previous preference, and the write
-tool waits until the new text is searchable.
-Embedding generation happens before upsert, with Nomic's document prefix; recall
-uses its query prefix and filters by user and topic.
+stable user/topic key. Updates replace the previous preference. Recall reads that
+exact key and verifies its user/topic metadata; it needs no query embedding or
+search-visibility polling. Embedding generation still happens before upsert, with
+Nomic's document prefix, so the stored record remains usable for semantic search.
 
 `VESPA_MEMORY_USER` sets the user scope (default `demo-user`). Both tools take
 the user ID from this configuration. Production applications must resolve the
@@ -80,7 +80,10 @@ variable and Vespa namespaces do not provide tenant isolation.
 `ChatClientAgentOptions.AIContextProviders`. It saves conversation messages after
 each response and retrieves relevant messages before the next model invocation.
 It uses the provider's own dictionary model and scope filters without a custom
-save or recall tool.
+save or recall tool. These records contain message text and metadata, not complete
+serialized messages with all tool or multimodal content. Warning/error diagnostics
+are printed without conversation text or exception messages; a model response can
+succeed even if the provider logs a memory failure.
 
 ```sh
 dotnet run --project samples/Vespa.NET.AgentFramework -- --deploy --history-memory "I prefer code examples in C#."
