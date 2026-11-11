@@ -19,7 +19,7 @@ public sealed class SamplePatternTests
     {
         using var fixture = new StateFixture();
         using var embeddings = new SampleEmbeddings();
-        using var vectors = new VespaVectorStore(fixture.Client, new() { Namespace = "knowledge", RankProfile = "vector_search", EmbeddingGenerator = embeddings });
+        using var vectors = new VespaVectorStore(fixture.Client, new() { Namespace = "knowledge", RankProfile = "vector_search", AssumeSchemaExists = true, EmbeddingGenerator = embeddings });
         using var model = new PatternChatClient();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await ConversationPatterns.RunAsync(pattern, "sliding", false, false, false, "First turn.",
@@ -34,7 +34,7 @@ public sealed class SamplePatternTests
     {
         using var fixture = new StateFixture();
         using var embeddings = new SampleEmbeddings();
-        using var vectors = new VespaVectorStore(fixture.Client, new() { Namespace = "knowledge", RankProfile = "vector_search", EmbeddingGenerator = embeddings });
+        using var vectors = new VespaVectorStore(fixture.Client, new() { Namespace = "knowledge", RankProfile = "vector_search", AssumeSchemaExists = true, EmbeddingGenerator = embeddings });
         using var memories = vectors.GetCollection<string, MemoryRecord>("memory");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var memory = new PreferenceMemory(memories, embeddings, "demo-user");

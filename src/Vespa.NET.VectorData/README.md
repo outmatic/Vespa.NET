@@ -13,14 +13,42 @@ embedding provider are configured by the consuming application.
 ## Install
 
 ```sh
-dotnet add package Vespa.NET.VectorData --version 1.2.0
+dotnet add package Vespa.NET.VectorData --version 2.0.0
 ```
 
 The connector has its own version, independent of the base client. See the
 [release notes](https://github.com/outmatic/Vespa.NET/blob/main/src/Vespa.NET.VectorData/CHANGELOG.md)
 for its supported surface and examples.
 
-The examples and options below describe version 1.2.0.
+### Upgrading from 1.2
+
+Version 2.0 changes collection initialization. Applications that deploy schemas
+separately must set `AssumeSchemaExists = true`, as in the quickstart below, or
+provide an authoritative `IVespaCollectionCatalog`. Existence checks and listing
+require that catalog; a successful query only proves searchability. Schema
+creation and deletion remain external. See the
+[2.0.0 release notes](https://github.com/outmatic/Vespa.NET/blob/main/src/Vespa.NET.VectorData/CHANGELOG.md#200)
+for the expanded mapping, filtering and search capabilities.
+
+## Capabilities
+
+| Surface | Current implementation |
+|---|---|
+| Key CRUD and batch CRUD | Typed/dictionary records; caller-assigned `string`, `Guid`, `int`, `long`, `ulong` keys; zero, one or multiple vector fields |
+| Filtered retrieval | Scalar comparisons, string/integer membership, limited array `Any`, multi-property `OrderBy`, bounded `Skip`/`top` |
+| Dense vector search | Six metrics, vector selection, precomputed or generated query embeddings |
+| Keyword hybrid search | Additional `IKeywordHybridSearchable<TRecord>` capability; requires an explicit deployed hybrid profile |
+| `CollectionExistsAsync` | Requires an authoritative application-supplied `IVespaCollectionCatalog`; no data-plane existence inference |
+| `ListCollectionNamesAsync` | Requires an application-supplied `IVespaCollectionCatalog`; no data-plane discovery fallback |
+| `EnsureCollectionExistsAsync` | Requires a catalog or explicit `AssumeSchemaExists`; validates searchability on each call, never creates schemas |
+| `ValidateSearchabilityAsync` | Concrete collection helper checking query execution only; does not establish schema existence |
+| Schema creation/deletion | Unsupported; no automatic application deployment, even with a catalog |
+| Agent Framework semantic memory/retrieval | Automatic/on-demand `ChatHistoryMemoryProvider`, retrieval tools and `TextSearchProvider`; chronological history/session storage use the separate AgentFramework package |
+
+This is a provider capability matrix, not a claim to implement every optional
+VectorData extension. Schema lifecycle methods are present on the core abstraction;
+this provider deliberately cannot satisfy create-if-missing semantics. Hybrid search
+is a separate capability interface, not a mandatory core method.
 
 ## Build from source
 
@@ -40,20 +68,37 @@ To produce a local NuGet package instead, pack only the connector:
 dotnet pack src/Vespa.NET.VectorData -c Release -o artifacts/packages
 ```
 
-In a separate consumer project, add the absolute path to `artifacts/packages` as
-a NuGet source alongside nuget.org, then install `Vespa.NET.VectorData` with
-`--version 1.2.0`. The client dependency (`Vespa.NET >= 3.1.1`) and other
-dependencies are restored from nuget.org.
+For development, use the project reference above or install the locally packed
+connector. The client dependency (`Vespa.NET >= 3.1.1`) and other dependencies are
+available from nuget.org.
 
 ## Deploy the schema first
 
 A collection name is an existing Vespa schema/document type. Calling
 `GetCollection` binds a C# model to it; it neither creates nor validates the
-deployed schema. `EnsureCollectionExistsAsync` checks that the schema is searchable
-using a read-only query and caches a successful check for that collection instance.
-It does not deploy schemas or validate every field and rank profile. An undeployed
-schema fails the check. Creation, deletion, discovery and `CollectionExistsAsync`
-remain unsupported; arrange application deployment separately.
+deployed schema. Application deployment remains separate and explicit.
+
+`CollectionExistsAsync` and `ListCollectionNamesAsync` require an authoritative,
+application-supplied `IVespaCollectionCatalog`. Without one they throw
+`NotSupportedException`. The catalog must include empty schemas and distinguish
+absence from operational errors. A successful search request is not proof of
+schema existence: Vespa sources can resolve through aliases or routing. The
+connector therefore does not infer existence or enumerate schemas from searches.
+
+`EnsureCollectionExistsAsync` never implements upstream create-if-missing semantics.
+With a catalog it first checks existence, failing with deployment instructions
+when absent, then validates searchability. Without a catalog, it requires
+`AssumeSchemaExists = true` before performing the searchability check. That option
+is **the application's assertion that the schema is already deployed**, not live
+discovery or validation of its fields. It defaults to `false`; set it only when
+your deployment process owns this guarantee. Ensure rechecks on every call; a
+catalog takes precedence over that assertion.
+
+The concrete `VespaVectorStoreCollection<TKey, TRecord>.ValidateSearchabilityAsync`
+method runs the read-only query check independently. It verifies query execution,
+not schema identity, tensor definitions, summaries, indexes or rank profiles.
+Neither a catalog nor `AssumeSchemaExists` enables deployment. Schema deletion
+remains unsupported.
 
 For this quickstart, use the checked-in
 [application package](https://github.com/outmatic/Vespa.NET/tree/main/samples/Vespa.NET.AgentFramework/app)
@@ -98,6 +143,7 @@ using var client = new VespaClient(new VespaClientOptions
 using var store = new VespaVectorStore(client, new()
 {
     Namespace = "knowledge",
+    AssumeSchemaExists = true, // This application deploys the schema separately.
     RankProfile = "vector_search"
 });
 using var articles = store.GetCollection<string, Article>("article");
@@ -189,9 +235,10 @@ The example deletes its two documents when it finishes. Keys are the user portio
 of a Vespa document ID: `quickstart-search` becomes
 `id:knowledge:article::quickstart-search`. The key is not a stored schema field.
 
-Vector properties are cleared to `null` for arrays or empty memory unless
-`IncludeVectors = true` is requested on reads or searches. A requested vector that
-is absent, null or invalid raises an error. `GetAsync(key)` returns `null` for a
+Vector properties are cleared to `null` or, for nonnullable `ReadOnlyMemory<float>`,
+empty memory unless `IncludeVectors = true` is requested on reads or searches.
+Explicitly nullable vectors can be absent/null and remain null on reads; present
+invalid vectors still fail. Nonnullable requested vectors must be present and valid. `GetAsync(key)` returns `null` for a
 missing document, and requests only the mapped document fields it needs through
 `fieldSet`, excluding the vector unless requested. Batch writes use bounded chunks
 and concurrency; they are not transactions or the client's bulk-feed pipeline.
@@ -241,14 +288,20 @@ indexes; configure the deployed schema yourself.
 The [sample schema](https://github.com/outmatic/Vespa.NET/blob/main/samples/Vespa.NET.AgentFramework/app/schemas/article.sd)
 provides the complete contract. In your own application:
 
-- Use one caller-assigned `string` or `Guid` key and exactly one `float[]` or
-  `ReadOnlyMemory<float>` vector. Records need a public parameterless constructor
-  and public readable/writable mapped properties.
-- Match the vector dimensions to a dense `tensor<float>` field with `angular`
-  distance. Enable `attribute`; enable `index` for HNSW; include `summary` to
-  retrieve vectors in search results. Input vectors must be finite and nonzero.
-- Declare the query tensor with the same dimension name and size as the stored
-  tensor. Rank only by angular proximity and return its distance as a match feature:
+- Use one caller-assigned `string`, `Guid`, `int`, `long` or `ulong` key. Numeric
+  keys use canonical invariant decimal document IDs; `Guid` uses canonical `D`
+  format. Keys are document identity, not stored data fields. Collections may have
+  zero vectors for CRUD/filtering, or multiple vectors selected per search.
+- Dense vectors support `float[]`, `ReadOnlyMemory<float>`, `Embedding<float>` and
+  their nullable forms, plus generated string inputs described below. Typed records
+  need a public parameterless constructor and public readable/writable properties.
+- Match each vector's dimensions and metric to its deployed `tensor<float>` field.
+  Enable `attribute`; enable `index` for HNSW; include `summary` when retrieving
+  vectors. Values must be finite; cosine vectors must also be nonzero. Zero vectors
+  are valid for the supported dot-product and Euclidean metrics.
+- Declare each query tensor with the same dimension name and size as its stored
+  tensor. Dense search must rank monotonically by increasing distance and expose
+  `distance(field, <storage-name>)` as a match feature. For the cosine quickstart:
 
 ```text
 rank-profile vector_search {
@@ -262,23 +315,72 @@ rank-profile vector_search {
 }
 ```
 
-- Expose mapped data fields in summaries. Data properties support `string`,
-  `bool`, `int`, `long`, `float`, `double`, nullable scalars, and scalar arrays.
-  Nested objects are unsupported. Dictionary records use an explicit definition,
-  as described below.
-- Mark filterable scalar properties `IsIndexed = true` and configure suitable
-  Vespa attributes. String equality needs a **single-valued string attribute with
-  `match: cased`**, as shown by the sample's `category` field.
+- Expose mapped data fields in summaries. Data supports `string`, `bool`, `int`,
+  `long`, `float`, `double`, `DateTime`, `DateTimeOffset`, `DateOnly`, nullable scalars,
+  one-dimensional scalar arrays and `List<T>`. Nested objects and collections of
+  nullable value-type elements are unsupported. Dictionary definitions declare
+  each property's type explicitly.
+- Dates use Vespa `long` fields (or `array<long>`): `DateTime` must have `Kind.Utc`;
+  `DateTimeOffset` is normalized to UTC. Both encode signed ticks of **100 ns since
+  Unix epoch**, not milliseconds or .NET year-1 ticks. `DateOnly` encodes signed
+  days since 1970-01-01. Filters use the same codec; offsets are not retained.
+- Mark filterable/ordered properties `IsIndexed = true` and deploy suitable Vespa
+  attributes. Exact string equality/membership needs **cased exact-match string
+  attributes** (`match: cased`), including array attributes for element matching.
+  String equality on `IsFullTextIndexed` fields is rejected; full-text matching
+  belongs to hybrid search.
 - **Dedicate each connected schema to one document namespace.** CRUD addresses
   the configured namespace, but search spans namespaces. The connector rejects
   hits with another namespace/schema or group/number addressing; this is not
   server-side tenant isolation.
 
-Vespa's [angular metric](https://docs.vespa.ai/en/reference/schemas/schemas.html#angular)
-returns an angle. The connector exposes `cos(distance)` as the result score,
-between -1 and 1, with larger values indicating closer vectors. It does not use
-raw Vespa relevance as a cosine score. Unrelated reranking would violate the
-ordering contract.
+### Metrics and vector selection
+
+The following mappings use Vespa's
+[distance metrics](https://docs.vespa.ai/en/reference/schemas/schemas.html#distance-metric).
+Here `d` is `distance(field, <selected-vector>)` returned by the ranking profile.
+
+| `DistanceFunction` | Vespa metric | Returned score | `ScoreThreshold` keeps |
+|---|---|---|---|
+| `CosineSimilarity` | `angular` | `cos(d)` | Score >= threshold |
+| `CosineDistance` | `angular` | `1 - cos(d)` | Score <= threshold |
+| `DotProductSimilarity` | `dotproduct` | `-d` | Score >= threshold |
+| `NegativeDotProductSimilarity` | `dotproduct` | `d` | Score <= threshold |
+| `EuclideanDistance` | `euclidean` | `d` | Score <= threshold |
+| `EuclideanSquaredDistance` | `euclidean` | `d * d` | Score <= threshold |
+
+Distance scores are **smaller-is-better**; their threshold is a maximum distance,
+not a minimum similarity. Dense search checks increasing backend distance and
+rejects unrelated reranking. Scores do not come from raw Vespa relevance.
+
+A single vector is selected automatically. With multiple vectors, supply
+`VectorProperty` and configure `VectorFields` entries keyed by logical CLR/definition
+property name, each with an explicit query tensor binding. Dense searches also
+require a per-field `RankProfile`; hybrid searches use the per-field or global
+`HybridRankProfile`. For example,
+for a model containing `TitleVector` and `BodyVector`:
+
+```csharp
+var options = new VespaVectorStoreOptions
+{
+    Namespace = "knowledge",
+    RankProfile = "vector_search",
+    VectorFields = new Dictionary<string, VespaVectorFieldOptions>
+    {
+        ["TitleVector"] = new() { RankProfile = "title_search", QueryTensorName = "title_query" },
+        ["BodyVector"] = new() { RankProfile = "body_search", QueryTensorName = "body_query" }
+    }
+};
+// Search options select one field: new() { VectorProperty = record => record.BodyVector }
+```
+
+Each field can have its own dimensions, metric and embedding generator. Vectorless
+collections support CRUD/filtering without a `RankProfile`, but reject vector
+search. Dense search requires a configured default or per-field `RankProfile`.
+Hybrid search requires its hybrid profile, not an unrelated dense profile.
+`IndexKind.Flat` forces exact nearest-neighbor queries even when `Approximate` is
+true and omits HNSW exploration. `IndexKind.Hnsw` or unspecified metadata respects
+`Approximate`. Neither metadata value provisions or validates server indexes.
 
 ### Filter indexes and summaries
 
@@ -317,19 +419,19 @@ summary, and the vector in the summary intended for vector reads, to avoid
 conflicting requests and backend fallback. An incomplete or unknown summary is
 not a reliable way to trigger client validation: validate deployment configuration
 directly. The connector rejects requested vectors only when the actual response
-contains an absent, null or invalid vector.
+contains an absent/null nonnullable vector or a present invalid vector.
 Unset optional data fields remain valid: a missing data field in an individual hit
 does not establish that the summary is incomplete. Validate the summary definition
 against the mapping during deployment instead of requiring every optional field
-in every document. `EnsureCollectionExistsAsync` checks searchability, not this
-complete schema contract.
+in every document. Neither `EnsureCollectionExistsAsync` nor
+`ValidateSearchabilityAsync` validates this complete schema contract.
 
 For mandatory data, configure `RequiredDataFields` with **storage field names**.
 Typed C# `required` data properties are also recognized automatically. A missing
 or null required data field raises an error instead of returning a CLR default.
 Optional nullable data remains valid; required-field validation is not a blanket
-non-null check on every mapped property. The requested vector has its own mandatory
-presence and validity checks regardless of this option.
+non-null check on every mapped property. Vector presence and validity checks follow
+the declared vector nullability, independently of this option.
 
 ## Dictionary records and generated embeddings
 
@@ -367,11 +469,24 @@ await foreach (var hit in memories.SearchAsync("preferred programming language",
 ```
 
 This example requires a configured embedding generator and the deployed
-`chathistory` schema. A string vector property supplies text to that generator;
+`chathistory` schema. Its store must configure a catalog or explicitly assert
+`AssumeSchemaExists = true` before calling ensure. A string vector property
+supplies text to that generator;
 Vespa stores the resulting dense tensor. Keep the original text in a data property
 such as `Content`. With `IncludeVectors = true`, a string vector property is read
 back as `ReadOnlyMemory<float>`. Precomputed `float[]` or `ReadOnlyMemory<float>`
-values can also be supplied to that property and bypass generation.
+values can also be supplied to that dynamic property and bypass generation.
+The connector also accepts `Embedding<float>` inputs.
+
+Typed string vector properties are also supported, with a
+configured `IEmbeddingGenerator<string, Embedding<float>>`. Their text is input-only:
+the stored field contains a tensor, and the typed string property reads back as
+`null` even with `IncludeVectors = true`, following Microsoft's generated-vector
+mapping convention. Store source text in a separate data property. This differs
+from dictionary string-vector definitions, which can return `ReadOnlyMemory<float>`.
+Generator precedence is per-vector property, collection definition, then store
+options; generators remain caller-owned. Explicit `EmbeddingType` supports only
+`Embedding<float>`.
 
 Batch upserts enumerate bounded chunks and generate text vectors in bounded
 embedding batches. A chunk's inputs and generated vectors are validated before
@@ -384,17 +499,37 @@ values.
 ## Filters, paging, and options
 
 Search filters and filtered `GetAsync` support scalar comparisons, `&&`, `||`,
-`!`, constants, and captured local values. String comparisons support equality
-and inequality with case preserved. Null/missing-field predicates, method calls
-such as `StartsWith`, collection membership, and ordered filtered retrieval are
-unsupported. Empty-string predicates are unsupported because Vespa does not
-index empty strings. Array properties cannot be used as scalar filters. Unsupported or
-meaning-changing casts are rejected. Filtering is not full-text search, and
-invalid filters are rejected before generating a query embedding.
+`!`, constants and captured local fields. String equality/inequality preserves case.
+The connector also supports:
+
+- `allowed.Contains(record.Category)` with captured arrays/`List<T>` or inline arrays;
+- `record.Tags.Contains(value)` for mapped arrays/`List<T>`;
+- `record.Tags.Any(value => allowed.Contains(value))` for a single membership test;
+- integer/string membership and safe numeric promotions, including C# 14 array
+  `Contains` binding; integer sets use YQL `in` and require **Vespa 8.293.15+**;
+- filtered retrieval ordering, for example
+  `OrderBy = order => order.Descending(r => r.Priority).Ascending(r => r.Category)`.
+  Ordering requires indexed scalar attributes. Filtered retrieval always uses the
+  `unranked` profile, including when no ordering is supplied. Searchability probes
+  also use `unranked`, so they do not execute the application's default ranking.
+
+Empty allowed sets match nothing. Null/missing-field predicates, null or empty
+string members, custom comparers/enumerables, arbitrary method calls such as
+`StartsWith`, whole-array equality and general `Any` predicates are unsupported.
+Unsafe casts are rejected. Expressions are inspected without compiling or invoking
+application getters/methods. String membership uses annotated exact terms rather
+than the different linguistic semantics of string `in`. Invalid filters fail before
+query embedding generation. See the [YQL reference](https://docs.vespa.ai/en/reference/querying/yql.html#in).
 
 `top` and `Skip` select a bounded result window. `ScoreThreshold` applies to the
 retrieved window and may return fewer than `top` results; it does not fetch
-replacement hits. Backend execution failures, query errors, and incomplete search
+replacement hits. Dense dot-product and negative-dot-product searches additionally
+push a conservative inclusive bound into Vespa's `distanceThreshold`, retaining
+the final client check. Cosine and Euclidean thresholds remain on the client:
+Vespa reconstructs their public distance from closeness, so directly inverting a
+score threshold can discard valid hits at floating-point boundaries. Hybrid
+thresholds apply only to combined relevance and are never used as vector bounds.
+Backend execution failures, query errors, and incomplete search
 coverage raise contextual `VectorStoreException` errors. Caller cancellation
 remains cancellation; unsupported operations and invalid arguments fail locally.
 
@@ -410,17 +545,23 @@ when specific recall or latency requirements call for search tuning.
 | `VespaVectorStoreOptions` | Meaning |
 |---|---|
 | `Namespace` | Required document namespace; dedicate the schema to it |
-| `RankProfile` | Required deployed angular-proximity profile with distance match feature |
+| `RankProfile` | Optional for CRUD; dense search requires this default or a per-field deployed proximity profile with distance match feature |
 | `QueryTensorName` | Query input name; default `query_embedding` |
-| `Approximate` | Use approximate nearest-neighbor search; default `true` |
+| `VectorFields` | Per-vector query tensor and operation-specific dense/hybrid profile bindings; keyed by logical property name |
+| `HybridRankProfile` | Explicit deployed profile combining lexical/vector relevance; required for hybrid search |
+| `HybridVectorTargetHits` | Dense hybrid candidate target, at least `top + Skip`; null uses that window |
+| `HybridKeywordTargetHits` | Independent lexical hybrid candidate target, at least `top + Skip`; null uses that window |
+| `CollectionCatalog` | Authoritative read-only `IVespaCollectionCatalog`, required for existence/listing; optional for direct CRUD/search; never deploys schemas |
+| `AssumeSchemaExists` | Default `false`; application assertion of predeployment enabling ensure without a catalog. Does not enable existence/listing or prove schema identity |
+| `Approximate` | Default `true`; `IndexKind.Flat` overrides it to exact search |
 | `HnswExploreAdditionalHits` | Optional nonnegative extra HNSW exploration; applies to approximate search. Default `null` leaves Vespa's default unchanged |
 | `SummaryClass` | Optional deployed summary for searches/filtered reads without vectors; default `null` uses Vespa's default |
 | `VectorSummaryClass` | Independent deployed summary for `IncludeVectors = true`; default `null` uses Vespa's default |
 | `RequiredDataFields` | Optional storage names of mandatory data fields; typed C# `required` data properties are also enforced |
 | `MaxResults` | Maximum `top + Skip`; default `400`. Vespa's query profile must also permit the requested hits and offset |
 | `SearchTimeout` | Vespa per-query timeout; default five seconds. The HTTP client's timeout applies independently |
-| `EmbeddingGenerator` | Optional caller-owned `IEmbeddingGenerator<string, Embedding<float>>` for text queries and dynamic string vector inputs |
-| `DocumentEmbeddingPrefix` | Optional prefix added to dynamic string vector inputs before generation |
+| `EmbeddingGenerator` | Optional caller-owned `IEmbeddingGenerator<string, Embedding<float>>` for text queries and typed/dynamic string vector inputs |
+| `DocumentEmbeddingPrefix` | Optional prefix added to string vector inputs before generation |
 | `QueryEmbeddingPrefix` | Optional prefix added to text queries before generation |
 | `UpsertBatchSize` | Maximum records buffered/validated per upsert chunk; default `64` |
 | `EmbeddingBatchSize` | Maximum text inputs per embedding request; default `32` |
@@ -438,6 +579,7 @@ concrete `VespaVectorStore` also accepts complete options per collection:
 var defaults = new VespaVectorStoreOptions
 {
     Namespace = "knowledge",
+    AssumeSchemaExists = true, // This application deploys the schema separately.
     RankProfile = "vector_search"
 };
 using var store = new VespaVectorStore(client, defaults);
@@ -462,11 +604,38 @@ See [existing deployments, application configuration and Cloud](https://github.c
 for client reuse, DI, application packages and the distinction between Cloud data
 access and Cloud deployment.
 
-This provider implements only part of the VectorData surface. Schema deployment,
-deletion and discovery, `CollectionExistsAsync`, other key or vector types, other distance metrics,
-multiple vectors, deep export, and hybrid search interfaces are unsupported.
-Use the [base Vespa.NET client](https://github.com/outmatic/Vespa.NET) for native
-hybrid search, custom ranking, bulk feed, document visiting, and deployment.
+### Keyword hybrid search
+
+Collections additionally implement `IKeywordHybridSearchable<TRecord>`. Use that
+interface (or the concrete collection) to call `HybridSearchAsync`; it is separate
+from the core `VectorStoreCollection` surface. Configure `HybridRankProfile` globally
+or in the selected `VectorFields` binding, and deploy a string field marked
+`IsFullTextIndexed`. Select it with `HybridSearchOptions.AdditionalProperty` when
+there is more than one candidate; `VectorProperty` selects the vector as usual.
+
+The query retrieves `nearestNeighbor(...) OR weakAnd(...)` candidates and applies
+`Filter` to the entire union, including lexical-only hits. Keywords are quoted
+values analyzed by the selected text field, not raw YQL. `HybridVectorTargetHits`
+and `HybridKeywordTargetHits` independently control the dense and lexical candidate
+targets. Each defaults to `top + Skip` and is raised to that window if configured
+lower. These defaults are not a measured recall or latency optimum, and targets do
+not guarantee full recall. Tune the two branches on representative queries and
+coordinate their targets with the deployed profile's reranking budget; see Vespa's
+[totalTargetHits contract](https://docs.vespa.ai/en/reference/querying/yql.html#totaltargethits)
+and [phased ranking](https://docs.vespa.ai/en/ranking/phased-ranking.html). The deployed
+profile owns lexical/vector fusion. The returned score is its finite combined
+Vespa relevance, larger-is-better, and hybrid `ScoreThreshold` is a minimum relevance.
+It is not a cosine/distance score and is not comparable across arbitrary profiles.
+
+Remaining unsupported features include automatic key generation, `DataContent`
+embedding inputs, sparse/binary/non-float vectors, other metrics/index kinds,
+nested or immutable constructor-only records, and a validated trimming/Native AOT
+contract. Mappings use reflection. Schema creation/deletion, automatic schema or
+rank-profile validation and universal data-plane schema discovery remain outside
+this provider. Bounded result windows are not a deep-export cursor; VectorData's
+core abstraction does not require a universal export method. Use the
+[base Vespa.NET client](https://github.com/outmatic/Vespa.NET) for document visiting,
+bulk feed, custom native queries/ranking and explicit application deployment.
 
 ## Real embeddings and Microsoft Agent Framework
 
@@ -498,10 +667,12 @@ it uses the query endpoint's host with port `19071`. Configure `VESPA_ENDPOINT`,
 
 The sample constructs an `OllamaApiClient`, uses it as
 `IEmbeddingGenerator<string, Embedding<float>>`, and supplies it in store options.
-Typed records supply precomputed document vectors. Dynamic collections can instead
-declare a string vector property, which `UpsertAsync` embeds before writing.
+The sample's typed records supply precomputed document vectors. Dynamic collections
+can instead declare a string vector property, which `UpsertAsync` embeds before
+writing; typed string input properties are also supported.
 With a generator configured, `SearchAsync(string, ...)` generates the query vector.
-Vector inputs bypass that generator.
+Precomputed `float[]`, `ReadOnlyMemory<float>` and
+`Embedding<float>` query inputs bypass that generator.
 An explicitly configured generator must support
 `IEmbeddingGenerator<string, Embedding<float>>`; incompatible generators are
 rejected when the collection is created.
@@ -583,7 +754,7 @@ From the repository root:
 
 ```sh
 dotnet test tests/Vespa.NET.VectorData.Tests -c Release
-VESPA_VECTOR_DATA_INTEGRATION_TESTS=1 dotnet test tests/Vespa.NET.VectorData.Tests -c Release --filter FullyQualifiedName~LiveVespaTests
+VESPA_VECTOR_DATA_INTEGRATION_TESTS=1 dotnet test tests/Vespa.NET.VectorData.Tests -c Release --filter 'FullyQualifiedName~LiveVespaTests|FullyQualifiedName~LiveFeatureTests'
 ```
 
 The default suite covers HTTP request bodies, mapping, filters, scores, errors,
@@ -597,5 +768,7 @@ connector, retrieval tool and preference memory across fresh agents against
 three-dimensional schemas. The other runs the published sample with
 `--deploy-only`, then executes the C# quickstart against its application.
 Additional Docker tests verify native chat-history memory and schema checks against
-real Vespa. These tests are skipped unless enabled.
+real Vespa. `LiveFeatureTests` additionally exercises the expanded mapping,
+metrics, membership, ordering and hybrid paths. These are test scenarios, not a
+claim that a particular checkout has passed them; tests are skipped unless enabled.
 Set `VESPA_VECTOR_DATA_IMAGE` to select the test image.

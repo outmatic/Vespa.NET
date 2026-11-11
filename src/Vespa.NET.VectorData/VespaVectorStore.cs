@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.VectorData;
 
 namespace Vespa.VectorData;
@@ -52,14 +53,42 @@ public sealed class VespaVectorStore : VectorStore
         return new VespaVectorStoreCollection<object, Dictionary<string, object?>>(_client, name, ValidateAndSnapshotOptions(options), definition);
     }
 
-    public override IAsyncEnumerable<string> ListCollectionNamesAsync(CancellationToken cancellationToken = default) =>
-        throw VespaVectorValidation.SchemaLifecycle();
+    public override IAsyncEnumerable<string> ListCollectionNamesAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        var catalog = _options.CollectionCatalog ?? throw new NotSupportedException(
+            "Listing deployed schemas requires a CollectionCatalog. Configure an authoritative read-only catalog; Vespa has no universal data-plane schema-list endpoint.");
+        return ListAsync(catalog, cancellationToken);
+    }
 
-    public override Task<bool> CollectionExistsAsync(string name, CancellationToken cancellationToken = default) =>
-        throw VespaVectorValidation.SchemaLifecycle();
+    private async IAsyncEnumerable<string> ListAsync(IVespaCollectionCatalog catalog,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        await foreach (var name in catalog.ListCollectionNamesAsync(cancellationToken).WithCancellation(cancellationToken))
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            VespaVectorValidation.Identifier(name, nameof(catalog));
+            if (seen.Add(name))
+                yield return name;
+        }
+    }
 
-    public override Task EnsureCollectionDeletedAsync(string name, CancellationToken cancellationToken = default) =>
+    public override Task<bool> CollectionExistsAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return VespaCollectionProbe.ExistsAsync(name, _options.CollectionCatalog, cancellationToken);
+    }
+
+    public override Task EnsureCollectionDeletedAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        VespaVectorValidation.Identifier(name, nameof(name));
         throw VespaVectorValidation.SchemaLifecycle();
+    }
 
     public override object? GetService(Type serviceType, object? serviceKey = null)
     {
@@ -84,8 +113,29 @@ public sealed class VespaVectorStore : VectorStore
         ArgumentException.ThrowIfNullOrWhiteSpace(options.Namespace);
         if (options.Namespace.Contains(':', StringComparison.Ordinal))
             throw new ArgumentException("A document namespace cannot contain ':'.", nameof(options));
-        VespaVectorValidation.Identifier(options.RankProfile, nameof(options.RankProfile));
+        if (options.RankProfile is { } defaultRankProfile)
+            VespaVectorValidation.Identifier(defaultRankProfile, nameof(options.RankProfile));
         VespaVectorValidation.Identifier(options.QueryTensorName, nameof(options.QueryTensorName));
+        if (options.HybridRankProfile is { } hybridProfile)
+            VespaVectorValidation.Identifier(hybridProfile, nameof(options.HybridRankProfile));
+        if (options.HybridVectorTargetHits is { } vectorTargetHits)
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(vectorTargetHits, nameof(options.HybridVectorTargetHits));
+        if (options.HybridKeywordTargetHits is { } keywordTargetHits)
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(keywordTargetHits, nameof(options.HybridKeywordTargetHits));
+        ArgumentNullException.ThrowIfNull(options.VectorFields);
+        Dictionary<string, VespaVectorFieldOptions> vectorFields = new(StringComparer.Ordinal);
+        foreach (var (name, field) in options.VectorFields)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(name, nameof(options.VectorFields));
+            ArgumentNullException.ThrowIfNull(field, nameof(options.VectorFields));
+            if (field.RankProfile is { } rankProfile)
+                VespaVectorValidation.Identifier(rankProfile, nameof(options.VectorFields));
+            if (field.QueryTensorName is { } queryTensorName)
+                VespaVectorValidation.Identifier(queryTensorName, nameof(options.VectorFields));
+            if (field.HybridRankProfile is { } fieldHybridProfile)
+                VespaVectorValidation.Identifier(fieldHybridProfile, nameof(options.VectorFields));
+            vectorFields.Add(name, field);
+        }
         if (options.SummaryClass is { } summary)
             ArgumentException.ThrowIfNullOrWhiteSpace(summary, nameof(options.SummaryClass));
         if (options.VectorSummaryClass is { } vectorSummary)
@@ -101,7 +151,7 @@ public sealed class VespaVectorStore : VectorStore
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxResults);
         if (options.SearchTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(options), "SearchTimeout must be positive.");
-        return options with { RequiredDataFields = options.RequiredDataFields.ToArray() };
+        return options with { RequiredDataFields = options.RequiredDataFields.ToArray(), VectorFields = vectorFields };
     }
 }
 
@@ -116,6 +166,6 @@ internal static class VespaVectorValidation
     }
 
     internal static NotSupportedException SchemaLifecycle() => new(
-        "Collection discovery and schema creation/deletion require application deployment. " +
-        "Deploy the complete Vespa application separately; this provider connects to existing schemas.");
+        "Schema creation and deletion require application deployment. " +
+        "Deploy the complete Vespa application separately; this provider connects to existing schemas and never deploys automatically.");
 }

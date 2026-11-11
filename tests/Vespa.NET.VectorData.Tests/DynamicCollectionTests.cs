@@ -197,12 +197,13 @@ public sealed class DynamicCollectionTests
     }
 
     [Fact]
-    public async Task EnsureCollectionExists_ValidatesOnceOnTheSearchEndpoint()
+    public async Task EnsureCollectionExists_RechecksSearchabilityOnEveryCall()
     {
         using var harness = new TestHarness((_, _) => TestHarness.Json("""{"root":{"children":[]}}"""));
         using var collection = harness.Store.GetDynamicCollection("memory", Definition());
         await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => collection.EnsureCollectionExistsAsync()));
-        var request = Assert.Single(harness.Handler.Requests);
+        Assert.Equal(8, harness.Handler.Requests.Count);
+        var request = harness.Handler.Requests[0];
         Assert.Equal("/search/", request.Uri.AbsolutePath);
         using var query = JsonDocument.Parse(request.Body!);
         Assert.Equal("select documentid from sources memory where true", query.RootElement.GetProperty("yql").GetString());

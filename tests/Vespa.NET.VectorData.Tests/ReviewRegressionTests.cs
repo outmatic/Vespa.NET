@@ -64,8 +64,8 @@ public sealed class ReviewRegressionTests
     public async Task NullVectorOnUpsert_IsRejectedBeforeIO()
     {
         using var harness = new TestHarness();
-        var collection = harness.Store.GetCollection<string, ArrayRecord>("article");
-        await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new ArrayRecord { Id = "a", Embedding = null }));
+        var collection = harness.Store.GetCollection<string, RequiredArrayRecord>("article");
+        await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new RequiredArrayRecord { Id = "a", Embedding = null! }));
         Assert.Empty(harness.Handler.Requests);
     }
 
@@ -268,6 +268,14 @@ public sealed class ReviewRegressionTests
         Assert.Equal("article", error.CollectionName);
         Assert.Equal(operation, error.OperationName);
     }
+}
+
+public sealed class RequiredArrayRecord
+{
+    [VectorStoreKey]
+    public string Id { get; set; } = "";
+    [VectorStoreVector(3, StorageName = "embedding")]
+    public float[] Embedding { get; set; } = [];
 }
 
 public sealed class ArrayRecord
