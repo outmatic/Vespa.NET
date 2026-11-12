@@ -75,7 +75,7 @@ def main():
         ET.SubElement(central.find("ItemGroup"), "PackageVersion", Include="Vespa.NET.VectorData", Version=version)
         central.write(consumer / "Directory.Packages.props")
         for source in tests.glob("*.cs"):
-            if source.name != "LiveVespaTests.cs":
+            if source.name not in {"LiveVespaTests.cs", "LiveFeatureTests.cs"}:
                 shutil.copyfile(source, consumer / source.name)
 
         config = ET.Element("configuration")

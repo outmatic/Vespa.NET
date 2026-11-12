@@ -56,6 +56,7 @@ using var store = new VespaVectorStore(vespa, new()
 {
     Namespace = "knowledge",
     RankProfile = "vector_search",
+    AssumeSchemaExists = true,
     SummaryClass = "vector_data",
     EmbeddingGenerator = embeddings,
     DocumentEmbeddingPrefix = historyMemory ? "search_document: " : null,

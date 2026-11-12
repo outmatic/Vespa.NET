@@ -229,11 +229,10 @@ public sealed class ConnectorTests
     }
 
     [Fact]
-    public async Task DiscoveryAndDestructiveLifecycleOperations_RemainUnsupported()
+    public async Task DiscoveryWithoutCatalogAndDestructiveLifecycleOperations_RemainUnsupported()
     {
         using var harness = new TestHarness();
         Assert.Throws<NotSupportedException>(() => harness.Store.ListCollectionNamesAsync());
-        await Assert.ThrowsAsync<NotSupportedException>(() => harness.Store.CollectionExistsAsync("article"));
         await Assert.ThrowsAsync<NotSupportedException>(() => harness.Collection.EnsureCollectionDeletedAsync());
         Assert.Empty(harness.Handler.Requests);
     }

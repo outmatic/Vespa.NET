@@ -4,10 +4,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>Vespa.NET.VectorData</PackageId>
-    <Version>1.2.0</Version>
+    <Version>2.0.0</Version>
     <RootNamespace>Vespa.VectorData</RootNamespace>
-    <Description>Microsoft.Extensions.VectorData provider for existing Vespa application schemas, with typed and dynamic records, cosine vector search, and Microsoft Agent Framework chat-history memory support.</Description>
-    <PackageReleaseNotes>Adds collection-specific options and optional summary selection while retaining backend defaults. Validates requested vectors and required data, assigns requested vectors once, projects document reads, and adds bounded upsert and embedding batches with concurrent ordered writes and explicit partial outcomes. Adds configurable HNSW exploration and deployment guidance.</PackageReleaseNotes>
+    <Description>Microsoft.Extensions.VectorData provider for existing Vespa application schemas, with typed and dynamic records, dense vector and keyword hybrid search, and Microsoft Agent Framework semantic-memory support.</Description>
+    <PackageReleaseNotes>Breaking: collection existence and listing require an authoritative catalog; ensure requires a catalog or explicit AssumeSchemaExists. Adds keyword hybrid search, six vector metrics, multiple vector fields, numeric keys, nullable and generated embeddings, dates, lists, membership filters and ordering. Uses unranked for filtered reads and probes, independent hybrid candidate budgets and conservative server-side dot-product thresholds. Schema deployment remains external. See the package README and changelog for migration guidance.</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
   </PropertyGroup>

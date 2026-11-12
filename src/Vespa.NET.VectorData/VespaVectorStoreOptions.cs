@@ -5,17 +5,40 @@ namespace Vespa.VectorData;
 /// <summary>Configuration for the provider over existing Vespa schemas.</summary>
 public sealed record VespaVectorStoreOptions
 {
+    /// <summary>Optional authoritative, read-only collection catalog. Does not deploy or remove schemas.</summary>
+    public IVespaCollectionCatalog? CollectionCatalog { get; init; }
+
+    /// <summary>
+    /// Explicit application assertion that schemas were deployed externally. Allows EnsureCollectionExistsAsync
+    /// to validate searchability without a catalog; this is not live schema discovery or automatic creation.
+    /// </summary>
+    public bool AssumeSchemaExists { get; init; }
+
     /// <summary>Document namespace. Dedicate each connected schema to this namespace.</summary>
     public required string Namespace { get; init; }
 
     /// <summary>
-    /// Deployed profile ranking by cosine similarity or angular closeness, with
+    /// Deployed profile ranking monotonically by vector proximity, with
     /// <c>match-features: distance(field, embedding)</c> for the mapped vector field.
+    /// Cosine metrics require angular; dot-product metrics require dotproduct;
+    /// Euclidean metrics require euclidean in the deployed schema.
     /// </summary>
-    public required string RankProfile { get; init; }
+    public string? RankProfile { get; init; }
 
     /// <summary>Query tensor input declared by the rank profile.</summary>
     public string QueryTensorName { get; init; } = "query_embedding";
+
+    /// <summary>Per-vector bindings keyed by CLR/definition property name. Collections with multiple vectors require explicit rank profile and query tensor bindings.</summary>
+    public IReadOnlyDictionary<string, VespaVectorFieldOptions> VectorFields { get; init; } = new Dictionary<string, VespaVectorFieldOptions>();
+
+    /// <summary>Deployed hybrid profile combining lexical and vector relevance. Its relevance is the hybrid result score; larger is better.</summary>
+    public string? HybridRankProfile { get; init; }
+
+    /// <summary>Dense candidate target for hybrid retrieval. Null uses top + skip; smaller configured values are raised to that window. Tune independently of the keyword target and coordinate with the deployed reranking budget.</summary>
+    public int? HybridVectorTargetHits { get; init; }
+
+    /// <summary>Lexical candidate target for hybrid retrieval. Null uses top + skip; smaller configured values are raised to that window. Tune independently of the vector target; the default is not a recall or latency optimum.</summary>
+    public int? HybridKeywordTargetHits { get; init; }
 
     /// <summary>Use HNSW approximate search. Set false for exact search.</summary>
     public bool Approximate { get; init; } = true;
@@ -55,4 +78,17 @@ public sealed record VespaVectorStoreOptions
 
     /// <summary>Prefix added to text queries before embedding generation during search.</summary>
     public string? QueryEmbeddingPrefix { get; init; }
+}
+
+/// <summary>Existing Vespa query bindings for one vector property. No schema deployment is performed.</summary>
+public sealed record VespaVectorFieldOptions
+{
+    /// <summary>Profile ordering hits by this vector's proximity and returning its distance match feature.</summary>
+    public string? RankProfile { get; init; }
+
+    /// <summary>Query tensor input matching this vector's dimension name, size, and cell type.</summary>
+    public string? QueryTensorName { get; init; }
+
+    /// <summary>Optional hybrid profile override for this vector.</summary>
+    public string? HybridRankProfile { get; init; }
 }

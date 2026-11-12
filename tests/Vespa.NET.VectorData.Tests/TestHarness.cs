@@ -15,7 +15,7 @@ internal sealed class TestHarness : IDisposable
         Store = new VespaVectorStore(Client, Options);
     }
 
-    internal static VespaVectorStoreOptions Options => new() { Namespace = "test", RankProfile = "vector_search", Approximate = false };
+    internal static VespaVectorStoreOptions Options => new() { Namespace = "test", RankProfile = "vector_search", Approximate = false, AssumeSchemaExists = true };
     internal RecordingHandler Handler { get; }
     internal HttpClient Http { get; }
     internal VespaClient Client { get; }
