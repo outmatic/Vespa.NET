@@ -13,7 +13,7 @@ internal static class ConversationPatterns
 {
     internal static async Task RunAsync(string pattern, string? compaction, bool reduceHistory, bool onDemand,
         bool streaming, string question, IVespaClient client, IChatClient chat, IEmbeddingGenerator<string, Embedding<float>> embeddings,
-        VespaVectorStore vectors, CancellationToken cancellationToken, RetrievalSettings? retrieval = null)
+        VespaVectorStore vectors, CancellationToken cancellationToken)
     {
         var user = Environment.GetEnvironmentVariable("VESPA_MEMORY_USER") ?? "demo-user";
         var conversation = Environment.GetEnvironmentVariable("VESPA_CONVERSATION_ID") ?? "demo-conversation";
@@ -26,6 +26,7 @@ internal static class ConversationPatterns
         var history = new VespaChatHistoryProvider(snapshots, _ => new() { ConversationId = conversation },
             new() { ChatReducer = reduceHistory ? strategy.AsChatReducer() : null });
         using var preferences = vectors.GetCollection<string, MemoryRecord>("memory");
+        using var articles = vectors.GetCollection<string, Article>("article");
         using var files = new FileMemoryProvider(new VespaAgentFileStore(snapshots));
         var options = new ChatClientAgentOptions
         {
@@ -48,12 +49,12 @@ internal static class ConversationPatterns
                 agent = chat.AsAIAgent(options);
                 break;
             case "text-search":
-                var documentation = new DocumentationSearch(client, embeddings, retrieval ?? RetrievalSettings.ForSample());
                 options.AIContextProviders = [new TextSearchProvider(async (query, ct) =>
                 {
                     List<TextSearchProvider.TextSearchResult> results = [];
-                    foreach (var hit in await documentation.SearchAsync(query, ct))
-                        results.Add(new() { Text = hit.Fields?.Title + "\n" + hit.Fields?.Body, SourceName = hit.Id });
+                    await foreach (var hit in articles.SearchAsync("search_query: " + query, 3,
+                        new() { Filter = a => a.Published && a.Category == "agent-framework" }, ct))
+                        results.Add(new() { Text = hit.Record.Title, SourceName = hit.Record.Id });
                     return results;
                 }, new()
                 {

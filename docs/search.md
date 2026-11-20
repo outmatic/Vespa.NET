@@ -2,8 +2,6 @@
 
 Full reference for Vespa.NET's search capabilities: basic search, nearest-neighbor, hybrid search, streaming, and request options.
 
-For an Agent Framework example that combines text and vector search, see the [retrieval guide](native-retrieval.md). The [evaluation guide](retrieval-quality.md) shows how to compare rankings against relevance judgments.
-
 ---
 
 ## Basic Search
@@ -20,11 +18,17 @@ foreach (var hit in response.Root.Children)
     Console.WriteLine($"{hit.Fields?.Name}: {hit.Relevance:F3}");
 ```
 
-HTTP failures preserve the primary server error from `root.errors` in `VespaException.Error`. Successful responses can still contain backend errors or degraded coverage: inspect `response.Root.Errors` and `response.Root.Coverage`.
+HTTP failures preserve the primary server error from `root.errors` in
+`VespaException.Error`. Successful responses can still contain backend errors or
+degraded coverage: inspect `response.Root.Errors` and `response.Root.Coverage`.
 
 ## Tensor Response Formats
 
-`PresentationFormatTensors = "hex-value"` omits tensor type information from the response. Declare `[VespaTensor("tensor<float>(x[384])")]` (using the actual schema type) on a `VespaTensor` property so the client can decode the correct cell width. The same metadata disambiguates mapped labels named `type`, `cells`, `blocks`, or `values` in value-only forms.
+`PresentationFormatTensors = "hex-value"` omits tensor type information from the
+response. Declare `[VespaTensor("tensor<float>(x[384])")]` (using the actual schema
+type) on a `VespaTensor` property so the client can decode the correct cell width.
+The same metadata disambiguates mapped labels named `type`, `cells`, `blocks`, or
+`values` in value-only forms.
 
 When using `VespaTensorConverter` directly, supply the type explicitly:
 
@@ -36,13 +40,16 @@ var jsonOptions = new JsonSerializerOptions
 var tensor = JsonSerializer.Deserialize<VespaTensor>("\"3F80000040000000\"", jsonOptions);
 ```
 
-Hex data without a type is rejected with `JsonException` rather than decoded by guessing. Use the self-describing `hex` format when schema metadata is unavailable.
+Hex data without a type is rejected with `JsonException` rather than decoded by
+guessing. Use the self-describing `hex` format when schema metadata is unavailable.
 
 ---
 
 ## Nearest-Neighbor Search
 
-`NearestNeighborSearchAsync` generates `{totalTargetHits: topK}nearestNeighbor(...)`. The `filter` string is embedded verbatim in the YQL — never pass unvalidated end-user input; build it with `YqlBuilder` where possible.
+`NearestNeighborSearchAsync` generates `{totalTargetHits: topK}nearestNeighbor(...)`.
+The `filter` string is embedded verbatim in the YQL — never pass unvalidated
+end-user input; build it with `YqlBuilder` where possible.
 
 ```csharp
 // Lambda — resolves field name via [VespaTensor]

@@ -1,14 +1,24 @@
 # Measure VectorData ANN recall and latency
 
-The runner in `benchmarks/Vespa.NET.VectorData.Benchmarks` compares exact vector search with HNSW search through the VectorData connector. It reports overlap with the exact top-k results, p50/p95 request latency, result counts and memory allocations in the client process.
+The standalone runner in `benchmarks/Vespa.NET.VectorData.Benchmarks` compares
+Vespa exact vector search with approximate search through the real VectorData
+connector. It measures agreement with exact top-k, client-observed p50/p95
+latency, returned-hit counts, and client-process allocation deltas. It does not
+measure semantic relevance, concurrent throughput, server memory, or network
+bytes. No exploration value, including `64`, is assumed to be optimal.
 
-Top-k overlap tells you how closely the index reproduces an exact search. To measure whether the returned documents answer a query, use the [relevance evaluation](retrieval-quality.md). The [native retrieval tests](vespa-native-validation.md) also combine text and vector search with filters. These benchmarks measure different parts of retrieval; choose the one that matches the question you want to answer.
-
-The runner requires .NET 10 and an explicit query endpoint. It does not start Docker, deploy, feed, or delete anything implicitly. `--deploy` replaces the **entire application** at the separately supplied config endpoint. Use a dedicated disposable instance, never an application containing other workloads. `--feed` writes benchmark documents; neither writes nor deployment are rolled back after a failure. Without these flags, it only queries an already prepared corpus.
+The runner requires .NET 10 and an explicit query endpoint. It does not start
+Docker, deploy, feed, or delete anything implicitly. `--deploy` replaces the
+**entire application** at the separately supplied config endpoint. Use a dedicated
+disposable instance, never an application containing other workloads. `--feed`
+writes benchmark documents; neither writes nor deployment are rolled back after
+a failure. Without these flags, it only queries an already prepared corpus.
 
 ## Run on a dedicated local instance
 
-From the repository root, choose unused localhost ports and a unique container name. For reproducibility, pin an image digest instead of the movable major tag in repeated experiments, and retain that digest in `--server-label`.
+From the repository root, choose unused localhost ports and a unique container
+name. For reproducibility, pin an image digest instead of the movable major tag
+in repeated experiments, and retain that digest in `--server-label`.
 
 ```sh
 docker run --detach --name vespa-ann-benchmark --hostname vespa-container \
@@ -25,20 +35,37 @@ dotnet run -c Release --project benchmarks/Vespa.NET.VectorData.Benchmarks -- \
   --server-label 'record the image digest, server CPU/RAM and Docker limits here'
 ```
 
-The generated application is a single content node with one angular float tensor, an HNSW index (`max-links-per-node: 16`, `neighbors-to-explore-at-insert: 200`), filter attributes, and `vector_data`/default summaries. Its local benchmark resource configuration allows disk usage up to 95%, matching the repository's disposable integration environment; it is not a production deployment template. The runner waits for service readiness and complete corpus visibility. Every search uses a 60-second server timeout; an error or incomplete search aborts the run instead of counting missing hits as successful measurements. The complete run has a one-hour deadline and responds to Ctrl+C.
+The generated application is a single content node with one angular float tensor,
+an HNSW index (`max-links-per-node: 16`, `neighbors-to-explore-at-insert: 200`),
+filter attributes, and `vector_data`/default summaries. Its local benchmark
+resource configuration allows disk usage up to 95%, matching the repository's
+disposable integration environment; it is not a production deployment template.
+The runner waits for service readiness and complete corpus visibility. Every
+search uses a 60-second server timeout; an error or incomplete search aborts the
+run instead of counting missing hits as successful measurements. The complete
+run has a one-hour deadline and responds to Ctrl+C.
 
-To repeat against the same corpus, omit `--deploy`, `--config-endpoint`, and `--feed`, while retaining the dataset parameters. To change vector dimensions, use a fresh container. Stop and remove only the instance you created:
+To repeat against the same corpus, omit `--deploy`, `--config-endpoint`, and
+`--feed`, while retaining the dataset parameters. To change vector dimensions,
+use a fresh container. Stop and remove only the instance you created:
 
 ```sh
 docker stop vespa-ann-benchmark
 docker rm vespa-ann-benchmark
 ```
 
-For a quick functional smoke, use `--documents 300 --dimensions 16 --queries 8 --repeats 1 --k 5 --explore 0,16`. This is intentionally too small to choose production ANN settings or establish meaningful tail-latency estimates.
+For a quick functional smoke, use `--documents 300 --dimensions 16 --queries 8
+--repeats 1 --k 5 --explore 0,16`. This is intentionally too small to choose
+production ANN settings or establish meaningful tail-latency estimates.
 
 ## Supply actual embeddings
 
-Synthetic mode uses deterministic normalized clustered Gaussian vectors with separate query samples. These vectors exercise a nonuniform index but are not language-model embeddings. The generator seed, runtime, corpus fingerprint, and parameters are recorded. To measure your embedding distribution, supply a JSON file containing document embeddings and independent representative query embeddings generated by the same model and preprocessing:
+Synthetic mode uses deterministic normalized clustered Gaussian vectors with
+separate query samples. These vectors exercise a nonuniform index but are not
+language-model embeddings. The generator seed, runtime, corpus fingerprint, and
+parameters are recorded. To measure your embedding distribution, supply a JSON
+file containing document embeddings and independent representative query
+embeddings generated by the same model and preprocessing:
 
 ```json
 {
@@ -57,13 +84,31 @@ dotnet run -c Release --project benchmarks/Vespa.NET.VectorData.Benchmarks -- \
   --dataset /absolute/path/corpus.json --k 10 --repeats 3
 ```
 
-Each document needs a unique nonempty ID, nonnull text, bucket in `[0,99]`, and a finite nonzero vector. All document/query vectors must have identical dimensions. No local embedding model is invoked; query latency therefore excludes embedding generation. `--documents`, `--dimensions`, and `--queries` configure only synthetic generation and are ignored when a dataset is supplied. The JSON example illustrates format, not a meaningful benchmark corpus.
+Each document needs a unique nonempty ID, nonnull text, bucket in `[0,99]`, and
+a finite nonzero vector. All document/query vectors must have identical
+dimensions. No local embedding model is invoked; query latency therefore excludes
+embedding generation. `--documents`, `--dimensions`, and `--queries` configure
+only synthetic generation and are ignored when a dataset is supplied. The JSON
+example illustrates format, not a meaningful benchmark corpus.
 
-Filtering uses `run_id == corpus SHA-256 && bucket < requested percentage`. Synthetic buckets are independently sampled, so `10` means approximately 10%; actual eligible counts/fractions are included in the report. External buckets allow correlated metadata distributions to be tested. Empty scopes are skipped explicitly because recall has no denominator. Scopes smaller than k use all eligible documents as the exact baseline. Corpus hashes include documents and queries; changing either creates another corpus. Reusing one instance for many corpora changes global filter selectivity and index size: use a fresh container for controlled comparisons.
+Filtering uses `run_id == corpus SHA-256 && bucket < requested percentage`.
+Synthetic buckets are independently sampled, so `10` means approximately 10%;
+actual eligible counts/fractions are included in the report. External buckets
+allow correlated metadata distributions to be tested. Empty scopes are skipped
+explicitly because recall has no denominator. Scopes smaller than k use all
+eligible documents as the exact baseline. Corpus hashes include documents and
+queries; changing either creates another corpus. Reusing one instance for many
+corpora changes global filter selectivity and index size: use a fresh container
+for controlled comparisons.
 
 ## Interpret the results
 
-The default output is an ignored directory under `artifacts/vector-search-benchmarks/<timestamp>-<id>/`. `--out` overrides it; the runner requires a new or empty directory and adds a local `.gitignore` to keep generated results out of source control. Reusing an output directory is rejected so a failed run cannot be mistaken for an older successful report. It writes:
+The default output is an ignored directory under
+`artifacts/vector-search-benchmarks/<timestamp>-<id>/`. `--out` overrides it; the
+runner requires a new or empty directory and adds a local `.gitignore` to keep
+generated results out of source control. Reusing an output directory is rejected
+so a failed run cannot be mistaken for an older successful report.
+It writes:
 
 - `results.json`: parameters, dataset SHA-256, runtime/environment identifiers,
   aggregates, and individual measurements.
@@ -72,15 +117,49 @@ The default output is an ignored directory under `artifacts/vector-search-benchm
 - `schema.sd`: exact schema used by `--deploy`; when deployment is omitted this
   is the **expected** schema, not a read-back of the server configuration.
 
-Exact ground truth is computed once per query/filter before measurements. All configurations use the same queries and corpus. Configuration order is shuffled with the recorded seed; each has excluded warmup requests. Each measured request is serial and fully enumerates connector results. Percentiles use nearest rank; 100 queries × 3 repeats produce 300 samples per configuration. More samples and repeated independent runs are needed to characterize tails and variance.
+Exact ground truth is computed once per query/filter before measurements. All
+configurations use the same queries and corpus. Configuration order is shuffled
+with the recorded seed; each has excluded warmup requests. Each measured request
+is serial and fully enumerates connector results. Percentiles use nearest rank;
+100 queries × 3 repeats produce 300 samples per configuration. More samples and
+repeated independent runs are needed to characterize tails and variance.
 
-`Recall@k` is the number of distinct returned IDs intersecting exact top-k divided by the exact result count. Boundary ties can lower strict ID overlap even when the substitute has the same distance; inspect ties in datasets with duplicate vectors. A score threshold is deliberately absent. Filtering may cause Vespa to switch from ANN to exact search; `approximate=true` by itself is not proof that the HNSW graph was used. Read query traces separately when explaining surprising filter/latency results. See [Vespa's exact/ANN comparison and exploration guidance](https://docs.vespa.ai/en/querying/approximate-nn-hnsw.html).
+`Recall@k` is the number of distinct returned IDs intersecting exact top-k divided
+by the exact result count. Boundary ties can lower strict ID overlap even when
+the substitute has the same distance; inspect ties in datasets with duplicate
+vectors. A score threshold is deliberately absent. Filtering may cause Vespa to
+switch from ANN to exact search; `approximate=true` by itself is not proof that
+the HNSW graph was used. Read query traces separately when explaining surprising
+filter/latency results. See [Vespa's exact/ANN comparison and exploration
+guidance](https://docs.vespa.ai/en/querying/approximate-nn-hnsw.html).
 
-The summary comparison uses `IncludeVectors=false` and the same explicit YQL field projection in both cases. Current Vespa partial-summary handling can ask content nodes for just those fields, and can switch summary classes when a selected field is absent from the requested class. Consequently, `vector_data` versus `default` can fetch the same backend fields: this comparison does **not** establish a reduction in transferred bytes or guarantee a named-summary latency advantage. Internal content/container bytes are not measured. Both paths may still read document ID/text from storage. Consult query traces and the deployed Vespa version before attributing a latency difference to summaries; see [document summaries](https://docs.vespa.ai/en/querying/document-summaries.html) and the current [PartialSummaryHandler implementation](https://github.com/vespa-engine/vespa/blob/ea8a0ff1603577e1f40efa86e498ec73c75f6a48/container-search/src/main/java/com/yahoo/prelude/fastsearch/PartialSummaryHandler.java).
+The summary comparison uses `IncludeVectors=false` and the same explicit YQL
+field projection in both cases. Current Vespa partial-summary handling can ask
+content nodes for just those fields, and can switch summary classes when a
+selected field is absent from the requested class. Consequently, `vector_data`
+versus `default` can fetch the same backend fields: this comparison does **not**
+establish a reduction in transferred bytes or guarantee a named-summary latency
+advantage. Internal content/container bytes are not measured. Both paths may
+still read document ID/text from storage. Consult query traces and the deployed
+Vespa version before attributing a latency difference to summaries; see
+[document summaries](https://docs.vespa.ai/en/querying/document-summaries.html)
+and the current
+[PartialSummaryHandler implementation](https://github.com/vespa-engine/vespa/blob/ea8a0ff1603577e1f40efa86e498ec73c75f6a48/container-search/src/main/java/com/yahoo/prelude/fastsearch/PartialSummaryHandler.java).
 
-Allocation deltas use `GC.GetTotalAllocatedBytes` across asynchronous calls. They include client-process background activity and measurement overhead; they are not per-thread allocations or resident memory. Network compression, server cache state, CPU contention, VM limits, graph construction/feeding order, and prior exact queries can affect results. The seed fixes vectors and case order, not concurrent HNSW graph construction. `--feed-concurrency 1` reduces feeding-order variability when desired. Record the source commit and actual deployed schema alongside image/hardware details when comparing releases.
+Allocation deltas use `GC.GetTotalAllocatedBytes` across asynchronous calls. They
+include client-process background activity and measurement overhead; they are
+not per-thread allocations or resident memory. Network compression, server cache
+state, CPU contention, VM limits, graph construction/feeding order, and prior
+exact queries can affect results. The seed fixes vectors and case order, not
+concurrent HNSW graph construction. `--feed-concurrency 1` reduces feeding-order
+variability when desired. Record the source commit and actual deployed schema
+alongside image/hardware details when comparing releases.
 
-Corpus feed time is printed only as preparation information. This runner does not compare connector batch APIs, embedding batching, field sets, or concurrency; those need separate workloads and failure/ordering contracts. Successful ANN recall is also not evidence of RAG answer quality: assess relevance with real queries and labeled passages separately.
+Corpus feed time is printed only as preparation information. This runner does
+not compare connector batch APIs, embedding batching, field sets, or concurrency;
+those need separate workloads and failure/ordering contracts. Successful ANN
+recall is also not evidence of RAG answer quality: assess relevance with real
+queries and labeled passages separately.
 
 Check metric edge cases and deterministic generation without a server:
 
