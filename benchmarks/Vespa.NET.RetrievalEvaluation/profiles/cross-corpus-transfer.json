@@ -1,0 +1,119 @@
+{
+  "purpose": "Frozen cross-corpus transfer check; no weights, budgets or pruning selected on SciFact or FiQA test results.",
+  "configurations": [
+    {
+      "name": "hybrid",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "summaryClass": null,
+      "rankProfileOverride": null,
+      "approximate": true,
+      "hnswExploreAdditionalHits": null,
+      "globalPhaseRerankCount": 100,
+      "weakAndStopwordLimit": null,
+      "weakAndAdjustTarget": null
+    },
+    {
+      "name": "lexical",
+      "mode": "lexical",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "summaryClass": null,
+      "rankProfileOverride": null,
+      "approximate": true,
+      "hnswExploreAdditionalHits": null,
+      "globalPhaseRerankCount": null,
+      "weakAndStopwordLimit": null,
+      "weakAndAdjustTarget": null
+    },
+    {
+      "name": "semantic",
+      "mode": "semantic",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "summaryClass": null,
+      "rankProfileOverride": null,
+      "approximate": true,
+      "hnswExploreAdditionalHits": null,
+      "globalPhaseRerankCount": null,
+      "weakAndStopwordLimit": null,
+      "weakAndAdjustTarget": null
+    },
+    {
+      "name": "native_pruning_ann",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 600,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "approximate": true,
+      "globalPhaseRerankCount": 900,
+      "weakAndStopwordLimit": 0.6,
+      "weakAndAdjustTarget": 0.01
+    },
+    {
+      "name": "medium_pruning_ann",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 200,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "approximate": true,
+      "globalPhaseRerankCount": 100,
+      "weakAndStopwordLimit": 0.6,
+      "weakAndAdjustTarget": 0.01
+    }
+  ],
+  "sources": [
+    "sample-default.json",
+    "arguana-nomic-quality.json",
+    "arguana-nomic-latency.json"
+  ]
+}

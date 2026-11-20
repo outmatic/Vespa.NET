@@ -1,0 +1,75 @@
+{
+  "purpose": "Untuned built-in sample defaults, exported from the compiled ForSample factory; frozen before measurement.",
+  "sourceSha256": "105e2e2c49f0ff679b29c13725c9e2a9bd128e8dbc8b8aac20a1e01f861c6e59",
+  "configurations": [
+    {
+      "name": "hybrid",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "summaryClass": null,
+      "rankProfileOverride": null,
+      "approximate": true,
+      "hnswExploreAdditionalHits": null,
+      "globalPhaseRerankCount": 100,
+      "weakAndStopwordLimit": null,
+      "weakAndAdjustTarget": null
+    },
+    {
+      "name": "lexical",
+      "mode": "lexical",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "summaryClass": null,
+      "rankProfileOverride": null,
+      "approximate": true,
+      "hnswExploreAdditionalHits": null,
+      "globalPhaseRerankCount": null,
+      "weakAndStopwordLimit": null,
+      "weakAndAdjustTarget": null
+    },
+    {
+      "name": "semantic",
+      "mode": "semantic",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "language": "en",
+      "textFieldSet": "default",
+      "grammar": "tokenize",
+      "resultFields": [
+        "title",
+        "body"
+      ],
+      "summaryClass": null,
+      "rankProfileOverride": null,
+      "approximate": true,
+      "hnswExploreAdditionalHits": null,
+      "globalPhaseRerankCount": null,
+      "weakAndStopwordLimit": null,
+      "weakAndAdjustTarget": null
+    }
+  ]
+}

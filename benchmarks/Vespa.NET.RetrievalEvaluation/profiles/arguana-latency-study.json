@@ -1,0 +1,117 @@
+{
+  "parentSha256": "90bad10b1e38b3dc206d8ad2fbed2c1107f6d52d36dcd2167f001be3cf4ebaf9",
+  "note": "Exploratory study on already observed ArguAna, not holdout selection or application defaults. Same weights, language, grammar, fields and exclusions. Explicit exact/ANN per arm. Native pruning from official Vespa serving-tuning guide; no client token filtering. Profiled before observing new quality scores.",
+  "configurations": [
+    {
+      "name": "semantic",
+      "mode": "semantic",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "approximate": false
+    },
+    {
+      "name": "lexical",
+      "mode": "lexical",
+      "vectorCandidates": 100,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "approximate": false
+    },
+    {
+      "name": "reference",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 600,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "globalPhaseRerankCount": 900,
+      "approximate": false
+    },
+    {
+      "name": "rerank100",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 600,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "globalPhaseRerankCount": 100,
+      "approximate": false
+    },
+    {
+      "name": "small",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "globalPhaseRerankCount": 100,
+      "approximate": false
+    },
+    {
+      "name": "reference_ann",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 600,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "globalPhaseRerankCount": 900,
+      "approximate": true
+    },
+    {
+      "name": "small_ann",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "globalPhaseRerankCount": 100,
+      "approximate": true
+    },
+    {
+      "name": "native_pruning_ann",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 600,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "globalPhaseRerankCount": 900,
+      "approximate": true,
+      "weakAndStopwordLimit": 0.6,
+      "weakAndAdjustTarget": 0.01
+    },
+    {
+      "name": "medium_pruning_ann",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 200,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60,
+      "grammar": "tokenize",
+      "globalPhaseRerankCount": 100,
+      "approximate": true,
+      "weakAndStopwordLimit": 0.6,
+      "weakAndAdjustTarget": 0.01
+    }
+  ],
+  "confirmationRule": "Shortlist observed candidates within 0.005 nDCG@10 of the current reference and faster p95, then confirm interleaved with three repeats; descriptive corpus-specific result, no untouched-test claim."
+}
