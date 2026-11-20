@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.IO.Compression;
+using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,32 @@ var historyMemory = args.Contains("--history-memory", StringComparer.Ordinal);
 var onDemand = args.Contains("--on-demand", StringComparer.Ordinal);
 var pattern = ReadOption("--pattern");
 var compaction = ReadOption("--compact");
+var retrievalMode = ReadOption("--retrieval");
+var retrievalConfig = ReadOption("--retrieval-config");
+if (retrievalMode is not null && retrievalConfig is not null)
+    throw new ArgumentException("Choose --retrieval or --retrieval-config.");
+var retrieval = RetrievalSettings.ForSample(retrievalMode);
+if (retrievalConfig is not null)
+{
+    using var frozen = JsonDocument.Parse(await File.ReadAllTextAsync(retrievalConfig));
+    var root = frozen.RootElement;
+    retrieval = (root.TryGetProperty("selected", out var selected) ? selected : root)
+        .Deserialize<RetrievalSettings>(new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        ?? throw new ArgumentException("The tuning selection is missing.");
+}
+retrieval = retrieval with
+{
+    Language = ReadOption("--retrieval-language") ?? retrieval.Language,
+    TextFieldSet = ReadOption("--retrieval-fieldset") ?? retrieval.TextFieldSet,
+    Grammar = ReadOption("--retrieval-grammar") ?? retrieval.Grammar,
+    SummaryClass = ReadOption("--retrieval-summary") ?? retrieval.SummaryClass,
+    ResultFields = ReadOption("--retrieval-fields")?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        ?? retrieval.ResultFields
+};
+retrieval.Validate(3);
+if (args.Any(a => a is "--retrieval" or "--retrieval-config" or "--retrieval-language" or "--retrieval-fieldset" or "--retrieval-grammar" or "--retrieval-summary" or "--retrieval-fields") &&
+    (historyMemory || args.Contains("--memory", StringComparer.Ordinal) || pattern is not null and not "text-search"))
+    throw new ArgumentException("Retrieval selection applies to documentation search and --pattern text-search.");
 if (historyMemory && args.Contains("--memory", StringComparer.Ordinal))
     throw new ArgumentException("Choose --history-memory or --memory for this run.");
 if (onDemand && !historyMemory && pattern != "text-search")
@@ -64,7 +91,8 @@ using var store = new VespaVectorStore(vespa, new()
 });
 var questionParts = new List<string>();
 for (var i = 0; i < args.Length; i++)
-    if (args[i] is "--pattern" or "--compact")
+    if (args[i] is "--pattern" or "--compact" or "--retrieval" or "--retrieval-config" or
+        "--retrieval-language" or "--retrieval-fieldset" or "--retrieval-grammar" or "--retrieval-summary" or "--retrieval-fields")
         i++;
     else if (args[i] is not ("--seed" or "--deploy" or "--deploy-only" or "--memory" or "--history-memory" or "--on-demand" or "--stream" or "--reduce-history"))
         questionParts.Add(args[i]);
@@ -123,13 +151,15 @@ if (args.Contains("--seed", StringComparer.Ordinal))
         "Vespa application packages contain schemas and services.xml. Deploy the whole application to introduce a new schema.",
         "Vespa supports hybrid search combining keyword matching and vector retrieval, with configurable rank profiles."
     ];
-    var vectors = await embeddings.GenerateAsync(texts.Select(t => "search_document: " + t), cancellationToken: cancellation.Token);
+    string[] titles = ["Vector search with tensor fields", "Application packages and deployment", "Hybrid keyword and vector search"];
+    var vectors = await embeddings.GenerateAsync(texts.Select((t, i) => "search_document: " + titles[i] + "\n\n" + t), cancellationToken: cancellation.Token);
     for (var i = 0; i < texts.Length; i++)
         await articles.UpsertAsync(new Article
         {
             Id = $"agent-framework-{i + 1}",
             Category = sampleCategory,
-            Title = texts[i],
+            Title = titles[i],
+            Body = texts[i],
             Embedding = vectors[i].Vector
         }, cancellation.Token);
     var expectedIds = Enumerable.Range(1, texts.Length).Select(i => $"agent-framework-{i}").ToHashSet(StringComparer.Ordinal);
@@ -151,19 +181,18 @@ if (pattern is not null)
     using var patternChat = new OllamaApiClient(ollamaEndpoint, model);
     await ConversationPatterns.RunAsync(pattern, compaction, args.Contains("--reduce-history", StringComparer.Ordinal), onDemand,
         args.Contains("--stream", StringComparer.Ordinal), string.IsNullOrWhiteSpace(question) ? "Continue our conversation." : question,
-        vespa, patternChat, embeddings, store, cancellation.Token);
+        vespa, patternChat, embeddings, store, cancellation.Token, retrieval);
     return;
 }
 
-// nomic-embed-text recommends different prefixes for query and document inputs.
+var documentation = new DocumentationSearch(vespa, embeddings, retrieval);
 var search = AIFunctionFactory.Create(
     [Description("Search Vespa documentation and return source IDs with supporting text.")]
 async (string query, CancellationToken cancellationToken) =>
     {
         List<string> passages = [];
-        await foreach (var hit in articles.SearchAsync("search_query: " + query, 3,
-            new() { Filter = a => a.Published && a.Category == sampleCategory }, cancellationToken))
-            passages.Add($"[{hit.Record.Id}] {hit.Record.Title}");
+        foreach (var hit in await documentation.SearchAsync(query, cancellationToken))
+            passages.Add($"[{hit.Id}] {hit.Fields?.Title}\n{hit.Fields?.Body}");
         return string.Join("\n", passages);
     }, "search_vespa");
 

@@ -1,17 +1,10 @@
 # Vespa + Microsoft Agent Framework
 
-A .NET 10 console sample covering Microsoft Agent Framework conversation and
-memory patterns with Vespa: retrieval, preferences, sessions, chronological and
-semantic history, file memory, compaction and Harness.
-All modes use Ollama for embeddings and chat. Run these commands from the repository root.
+A .NET 10 console sample covering Microsoft Agent Framework conversation and memory patterns with Vespa: retrieval, preferences, sessions, chronological and semantic history, file memory, compaction and Harness. Ollama supplies chat and, for vector modes, embeddings. Lexical retrieval queries do not generate embeddings. Run these commands from the repository root.
 
-See the [conversation patterns guide](../../docs/agent-framework.md) for the full
-.NET pattern map, configuration and caveats.
+See the [conversation patterns guide](../../docs/agent-framework.md) for the full .NET pattern map, configuration and caveats.
 
-For an existing cluster, [reuse the deployed application and configure the client](../../docs/agent-framework.md#reuse-an-existing-client-and-deployment).
-The guide also covers custom `services.xml`, generated application options, Cloud
-data-plane access and deployment through the Cloud CLI/control plane. The sample's
-`--deploy` path targets a self-hosted config server.
+For an existing cluster, [reuse the deployed application and configure the client](../../docs/agent-framework.md#reuse-an-existing-client-and-deployment). The guide also covers custom `services.xml`, generated application options, Cloud data-plane access and deployment through the Cloud CLI/control plane. The sample's `--deploy` path targets a self-hosted config server.
 
 ## First run
 
@@ -26,11 +19,7 @@ ollama pull qwen3:4b
 dotnet run --project samples/Vespa.NET.AgentFramework -- --deploy --seed "How does vector search work?"
 ```
 
-`--deploy` waits for the config server, deploys the included `app/` package through
-`VespaClient.Admin`, and waits for application readiness. **It replaces the active
-Vespa application on the target instance. Use a dedicated development instance.**
-`--seed` generates embeddings for three sample documents, writes them, and waits
-until they are searchable. For subsequent questions:
+`--deploy` waits for the config server, deploys the included `app/` package through `VespaClient.Admin`, and waits for application readiness. **It replaces the active Vespa application on the target instance. Use a dedicated development instance.** `--seed` generates embeddings for three sample documents, writes them, and waits until they are searchable. For subsequent questions:
 
 ```sh
 dotnet run --project samples/Vespa.NET.AgentFramework -- "How does hybrid search work?"
@@ -42,58 +31,66 @@ To deploy without running embeddings or the agent (Ollama is not required):
 dotnet run --project samples/Vespa.NET.AgentFramework -- --deploy-only
 ```
 
-The whole run has a five-minute timeout. Deployment files are copied to build and
-publish output; a published executable resolves `app/` beside itself, independently
-of the working directory.
+The whole run has a five-minute timeout. Deployment files are copied to build and publish output; a published executable resolves `app/` beside itself, independently of the working directory.
+
+## Native lexical and hybrid retrieval
+
+The sample searches documentation by meaning with Nomic embeddings. Run it without a retrieval flag for semantic search. Choose lexical, hybrid or RRF explicitly to include text matching.
+
+```sh
+dotnet run --project samples/Vespa.NET.AgentFramework -- --retrieval lexical "nearestNeighbor"
+dotnet run --project samples/Vespa.NET.AgentFramework -- --retrieval hybrid "Find the nearestNeighbor API reference"
+dotnet run --project samples/Vespa.NET.AgentFramework -- --retrieval semantic "Find documents with a similar meaning"
+dotnet run --project samples/Vespa.NET.AgentFramework -- --pattern text-search --retrieval rrf "How is a schema deployed?"
+```
+
+Semantic search enables HNSW, targets 100 vector candidates and returns up to three passages. The function tool and Microsoft's `TextSearchProvider` call the same retrieval code. Lexical search uses BM25 over title and body and skips query embedding.
+
+`--retrieval hybrid` selects balanced hybrid search. It targets 100 candidates from each method and reranks up to 100 hits with equal normalized weights. Its lexical branch uses `tokenize` with optional weakAnd pruning unset. This balanced hybrid scored higher than semantic search on SciFact and lower on FiQA. [Cross-corpus results](../../docs/retrieval-transfer.md)
+
+If you ran an older version of this sample, deploy the current `app/` and reseed its three documents to populate the separate title and body fields.
+
+Use `--retrieval-config` to load saved settings:
+
+```sh
+dotnet run --project samples/Vespa.NET.AgentFramework -- \
+  --retrieval-config benchmarks/Vespa.NET.RetrievalEvaluation/profiles/nfcorpus-nomic.json \
+  "How does deployment work?"
+```
+
+The supplied profile was selected on English NFCorpus. Use it as an example of the settings format, then evaluate your own queries before adopting its values.
+
+The [retrieval guide](../../docs/native-retrieval.md) covers language, searched fields, query grammar, summaries and ranking. The sample uses `tokenize` grammar so natural-language input matches individual words without treating quotes or field names as query syntax. Use `--retrieval-grammar weakAnd` to enable that syntax. Candidate counts, reranking depth and weakAnd tuning can be set in the JSON file; saved configurations keep their own settings.
+
+To compare settings on a corpus, follow the [evaluation guide](../../docs/retrieval-quality.md). The [latency measurements](../../docs/retrieval-latency.md) show how those choices affect search time as well as relevance.
 
 ## Remember a preference across runs
 
-`--memory` registers `remember_preference` and `recall_preferences`, backed by the
-`memory` schema. The tools save and retrieve the configured user's preferred
-programming language for code examples.
+`--memory` registers `remember_preference` and `recall_preferences`, backed by the `memory` schema. The tools save and retrieve the configured user's preferred programming language for code examples.
 
-With the same Docker instance and Ollama models running, execute these as two
-separate commands:
+With the same Docker instance and Ollama models running, execute these as two separate commands:
 
 ```sh
 dotnet run --project samples/Vespa.NET.AgentFramework -- --deploy --memory "Remember that I prefer code examples in C#."
 dotnet run --project samples/Vespa.NET.AgentFramework -- --memory "Which programming language should you use for my code examples?"
 ```
 
-`--deploy` installs `article`, `memory`, `chathistory` and `agentstate`. Omit it after the first
-deployment.
+`--deploy` installs `article`, `memory`, `chathistory` and `agentstate`. Omit it after the first deployment.
 
-The [memory helper](PreferenceMemory.cs) stores one preference per user under a
-stable user/topic key. Updates replace the previous preference. Recall reads that
-exact key and verifies its user/topic metadata; it needs no query embedding or
-search-visibility polling. Embedding generation still happens before upsert, with
-Nomic's document prefix, so the stored record remains usable for semantic search.
+The [memory helper](PreferenceMemory.cs) stores one preference per user under a stable user/topic key. Updates replace the previous preference. Recall reads that exact key and verifies its user/topic metadata; it needs no query embedding or search-visibility polling. Embedding generation still happens before upsert, with Nomic's document prefix, so the stored record remains usable for semantic search.
 
-`VESPA_MEMORY_USER` sets the user scope (default `demo-user`). Both tools take
-the user ID from this configuration. Production applications must resolve the
-user from an authenticated request and enforce access controls. The environment
-variable and Vespa namespaces do not provide tenant isolation.
+`VESPA_MEMORY_USER` sets the user scope (default `demo-user`). Both tools take the user ID from this configuration. Production applications must resolve the user from an authenticated request and enforce access controls. The environment variable and Vespa namespaces do not provide tenant isolation.
 
 ## Native chat-history memory
 
-`--history-memory` attaches Microsoft's `ChatHistoryMemoryProvider` through
-`ChatClientAgentOptions.AIContextProviders`. It saves conversation messages after
-each response and retrieves relevant messages before the next model invocation.
-It uses the provider's own dictionary model and scope filters without a custom
-save or recall tool. These records contain message text and metadata, not complete
-serialized messages with all tool or multimodal content. Warning/error diagnostics
-are printed without conversation text or exception messages; a model response can
-succeed even if the provider logs a memory failure.
+`--history-memory` attaches Microsoft's `ChatHistoryMemoryProvider` through `ChatClientAgentOptions.AIContextProviders`. It saves conversation messages after each response and retrieves relevant messages before the next model invocation. It uses the provider's own dictionary model and scope filters without a custom save or recall tool. These records contain message text and metadata, not complete serialized messages with all tool or multimodal content. Warning/error diagnostics are printed without conversation text or exception messages; a model response can succeed even if the provider logs a memory failure.
 
 ```sh
 dotnet run --project samples/Vespa.NET.AgentFramework -- --deploy --history-memory "I prefer code examples in C#."
 dotnet run --project samples/Vespa.NET.AgentFramework -- --history-memory "Which programming language should you use for my code examples?"
 ```
 
-Each process creates a new session. Messages are stored with application, agent,
-user and session IDs. Searches use application, agent and user, so later sessions
-can recall earlier messages for the same user. Set `VESPA_MEMORY_USER` to change
-the demo user. Search visibility can lag behind document writes.
+Each process creates a new session. Messages are stored with application, agent, user and session IDs. Searches use application, agent and user, so later sessions can recall earlier messages for the same user. Set `VESPA_MEMORY_USER` to change the demo user. Search visibility can lag behind document writes.
 
 To let the model decide when to search, enable the provider's own retrieval function:
 
@@ -101,22 +98,13 @@ To let the model decide when to search, enable the provider's own retrieval func
 dotnet run --project samples/Vespa.NET.AgentFramework -- --history-memory --on-demand "What language do I prefer?"
 ```
 
-The [`chathistory` schema](app/schemas/chathistory.sd) matches the provider's field
-names and 768-dimensional vector. The connector generates embeddings from its
-string vector inputs, using the configured document prefix; text searches use the
-query prefix. `EnsureCollectionExistsAsync` verifies that the deployed schema is
-searchable and does not deploy it.
+The [`chathistory` schema](app/schemas/chathistory.sd) matches the provider's field names and 768-dimensional vector. The connector generates embeddings from its string vector inputs, using the configured document prefix; text searches use the query prefix. `EnsureCollectionExistsAsync` verifies that the deployed schema is searchable and does not deploy it.
 
-This mode retrieves related conversation messages. The `--memory` mode above
-maintains one current preference through explicit tools. For exact conversation
-replay, manage the agent's session history separately.
+This mode retrieves related conversation messages. The `--memory` mode above maintains one current preference through explicit tools. For exact conversation replay, manage the agent's session history separately.
 
 ## Sessions, history, context, files and compaction
 
-`--pattern` selects a conversation pattern. Each mode persists its session in
-Vespa so separate processes can resume it. The default conversation is
-`demo-conversation`; set `VESPA_CONVERSATION_ID` and `VESPA_MEMORY_USER` to select
-the demo conversation and user. Modes have separate storage scopes.
+`--pattern` selects a conversation pattern. Each mode persists its session in Vespa so separate processes can resume it. The default conversation is `demo-conversation`; set `VESPA_CONVERSATION_ID` and `VESPA_MEMORY_USER` to select the demo conversation and user. Modes have separate storage scopes.
 
 | Pattern | Behavior |
 |---|---|
@@ -140,16 +128,9 @@ dotnet run --project samples/Vespa.NET.AgentFramework -- --pattern compaction --
 dotnet run --project samples/Vespa.NET.AgentFramework -- --pattern harness "Save the project plan to plan.md."
 ```
 
-`--compact` selects `sliding` (default), `truncation`, `tools`, `summary` or
-`pipeline`. `--reduce-history` configures the history provider's reducer and
-persists the reduced history; request-only compaction leaves the archive complete.
-`--stream` fully consumes a response stream before saving its session.
+`--compact` selects `sliding` (default), `truncation`, `tools`, `summary` or `pipeline`. `--reduce-history` configures the history provider's reducer and persists the reduced history; request-only compaction leaves the archive complete. `--stream` fully consumes a response stream before saving its session.
 
-Snapshots have a 4 MiB default limit and reject stale concurrent writes. File
-memory is a bounded text tree with lowercase paths. The sample does not provision
-a remote model service or an HTTP host. For those cases, the session store preserves
-service conversation IDs and implements Microsoft's hosted `AgentSessionStore`
-contract. See the guide for concurrency, retention and experimental-API caveats.
+Snapshots have a 4 MiB default limit and reject stale concurrent writes. File memory is a bounded text tree with lowercase paths. The sample does not provision a remote model service or an HTTP host. For those cases, the session store preserves service conversation IDs and implements Microsoft's hosted `AgentSessionStore` contract. See the guide for concurrency, retention and experimental-API caveats.
 
 ## Endpoints and models
 
@@ -162,10 +143,6 @@ contract. See the guide for concurrency, retention and experimental-API caveats.
 | `VESPA_MEMORY_USER` | `demo-user` (memory and `--pattern` modes) |
 | `VESPA_CONVERSATION_ID` | `demo-conversation` (`--pattern` modes) |
 
-The embedding model is `nomic-embed-text` with 768 dimensions. The sample adds its
-recommended `search_document:` and `search_query:` prefixes. Documentation mode
-filters retrieval to published sample documents and asks the agent to cite their
-IDs. Memory mode filters preferences by the configured user and topic.
+The embedding model is `nomic-embed-text` with 768 dimensions. The sample adds its recommended `search_document:` and `search_query:` prefixes. Documentation mode filters retrieval to published sample documents and asks the agent to cite their IDs. Memory mode filters preferences by the configured user and topic.
 
-See the [connector README](../../src/Vespa.NET.VectorData/README.md) for schema
-requirements, supported operations, lifetime and filtering limitations.
+See the [connector README](../../src/Vespa.NET.VectorData/README.md) for schema requirements, supported operations, lifetime and filtering limitations.
