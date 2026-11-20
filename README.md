@@ -4,21 +4,19 @@
 
 **Typed document, search and feed APIs for [Vespa.ai](https://vespa.ai) on .NET 8 and .NET 10.**
 
-[![NuGet](https://img.shields.io/nuget/v/Vespa.NET?style=flat-square&logo=nuget&color=004880)](https://www.nuget.org/packages/Vespa.NET)
-[![.NET 10](https://img.shields.io/badge/.NET-10.0-512bd4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
-[![.NET 8](https://img.shields.io/badge/.NET-8.0_(LTS)-512bd4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](https://github.com/outmatic/Vespa.NET/blob/main/LICENSE)
+[![NuGet](https://img.shields.io/nuget/v/Vespa.NET?style=flat-square&logo=nuget&color=004880)](https://www.nuget.org/packages/Vespa.NET) [![.NET 10](https://img.shields.io/badge/.NET-10.0-512bd4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com) [![.NET 8](https://img.shields.io/badge/.NET-8.0_(LTS)-512bd4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com) [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](https://github.com/outmatic/Vespa.NET/blob/main/LICENSE)
 
 </div>
 
 ---
 
-Use C# models for document serialization and schema generation, compose queries
-with the YQL builder, and feed mixed document operations with bounded concurrency.
+Use C# models for document serialization and schema generation, compose queries with the YQL builder, and feed mixed document operations with bounded concurrency.
 
-[Quick Start](#quick-start) · [Documents](#model-aware-api) · [Search](#yql-builder) ·
-[Grouping](#grouping--aggregation) · [Feed](#bulk-feed) · [Configuration](#configuration--ops) ·
-[Guides](#documentation)
+The [Agent Framework sample](samples/Vespa.NET.AgentFramework/README.md) uses semantic search by default. Select hybrid retrieval to combine text and vector scores using Vespa's ranking profiles. The [retrieval guide](docs/native-retrieval.md) explains how to configure it, and the [evaluation guide](docs/retrieval-quality.md) shows how to measure relevance on your own documents.
+
+The [SciFact and FiQA results](docs/retrieval-transfer.md) compare the same frozen settings across two more collections, including cases where hybrid search scores lower than vector-only retrieval. An [E5 comparison](docs/retrieval-embeddings.md) repeats those settings with a second embedding model; the FiQA deficit persists.
+
+[Quick Start](#quick-start) · [Documents](#model-aware-api) · [Search](#yql-builder) · [Grouping](#grouping--aggregation) · [Feed](#bulk-feed) · [Configuration](#configuration--ops) · [Guides](#documentation)
 
 ## Features
 
@@ -27,6 +25,7 @@ with the YQL builder, and feed mixed document operations with bounded concurrenc
 | **Schema** | Code-first `.sd` generation from attributes, multi-type deploy, [custom `services.xml`](https://github.com/outmatic/Vespa.NET/blob/main/docs/schema.md) |
 | **Documents** | CRUD, conditional writes, field-level ops, resumable visit pages, group/number addressing (read+write), selection-based update/delete/copy with continuation auto-loop + crash-safe manual paging |
 | **Search** | Full-text, nearest-neighbor, hybrid, streaming-mode queries and lazy result pagination |
+| **Retrieval examples** | Agent Framework documentation search, BM25/vector ranking and relevance benchmarks |
 | **YQL** | Fluent type-safe builder with boolean composition, grouping, ranking DSL |
 | **Feed** | Mixed puts/updates/deletes across schemas and namespaces, per-document ordering, bounded backpressure, progress callbacks |
 | **Models** | Attribute-based field names, tensor formats and [`[VespaExtraFields]`](https://github.com/outmatic/Vespa.NET/blob/main/docs/schema.md#dynamic-fields-with-vespaextrafields) for fields outside the C# model |
@@ -39,17 +38,13 @@ with the YQL builder, and feed mixed document operations with bounded concurrenc
 
 ## Quick Start
 
-The example targets a local Vespa 8 instance with the document/query endpoint on
-port `8080` and the config server on port `19071`. It deploys a generated
-application package; use a separate development instance for this example.
+The example targets a local Vespa 8 instance with the document/query endpoint on port `8080` and the config server on port `19071`. It deploys a generated application package; use a separate development instance for this example.
 
 ```bash
 docker run --detach --name vespa --publish 8080:8080 --publish 19071:19071 vespaengine/vespa:8
 ```
 
-Wait for the config server at `http://localhost:19071/ApplicationStatus` to respond
-before deploying. If your application is already deployed, configure `Endpoint`
-and skip the deployment call.
+Wait for the config server at `http://localhost:19071/ApplicationStatus` to respond before deploying. If your application is already deployed, configure `Endpoint` and skip the deployment call.
 
 ### 1. Install
 
@@ -101,8 +96,7 @@ public record Product
 
 ### 3. Deploy, index, search
 
-Add the following to `Program.cs`. The four-dimensional vectors keep the example
-self-contained; in an application, use your embedding model's vectors and dimension.
+Add the following to `Program.cs`. The four-dimensional vectors keep the example self-contained; in an application, use your embedding model's vectors and dimension.
 
 ```csharp
 using Vespa;
@@ -151,22 +145,15 @@ foreach (var hit in results.Root.Children)
     Console.WriteLine($"{hit.Fields?.Name}: {hit.Relevance:F3}");
 ```
 
-Writes can become visible to search after the write response; a direct document
-GET and a search do not have the same visibility guarantees.
+Writes can become visible to search after the write response; a direct document GET and a search do not have the same visibility guarantees.
 
-The options-only constructor configures its HTTP handler and owns its lifetime.
-For factory-managed HTTP retry and circuit breaking, use
-[`AddVespaClient`](#configuration--ops). Feed-level retry is also available with
-a directly constructed client.
+The options-only constructor configures its HTTP handler and owns its lifetime. For factory-managed HTTP retry and circuit breaking, use [`AddVespaClient`](#configuration--ops). Feed-level retry is also available with a directly constructed client.
 
 ---
 
 ## Model-Aware API
 
-The following examples are independent and reuse the model and client above.
-Document extensions infer the schema and namespace from `[VespaDocument]`;
-search extensions infer the schema. `[VespaField(Name)]` drives both schema
-generation and JSON serialization.
+The following examples are independent and reuse the model and client above. Document extensions infer the schema and namespace from `[VespaDocument]`; search extensions infer the schema. `[VespaField(Name)]` drives both schema generation and JSON serialization.
 
 ```csharp
 // CRUD — no documentType needed
@@ -209,12 +196,9 @@ var resp = await client.Documents.UpdateBySelectionAsync<Product>(
 await client.Documents.DeleteAsync<Product>(product.Id);
 ```
 
-Persist a visit continuation **after processing that page**. An empty page may
-still have a continuation; use `IsComplete` to decide whether visiting has ended.
+Persist a visit continuation **after processing that page**. An empty page may still have a continuation; use `IsComplete` to decide whether visiting has ended.
 
-Pass a bare ID such as `"p-1"` or a full ID such as `"id:myapp:product::p-1"`.
-Full IDs retain their namespace, type and group/number addressing; incompatible
-targets throw. Returned documents expose `FullId` as well as the user-specified `Id`.
+Pass a bare ID such as `"p-1"` or a full ID such as `"id:myapp:product::p-1"`. Full IDs retain their namespace, type and group/number addressing; incompatible targets throw. Returned documents expose `FullId` as well as the user-specified `Id`.
 
 ---
 
@@ -250,19 +234,11 @@ var request = YqlBuilder<Product>
 var results = await client.Search.SearchAsync<Product>(request);
 ```
 
-`HybridSearch` retrieves with nearest-neighbor search and uses text matches for
-ranking through Vespa's `rank()` operator. The example's `hybrid` rank profile is
-declared on `Product` above. `embed(...)` inputs are also supported when you have
-configured an embedder in Vespa.
+`HybridSearch` retrieves with nearest-neighbor search and uses text matches for ranking through Vespa's `rank()` operator. The example's `hybrid` rank profile is declared on `Product` above. `embed(...)` inputs are also supported when you have configured an embedder in Vespa.
 
-Additional query parameters can be sent with `request.WithParameter(name, value)`.
-For example, `request.WithParameter("ranking.matching.anntimebudget", "25ms")`
-sets an ANN time budget on Vespa 8.684.9 or newer.
+Additional query parameters can be sent with `request.WithParameter(name, value)`. For example, `request.WithParameter("ranking.matching.anntimebudget", "25ms")` sets an ANN time budget on Vespa 8.684.9 or newer.
 
-`SearchStreamAsync` paginates ordinary search results lazily and is subject to
-Vespa's `maxHits`/`maxOffset` limits. Use document visiting to export a corpus.
-Vespa's separate streaming search mode requires a streaming-mode content cluster
-and request properties such as `StreamingGroupName`.
+`SearchStreamAsync` paginates ordinary search results lazily and is subject to Vespa's `maxHits`/`maxOffset` limits. Use document visiting to export a corpus. Vespa's separate streaming search mode requires a streaming-mode content cluster and request properties such as `StreamingGroupName`.
 
 > Full predicate reference, boolean composition, and validation rules in **[docs/yql-builder.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/yql-builder.md)**
 
@@ -315,9 +291,7 @@ foreach (var error in mixed.Errors)
     Console.WriteLine($"{error.OperationIndex}: {error.DocumentId} — {error.Message}");
 ```
 
-The mixed feed accepts both `IEnumerable<FeedOperation>` and
-`IAsyncEnumerable<FeedOperation>`. `FeedOptions.BoundedCapacity` limits buffered
-work; operations for the same document preserve source order, including retries.
+The mixed feed accepts both `IEnumerable<FeedOperation>` and `IAsyncEnumerable<FeedOperation>`. `FeedOptions.BoundedCapacity` limits buffered work; operations for the same document preserve source order, including retries.
 
 > Mixed operations, ordering, per-document conditions, BulkPut/Update/Delete, and FeedResult details in **[docs/feed.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/feed.md)**
 
@@ -325,8 +299,7 @@ work; operations for the same document preserve source order, including retries.
 
 ## Fields Outside the C# Model
 
-Use `[VespaExtraFields]` to preserve Vespa fields without declaring a C# property
-for each one. These fields must still exist in your deployed Vespa schema.
+Use `[VespaExtraFields]` to preserve Vespa fields without declaring a C# property for each one. These fields must still exist in your deployed Vespa schema.
 
 ```csharp
 using System.Text.Json;
@@ -422,9 +395,7 @@ public class ProductService(IVespaClient vespa)
 }
 ```
 
-Calling `AddVespaClient` again replaces the previous Vespa configuration: the last
-call supplies the options, `configureHttpClient` callback and resilience strategy.
-This lets an application override a registration supplied by a shared setup method:
+Calling `AddVespaClient` again replaces the previous Vespa configuration: the last call supplies the options, `configureHttpClient` callback and resilience strategy. This lets an application override a registration supplied by a shared setup method:
 
 ```csharp
 builder.Services.AddVespaClient(new VespaClientOptions { Endpoint = "http://default-vespa:8080" });
@@ -432,14 +403,7 @@ builder.Services.AddVespaClient(new VespaClientOptions { Endpoint = "https://pro
 // IVespaClient uses the production endpoint; only one client registration remains.
 ```
 
-The same rule applies to named clients with the same name, and when switching
-between `AddVespaClient` and `AddVespaClientWithResilienceStrategy`. Other named
-clients are unaffected. Vespa handlers and retry policies are registered once,
-so repeated calls do not stack them. Additional configuration applied through
-the returned `IHttpClientBuilder` follows the usual .NET composition rules.
-Register clients before building the service provider; existing providers retain
-their configuration. Consumer-registered unnamed `VespaClientOptions` singletons
-are preserved and do not override the options passed to `AddVespaClient`.
+The same rule applies to named clients with the same name, and when switching between `AddVespaClient` and `AddVespaClientWithResilienceStrategy`. Other named clients are unaffected. Vespa handlers and retry policies are registered once, so repeated calls do not stack them. Additional configuration applied through the returned `IHttpClientBuilder` follows the usual .NET composition rules. Register clients before building the service provider; existing providers retain their configuration. Consumer-registered unnamed `VespaClientOptions` singletons are preserved and do not override the options passed to `AddVespaClient`.
 
 </details>
 
@@ -462,8 +426,7 @@ var options = new VespaClientOptions
 <details>
 <summary><strong>Observability (OpenTelemetry)</strong></summary>
 
-Install `OpenTelemetry.Extensions.Hosting` and register the SDK's sources in your
-OpenTelemetry setup:
+Install `OpenTelemetry.Extensions.Hosting` and register the SDK's sources in your OpenTelemetry setup:
 
 ```csharp
 using OpenTelemetry.Metrics;
@@ -474,9 +437,7 @@ builder.Services.AddOpenTelemetry()
     .WithMetrics(m => m.AddMeter("Vespa.NET"));
 ```
 
-Spans: `vespa.search`, `vespa.document.*`, `vespa.feed.pipeline`, etc.
-Query text (YQL) and document ids are excluded from span tags by default; opt in with `VespaClientOptions.RecordQueryTextInTraces = true`.
-Metrics: `vespa.client.requests`, `vespa.client.request_duration`, `vespa.client.documents_written`, etc.
+Spans: `vespa.search`, `vespa.document.*`, `vespa.feed.pipeline`, etc. Query text (YQL) and document ids are excluded from span tags by default; opt in with `VespaClientOptions.RecordQueryTextInTraces = true`. Metrics: `vespa.client.requests`, `vespa.client.request_duration`, `vespa.client.documents_written`, etc.
 
 </details>
 
@@ -501,9 +462,7 @@ var client = vespa.CreateClient("test");
 await client.Admin.DeploySchemaAsync<Product>();
 ```
 
-Install `Vespa.NET.Testcontainers` and have Docker running. The container owns the
-client created by `CreateClient`. To run **this repository's** integration suite,
-set `VESPA_INTEGRATION_TESTS=1`; this flag is not required by the helper itself.
+Install `Vespa.NET.Testcontainers` and have Docker running. The container owns the client created by `CreateClient`. To run **this repository's** integration suite, set `VESPA_INTEGRATION_TESTS=1`; this flag is not required by the helper itself.
 
 </details>
 
@@ -513,15 +472,9 @@ set `VESPA_INTEGRATION_TESTS=1`; this flag is not required by the helper itself.
 
 ## Documentation
 
-The [VectorData connector](src/Vespa.NET.VectorData/README.md) is a
-separate optional package for typed and dictionary vector-store access, retrieval
-and preference tools, and Microsoft Agent Framework's native chat-history memory. See its README
-for installation, examples and supported operations.
+The [VectorData connector](src/Vespa.NET.VectorData/README.md) is a separate optional package for typed and dictionary vector-store access, retrieval and preference tools, and Microsoft Agent Framework's native chat-history memory. See its README for installation, examples and supported operations.
 
-The [Agent Framework integration](src/Vespa.NET.AgentFramework/README.md) adds
-session snapshots, chronological history and file memory. The
-[conversation patterns guide](docs/agent-framework.md) covers Microsoft's .NET
-patterns, runnable examples and caveats.
+The [Agent Framework integration](src/Vespa.NET.AgentFramework/README.md) adds session snapshots, chronological history and file memory. The [conversation patterns guide](docs/agent-framework.md) covers Microsoft's .NET patterns, runnable examples and caveats.
 
 | Guide | Content |
 |---|---|

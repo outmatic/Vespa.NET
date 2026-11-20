@@ -1,7 +1,20 @@
 schema article {
     document article {
+        field language type string {
+            indexing: set_language
+        }
+        field identifier type string {
+            indexing: attribute | summary
+            attribute: fast-search
+            match: cased
+        }
         field title type string {
             indexing: summary | index
+            index: enable-bm25
+        }
+        field body type string {
+            indexing: summary | index
+            index: enable-bm25
         }
         field category type string {
             indexing: attribute | summary
@@ -26,6 +39,7 @@ schema article {
         from-disk
         summary documentid {}
         summary title {}
+        summary body {}
         summary category {}
         summary priority {}
         summary published {}
@@ -38,5 +52,50 @@ schema article {
             expression: closeness(field, embedding)
         }
         match-features: distance(field, embedding)
+    }
+    fieldset default { fields: title, body }
+    rank-profile lexical {
+        inputs { query(title_weight) double: 1 }
+        function lexical_score() { expression: query(title_weight) * bm25(title) + bm25(body) }
+        first-phase { expression: lexical_score }
+        match-features: lexical_score
+    }
+    rank-profile hybrid_normalized inherits vector_search {
+        inputs {
+            query(vector_weight) double: 0.5
+            query(title_weight) double: 1
+        }
+        function lexical_score() { expression: query(title_weight) * bm25(title) + bm25(body) }
+        function semantic_score() { expression: cos(distance(field, embedding)) }
+        first-phase { expression: log(1 + lexical_score) + closeness(field, embedding) }
+        global-phase {
+            expression: (1-query(vector_weight)) * normalize_linear(lexical_score) + query(vector_weight) * normalize_linear(semantic_score)
+            rerank-count: 200
+        }
+        match-features: lexical_score semantic_score
+    }
+    rank-profile hybrid_rrf_10 inherits hybrid_normalized {
+        global-phase {
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 10) + query(vector_weight) * reciprocal_rank(semantic_score, 10)
+            rerank-count: 200
+        }
+    }
+    rank-profile hybrid_rrf_30 inherits hybrid_normalized {
+        global-phase {
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 30) + query(vector_weight) * reciprocal_rank(semantic_score, 30)
+            rerank-count: 200
+        }
+    }
+    rank-profile hybrid_rrf_60 inherits hybrid_normalized {
+        global-phase {
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 60) + query(vector_weight) * reciprocal_rank(semantic_score, 60)
+            rerank-count: 200
+        }
+    }
+    rank-profile hybrid_rrf_100 inherits hybrid_normalized {
+        global-phase {
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 100) + query(vector_weight) * reciprocal_rank(semantic_score, 100)
+            rerank-count: 200
+        }
     }
 }

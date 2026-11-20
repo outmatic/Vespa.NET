@@ -1,0 +1,69 @@
+{
+  "objective": "dev nDCG@10",
+  "embedding": {
+    "model": "nomic-embed-text:latest",
+    "digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
+    "truncate": true,
+    "numCtx": 8192
+  },
+  "devDatasetSha256": "03019e170bc4422f8c3451fb08a9ce8eedfa650ca54bf0a629099e99fe94cce9",
+  "documentsSha256": "b0b78efdc16b02b58449d84661830497b32edc11294f7da3399f0ba6e3de8e71",
+  "schemaSha256": "2f98c294ea28ad3be60ceb778f3ef438dcc493a1fc02d46e3b1653663747247a",
+  "devScores": {
+    "lexical": 0.2841487501418485,
+    "semantic": 0.32991628969118936,
+    "hybrid_normalized": 0.34344775326234067,
+    "hybrid_rrf": 0.33852669178304146
+  },
+  "configurations": [
+    {
+      "name": "lexical",
+      "mode": "lexical",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60
+    },
+    {
+      "name": "semantic",
+      "mode": "semantic",
+      "vectorCandidates": 100,
+      "keywordCandidates": 100,
+      "vectorWeight": 0.5,
+      "titleWeight": 1,
+      "rrfK": 60
+    },
+    {
+      "name": "hybrid_normalized",
+      "mode": "hybrid_normalized",
+      "vectorCandidates": 600,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.75,
+      "titleWeight": 1,
+      "rrfK": 60
+    },
+    {
+      "name": "hybrid_rrf",
+      "mode": "hybrid_rrf",
+      "vectorCandidates": 600,
+      "keywordCandidates": 300,
+      "vectorWeight": 0.65,
+      "titleWeight": 1,
+      "rrfK": 30
+    }
+  ],
+  "selected": {
+    "name": "hybrid_normalized",
+    "mode": "hybrid_normalized",
+    "vectorCandidates": 600,
+    "keywordCandidates": 300,
+    "vectorWeight": 0.75,
+    "titleWeight": 1,
+    "rrfK": 60
+  },
+  "testPreviouslyObserved": true,
+  "note": "An untuned baseline was observed earlier. Selection uses dev only; this is a frozen test comparison, not a pristine unseen research holdout.",
+  "source": "BEIR/nfcorpus; dev-selected reference configuration, not universal application defaults",
+  "testDatasetSha256": "21a098d9151c9f4b6d074b6781d3f2795389b5bf55ddf1a663c7ee88f1a4a7cb"
+}
