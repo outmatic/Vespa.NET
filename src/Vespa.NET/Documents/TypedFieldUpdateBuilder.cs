@@ -7,7 +7,8 @@ namespace Vespa.Documents;
 /// <summary>
 /// Fluent builder for typed field-level update operations.
 /// Field names are resolved via <see cref="VespaDocumentMeta.FieldName{T}"/>,
-/// honouring <c>[VespaField(Name = "...")]</c> and falling back to the C# property name.
+/// honouring <c>[VespaField(Name = "...")]</c> and falling back to snake_case.
+/// Properties that represent document metadata or lack an individual JSON binding are rejected.
 /// </summary>
 public sealed class TypedFieldUpdateBuilder<T> where T : class
 {
@@ -22,7 +23,7 @@ public sealed class TypedFieldUpdateBuilder<T> where T : class
         Expression<Func<T, object?>> selector,
         FieldOperation operation)
     {
-        _fields[VespaDocumentMeta.FieldName(selector)] = operation;
+        _fields[DocumentFieldSelector.FieldName(selector)] = operation;
         return this;
     }
 

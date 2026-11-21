@@ -35,7 +35,7 @@ public class DocumentV1AdvancedE2ETests(VespaFixture fixture)
             var response = await fixture.Client.Documents.PutAsync(
                 id,
                 new TestProduct { Name = "created", Price = 5, Category = "cond-create" },
-                condition: "product.category==\"cond-create\"",
+                rawCondition: "product.category==\"cond-create\"",
                 create: true);
             Assert.True(response.IsSuccess);
 
@@ -58,7 +58,7 @@ public class DocumentV1AdvancedE2ETests(VespaFixture fixture)
             fixture.Client.Documents.PutAsync(
                 id,
                 new TestProduct { Name = "never", Price = 1, Category = "cond-nocreate" },
-                condition: "product.category==\"cond-nocreate\""));
+                rawCondition: "product.category==\"cond-nocreate\""));
     }
 
     // ── Group / number-level visiting ────────────────────────────────────────

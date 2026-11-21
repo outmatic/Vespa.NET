@@ -133,6 +133,9 @@ public sealed record TestProduct
     [VespaField(Name = "price", IndexingMode = IndexingMode.AttributeSummary)]
     public double Price { get; init; }
 
+    [VespaField(Name = "single_value", IndexingMode = IndexingMode.Summary)]
+    public float? SingleValue { get; init; }
+
     [VespaField(Name = "category", IndexingMode = IndexingMode.IndexAttributeSummary)]
     public string Category { get; init; } = "";
 

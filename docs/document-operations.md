@@ -1,6 +1,6 @@
 # Document Operations
 
-Complete reference for Vespa.NET's document CRUD, field-level updates, conditional writes, addressing modes, selection operations, and visit/iterate APIs.
+Complete reference for Vespa.NET's document CRUD, field-level updates, conditional writes, addressing modes, selection operations, and visit/iterate APIs. The model-aware write signatures described here are intended for the upcoming 4.0 release; see [Migrating to 4.0](migration-4.0.md) when updating an existing application.
 
 ---
 
@@ -32,14 +32,56 @@ await client.Documents.DeleteAsync(product.Id, documentType: "product");
 
 ## Conditional Writes
 
+Use a lambda to write a condition against a model decorated with `[VespaDocument]`. Property names follow `[VespaField(Name = "...")]`, or snake_case when no name is specified.
+
+```csharp
+using Vespa.Documents;
+
+await client.Documents.PutAsync(product.Id, product,
+    condition: p => p.Price > 0);
+
+await client.Documents.UpdateFieldsAsync<Product>(product.Id,
+    update => update.Field(p => p.Price, FieldOp.Assign(49.99m)),
+    condition: p => p.Price > 0 && p.Name != null);
+
+await client.Documents.DeleteAsync<Product>(product.Id,
+    condition: p => p.Price <= 0);
+
+// Vespa ≥ 8.178: create an absent document; otherwise check its stored price.
+await client.Documents.PutAsync(product.Id, product,
+    condition: p => p.Price > 0, create: true);
+```
+
+Vespa evaluates the condition atomically against the **stored document**, before applying the write. A failed condition throws `VespaConditionNotMetException` (HTTP 412). For a put with `create: true`, an absent document is created without evaluating the condition; an existing document must still satisfy it. This checks the previous state, so validate the incoming product separately when needed.
+
+Predicates support `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`, boolean properties, and null checks. Use constants or captured local variables for values. Strings use exact, case-sensitive equality: `*` and `?` stay literal characters. Nullable numeric comparisons include presence checks so negating a comparison still handles a missing value as C# does. Other comparisons follow Vespa's [document selector semantics](https://docs.vespa.ai/en/reference/writing/document-selector-language.html#comparisons-with-missing-fields-null-values).
+
+The same signatures are available for group and number addressing. Pass `requestOptions:` and `cancellationToken:` as named arguments when needed. Nested property access, method calls such as `Contains`, arithmetic, and casts that lose precision throw `NotSupportedException` before sending a request. The client reads captured local fields without compiling the predicate or invoking property getters.
+
+Typed document conditions and updates select properties that have their own JSON binding. Document IDs, extra-fields containers and unconditionally ignored properties are rejected. A property ignored by JSON may still name a field populated by another writer; typed YQL can query that field, and native condition strings or explicit update field names remain available for document operations outside the model's binding.
+
+The resolved field name must match the name used in document JSON. If an override inherits a different field alias, declare `[VespaField(Name = "...")]` on the override too. Use this attribute for custom JSON names as well; it takes precedence over `[JsonPropertyName]`. Builders reject a remaining mismatch or an ambiguous hidden property.
+
+For an unconditional write, omit both condition arguments. `condition: null` and `condition: default` also mean no typed condition. To use a native Vespa selector string, pass `rawCondition:`:
+
 ```csharp
 await client.Documents.PutAsync(product.Id, product,
-    condition: "product.price > 0");  // HTTP 412 → VespaConditionNotMetException
+    rawCondition: "product.price > 0");
+```
 
-// Conditional put with create (Vespa ≥ 8.178): apply even when the document
-// does not exist yet.
-await client.Documents.PutAsync(product.Id, product,
-    condition: "product.price > 0", create: true);
+Set either `condition` or `rawCondition`. Supplying both with non-null values throws `ArgumentException` before a builder callback runs or a request is sent. Native selector strings support document IDs, functions, and collection field paths. Use named arguments for conditions: a positional string after the document is interpreted as `documentType` by the explicit-target API.
+
+Vespa stores decimal model properties as doubles. Comparisons on those fields follow that stored precision. Comparisons that promote an integer document field to decimal, such as `p.Quantity > 0m`, are rejected because native evaluation could round a decimal threshold and change the result; use an integer threshold instead. Evaluate decimal comparisons between captured values in C# and capture the resulting boolean.
+
+To reuse a typed predicate in a feed operation or another API that accepts a string, translate it explicitly:
+
+```csharp
+using Vespa.Feed;
+
+var condition = DocumentCondition.For<Product>(p => p.Price > 0);
+// "(product.price > 0)"
+
+var operation = FeedOperation.Put(product.Id, product, condition: condition);
 ```
 
 ---
@@ -404,8 +446,7 @@ var opts = new DocumentRequestOptions
 await client.Documents.PutAsync(product.Id, product, documentType: "product", requestOptions: opts);
 ```
 
-Model-aware CRUD overloads accept the options object **before the document ID**,
-retaining the existing positional signatures and a final cancellation token:
+Model-aware writes accept `requestOptions:` after the document arguments. Model-aware reads accept the options object before the document ID. Cancellation tokens remain the final parameter:
 
 ```csharp
 var readOptions = new DocumentRequestOptions
@@ -417,19 +458,17 @@ var readOptions = new DocumentRequestOptions
 var writeOptions = new DocumentRequestOptions { Timeout = TimeSpan.FromSeconds(10) };
 
 var doc = await client.Documents.GetAsync<Product>(readOptions, product.Id);
-await client.Documents.PutAsync(writeOptions, product.Id, product);
-await client.Documents.UpdateFieldsAsync<Product>(writeOptions, product.Id,
-    update => update.Field(p => p.Price, FieldOp.Assign(49.99m)));
-await client.Documents.DeleteAsync<Product>(writeOptions, product.Id);
+await client.Documents.PutAsync(product.Id, product, requestOptions: writeOptions);
+await client.Documents.UpdateFieldsAsync<Product>(product.Id,
+    update => update.Field(p => p.Price, FieldOp.Assign(49.99m)), requestOptions: writeOptions);
+await client.Documents.DeleteAsync<Product>(product.Id, requestOptions: writeOptions);
 
-// The same options-first overloads cover addressed reads/updates and GetManyAsync
+// Addressed reads and GetManyAsync also accept options before the ID.
 var groupDoc = await client.Documents.GetByGroupAsync<Product>(readOptions, "tenant-42", product.Id);
 var docs = await client.Documents.GetManyAsync<Product>(readOptions, ["p-1", "p-2"]);
 ```
 
-Model-aware `PutByGroupAsync`, `PutByNumberAsync`, `DeleteByGroupAsync` and
-`DeleteByNumberAsync` accept `requestOptions` as a named argument. `Cluster`
-is forwarded only on reads; write routing uses `Route`.
+All model-aware group and number writes accept `requestOptions:` as a named argument. `Cluster` is forwarded only on reads; write routing uses `Route`.
 
 > [!NOTE]
 > `DocumentRequestOptions.Timeout` is the **Vespa server-side soft timeout** — it

@@ -197,7 +197,8 @@ builder.Services.AddOpenTelemetry().WithMetrics(m => m
 ```csharp
 try
 {
-    await client.Documents.PutAsync(product.Id, product, condition: "product.version == 1");
+    // Vespa.NET 4.0: native conditions use rawCondition on model-aware writes.
+    await client.Documents.PutAsync(product.Id, product, rawCondition: "product.version == 1");
 }
 catch (VespaConditionNotMetException)
 {

@@ -41,38 +41,44 @@ public static class VespaDocumentMeta
 
     /// <summary>
     /// Resolves the Vespa field name for the property selected by <paramref name="selector"/>.
-    /// Uses <c>[VespaField(Name = "...")]</c> when present; falls back to the C# property name.
-    /// For tensor fields, uses the property name from <c>[VespaTensor]</c>.
+    /// Uses <c>[VespaField(Name = "...")]</c> when present; otherwise converts the property name to snake_case.
+    /// The selector must access a public, readable instance property directly on its parameter.
+    /// JSON serialization exclusions are not applied here: a query may reference a field populated by another writer.
     /// </summary>
     /// <example>
     /// <code>
     /// VespaDocumentMeta.FieldName&lt;Music&gt;(m =&gt; m.ArtistName)
     /// // → "artist_name"  (when [VespaField(Name = "artist_name")] is present)
-    /// // → "ArtistName"   (otherwise)
+    /// // → "artist_name"  (snake_case fallback)
     /// </code>
     /// </example>
     public static string FieldName<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
         Expression<Func<T, object?>> selector)
     {
-        var member = selector.Body switch
-        {
-            MemberExpression m => m.Member,
-            // value-type properties are boxed to object via UnaryExpression (Convert)
-            UnaryExpression { Operand: MemberExpression m } => m.Member,
-            _ => throw new ArgumentException(
-                "Expression must be a simple member access, e.g. m => m.FieldName.",
-                nameof(selector))
-        };
+        ArgumentNullException.ThrowIfNull(selector);
+        var body = selector.Body;
+        // Only strip the ordinary conversion to object used for property selectors.
+        // Numeric conversions, checked casts and user-defined operators change the selected value.
+        if (body is UnaryExpression { NodeType: ExpressionType.Convert, Method: null } convert && convert.Type == typeof(object))
+            body = convert.Operand;
 
-        return _fieldCache.GetOrAdd(member, static m =>
+        if (body is not MemberExpression { Member: PropertyInfo property, Expression: var target } ||
+            target != selector.Parameters[0] ||
+            property.GetMethod is not { IsPublic: true, IsStatic: false } ||
+            property.GetIndexParameters().Length != 0)
+            throw new ArgumentException(
+                "Expression must select a public, readable instance property directly, e.g. m => m.FieldName. Use an explicit field path for nested fields.",
+                nameof(selector));
+
+        return _fieldCache.GetOrAdd(property, static member =>
         {
-            var field = m.GetCustomAttribute<VespaFieldAttribute>();
+            var field = member.GetCustomAttribute<VespaFieldAttribute>();
             if (field?.Name is not null)
                 return field.Name;
 
             // Match JSON serialization convention: snake_case the property name
-            return VespaNaming.ToSnakeCase(m.Name);
+            return VespaNaming.ToSnakeCase(member.Name);
         });
     }
 }
