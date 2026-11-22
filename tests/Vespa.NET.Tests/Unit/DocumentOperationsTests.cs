@@ -468,14 +468,14 @@ public class DocumentOperationsTests : IDisposable
     #region URL escaping of namespace/documentType and create-on-put
 
     [Fact]
-    public async Task PutAsync_EscapesNamespaceAndDocumentType()
+    public async Task PutAsync_EscapesNamespaceWithAValidDocumentType()
     {
         var doc = new { field = "value" };
         SetupSuccessResponse();
 
-        await _documentOps.PutAsync("doc-1", doc, "type/../sneaky", "ns?x=1");
+        await _documentOps.PutAsync("doc-1", doc, "testdoc", "ns?x=1");
 
-        VerifyHttpCall(HttpMethod.Post, "/document/v1/ns%3Fx%3D1/type%2F..%2Fsneaky/docid/doc-1");
+        VerifyHttpCall(HttpMethod.Post, "/document/v1/ns%3Fx%3D1/testdoc/docid/doc-1");
     }
 
     [Fact]

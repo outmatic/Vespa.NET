@@ -9,11 +9,14 @@ public sealed partial class DocumentOperations
         @namespace ?? _options.DefaultNamespace;
 
     /// <summary>
-    /// Escaped <c>/document/v1/{namespace}/{documentType}</c> prefix. Both segments are
-    /// escaped so user-supplied values cannot inject path segments (<c>../</c>, <c>/</c>).
+    /// Validated and escaped <c>/document/v1/{namespace}/{documentType}</c> prefix.
+    /// The document type must be an identifier; the namespace is escaped as a path segment.
     /// </summary>
-    private static string DocTypePrefix(string documentType, string ns) =>
-        $"{VespaPaths.DocV1}/{Uri.EscapeDataString(ns)}/{Uri.EscapeDataString(documentType)}";
+    private static string DocTypePrefix(string documentType, string ns)
+    {
+        VespaIdentifier.ValidateDocumentType(documentType);
+        return $"{VespaPaths.DocV1}/{Uri.EscapeDataString(ns)}/{Uri.EscapeDataString(documentType)}";
+    }
 
     private string DocBasePath(string documentType, string? @namespace) =>
         $"{DocTypePrefix(documentType, ResolveNamespace(@namespace))}/docid/";

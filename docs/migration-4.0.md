@@ -26,7 +26,7 @@ Typed predicates compare enum properties through their supported numeric backing
 
 Omitting both arguments makes the write unconditional. Explicit `condition: null`, `condition: default`, and `rawCondition: null` are also supported. For an existing string variable, change `condition: selector` to `rawCondition: selector` at the call site.
 
-Use named arguments for conditions. `PutAsync(id, product, "value")` selects the explicit-target instance method and treats the string as `documentType`. A positional null or default in that slot also selects the document-type argument and fails validation.
+Use named arguments for conditions. `PutAsync(id, product, "product.price > 0")` selects the explicit-target instance method and treats the string as `documentType`; it now throws `ArgumentException` naming `documentType` before sending any HTTP request. A positional null or default in that slot also selects the document-type argument and fails local argument validation. Document types must match `[A-Za-z_][A-Za-z0-9_]*` and cannot be `true`, `false`, `and`, `or`, `not`, `null` or `id`, ignoring case.
 
 ## Write request options
 
@@ -187,7 +187,7 @@ The group helper removes ordinal duplicates and escapes the names. It rejects mo
 
 `DocumentFieldSet.For<Product>(p => p.Name, p => p.Price)` builds a native field-list string using mapped property names. `ForDocumentType<PlainProduct>("product", p => p.Price)` uses an explicit document type as the field-list qualifier without requiring a document attribute. Use `using Vespa.Documents;` and pass the result as `fieldSet:` on GET by ID, group or number, or assign it to `VisitOptions.FieldSet`.
 
-This is an additive API: GET signatures and the string field-set properties are unchanged. On model-aware reads that start with the ID or address, a positional field-set string still binds to the native `documentType` parameter; use the named `fieldSet:` argument. The options-first overloads accept the field set positionally or by name. Built-in strings such as `[document]`, `[all]` and `[id]` remain available. Replace the deprecated `product:[document]` spelling with `[document]`. See [Document field sets](document-operations.md#document-field-sets) for examples and validation rules.
+This is an additive API: GET signatures and the string field-set properties are unchanged. On model-aware reads that start with the ID or address, a positional field-set string still binds to the native `documentType` parameter and is rejected locally as an invalid document type; use the named `fieldSet:` argument. The options-first overloads accept the field set positionally or by name. Built-in strings such as `[document]`, `[all]` and `[id]` remain available. Replace the deprecated `product:[document]` spelling with `[document]`. See [Document field sets](document-operations.md#document-field-sets) for examples and validation rules.
 
 ## Typed field selectors
 

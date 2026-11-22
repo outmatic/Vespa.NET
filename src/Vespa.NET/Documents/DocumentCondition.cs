@@ -263,13 +263,17 @@ public static class DocumentCondition
 
     private static void ValidateIdentifier(string name, bool isDocumentType)
     {
+        if (isDocumentType)
+        {
+            VespaIdentifier.ValidateDocumentType(name);
+            return;
+        }
         var valid = name.Length > 0 && (char.IsAsciiLetter(name[0]) || name[0] == '_') &&
             name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
-        if (name.ToLowerInvariant() is "true" or "false" or "and" or "or" or "not" or "null" ||
-            isDocumentType && name.Equals("id", StringComparison.OrdinalIgnoreCase))
+        if (name.ToLowerInvariant() is "true" or "false" or "and" or "or" or "not" or "null")
             valid = false;
         if (!valid)
-            throw new ArgumentException($"'{name}' is not a valid document condition {(isDocumentType ? "document type" : "field name")}.");
+            throw new ArgumentException($"'{name}' is not a valid document condition field name.");
     }
 
     private static NotSupportedException Unsupported(Expression expression, string? explanation = null) => new(

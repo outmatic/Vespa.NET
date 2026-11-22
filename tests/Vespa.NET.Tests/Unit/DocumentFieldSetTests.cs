@@ -131,20 +131,30 @@ public sealed class DocumentFieldSetTests : IDisposable
     [Fact]
     public async Task PositionalStringInGetMethodsBindsToTheExplicitDocumentType()
     {
-        var fieldSet = DocumentFieldSet.For<Inventory>(p => p.Price);
+        const string documentType = "other_inventory";
         IDocumentOperations documents = _operations;
         _handler.QueueResponses(new(HttpStatusCode.NotFound), new(HttpStatusCode.NotFound), new(HttpStatusCode.NotFound));
 
-        await _operations.GetAsync<Inventory>("one", fieldSet);
-        await documents.GetByGroupAsync<Inventory>("team", "two", fieldSet);
-        await _operations.GetByNumberAsync<Inventory>(42, "three", fieldSet);
+        await _operations.GetAsync<Inventory>("one", documentType);
+        await documents.GetByGroupAsync<Inventory>("team", "two", documentType);
+        await _operations.GetByNumberAsync<Inventory>(42, "three", documentType);
 
         foreach (var request in _handler.Requests)
         {
             var uri = request.RequestUri!;
-            Assert.StartsWith("/document/v1/fallback/inventory:unit_price/", Uri.UnescapeDataString(uri.AbsolutePath));
+            Assert.StartsWith("/document/v1/fallback/other_inventory/", uri.AbsolutePath);
             Assert.Null(HttpUtility.ParseQueryString(uri.Query)["fieldSet"]);
         }
+    }
+
+    [Fact]
+    public async Task PositionalFieldSetInGetMethodsIsRejectedBeforeHttp()
+    {
+        var fields = DocumentFieldSet.For<Inventory>(p => p.Price);
+        await Assert.ThrowsAsync<ArgumentException>(() => _operations.GetAsync<Inventory>("one", fields));
+        await Assert.ThrowsAsync<ArgumentException>(() => _operations.GetByGroupAsync<Inventory>("team", "two", fields));
+        await Assert.ThrowsAsync<ArgumentException>(() => _operations.GetByNumberAsync<Inventory>(42, "three", fields));
+        Assert.Empty(_handler.Requests);
     }
 
     [Theory]
