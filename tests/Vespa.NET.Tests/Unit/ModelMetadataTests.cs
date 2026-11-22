@@ -450,9 +450,8 @@ public class ModelMetadataTests
             .ReturnsAsync(new VespaResponse { IsSuccess = true });
 
         await mock.Object.UpdateBySelectionAsync<Music>(
-            "music.year < 2000",
             ops => ops.Field(m => m.ArtistName, FieldOp.Assign("archived")),
-            cluster: "content");
+            rawSelection: "music.year < 2000", cluster: "content");
 
         Assert.NotNull(captured);
         Assert.Single(captured);
@@ -469,7 +468,7 @@ public class ModelMetadataTests
                 "music", "mynamespace", null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new VespaResponse { IsSuccess = true });
 
-        await mock.Object.UpdateBySelectionAsync<Music>("music.year < 2000", fieldOps);
+        await mock.Object.UpdateBySelectionAsync<Music>(fieldOps, rawSelection: "music.year < 2000");
 
         mock.Verify(m => m.UpdateBySelectionAsync("music.year < 2000", fieldOps,
             "music", "mynamespace", null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -488,9 +487,8 @@ public class ModelMetadataTests
             .ReturnsAsync(new SelectionPageResult());
 
         await mock.Object.UpdateBySelectionPageAsync<Music>(
-            "music.year < 2000",
             ops => ops.Field(m => m.Year, FieldOp.Increment()),
-            continuation: "tok");
+            rawSelection: "music.year < 2000", continuation: "tok");
 
         Assert.NotNull(captured);
         Assert.Single(captured);
@@ -507,7 +505,7 @@ public class ModelMetadataTests
                 "music", "mynamespace", null, null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SelectionPageResult());
 
-        await mock.Object.UpdateBySelectionPageAsync<Music>("music.year < 2000", fieldOps);
+        await mock.Object.UpdateBySelectionPageAsync<Music>(fieldOps, rawSelection: "music.year < 2000");
 
         mock.Verify(m => m.UpdateBySelectionPageAsync("music.year < 2000", fieldOps,
             "music", "mynamespace", null, null, It.IsAny<SelectionRequestOptions?>(), It.IsAny<CancellationToken>()), Times.Once);

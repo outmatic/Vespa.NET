@@ -53,7 +53,8 @@ public sealed partial class FeedOperations(
         {
             Id = u.Id,
             Fields = u.FieldOperations,
-            Condition = u.Condition
+            Condition = u.Condition,
+            ExpectedDocumentType = u.ExpectedDocumentType
         });
 
         return ExecutePipelineAsync(
@@ -211,6 +212,7 @@ public sealed partial class FeedOperations(
                 {
                     try
                     {
+                        FeedEntryCondition.ValidateTarget(doc.Id, doc.ExpectedDocumentType, documentType);
                         var response = await ExecuteWithRetryAsync(doc, doc.Id, operation, pipelineToken);
                         if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger != null)
                             LogIgnoredFields(_logger, doc.Id);

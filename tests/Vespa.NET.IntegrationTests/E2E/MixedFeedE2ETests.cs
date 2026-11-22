@@ -31,13 +31,13 @@ public sealed class MixedFeedE2ETests(VespaFixture fixture)
             FeedOperation[] operations =
             [
                 FeedOperation.Put(keep, new TestProduct { Name = "Before", Price = 1 },
-                    condition: "product.price > 0", create: true, requestOptions: requestOptions),
+                    rawCondition: "product.price > 0", create: true, requestOptions: requestOptions),
                 FeedOperation.Put(eventId, new TestEvent { EventName = "Mixed event", Payload = "before" }),
                 FeedOperation.Put(keep, new TestProduct { Name = "Other namespace", Price = 8 }, @namespace: otherNamespace),
                 FeedOperation.Update<TestProduct>($"id:test:product::{keep}", update => update
                     .Field(product => product.Name, FieldOp.Assign("After"))
                     .Field(product => product.Price, FieldOp.Assign(2.0)),
-                    condition: "product.price == 1", requestOptions: requestOptions),
+                    rawCondition: "product.price == 1", requestOptions: requestOptions),
                 FeedOperation.Delete<TestProduct>(doomed, requestOptions: requestOptions),
                 FeedOperation.Update<TestEvent>(eventId, update => update.Field(item => item.Payload, FieldOp.Assign("after"))),
                 FeedOperation.Update<TestProduct>(upsert, update => update
@@ -90,8 +90,8 @@ public sealed class MixedFeedE2ETests(VespaFixture fixture)
             FeedOperation[] operations =
             [
                 FeedOperation.Put(id, new TestProduct { Name = "Before", Price = 1 }),
-                FeedOperation.Update<TestProduct>(id, update => update.Field(product => product.Name, FieldOp.Assign("Rejected")), condition: "product.price == 999"),
-                FeedOperation.Update<TestProduct>(id, update => update.Field(product => product.Name, FieldOp.Assign("Accepted")), condition: "product.price == 1"),
+                FeedOperation.Update<TestProduct>(id, update => update.Field(product => product.Name, FieldOp.Assign("Rejected")), rawCondition: "product.price == 999"),
+                FeedOperation.Update<TestProduct>(id, update => update.Field(product => product.Name, FieldOp.Assign("Accepted")), rawCondition: "product.price == 1"),
                 FeedOperation.Delete<TestProduct>($"{id}-missing")
             ];
 

@@ -11,7 +11,8 @@ public static class DocumentCondition
 {
     /// <summary>
     /// Translates a predicate using the model's document type and field names.
-    /// The result can be used wherever the Document API accepts a condition or selection.
+    /// The result is a write condition without a document-type filter.
+    /// Use <see cref="DocumentSelection"/> for a selection restricted to the model's exact document type.
     /// </summary>
     /// <remarks>
     /// Supports scalar comparisons, boolean fields, null checks, and logical operators.
@@ -23,11 +24,18 @@ public static class DocumentCondition
     {
         ArgumentNullException.ThrowIfNull(condition);
         var (documentType, _) = VespaDocumentMeta.For<T>();
-        ValidateIdentifier(documentType, isDocumentType: true);
-        return new Renderer<T>(documentType, condition.Parameters[0]).Predicate(condition.Body);
+        return Render(documentType, condition);
     }
 
-    private sealed class Renderer<T>(string documentType, ParameterExpression parameter) where T : class
+    internal static string Render<T>(string documentType, Expression<Func<T, bool>> condition, bool escapeBackslashesAsHex = false) where T : class
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        ValidateIdentifier(documentType, isDocumentType: true);
+        return new Renderer<T>(documentType, condition.Parameters[0], escapeBackslashesAsHex).Predicate(condition.Body);
+    }
+
+    private sealed class Renderer<T>(string documentType, ParameterExpression parameter, bool escapeBackslashesAsHex) where T : class
     {
         internal string Predicate(Expression expression) => expression switch
         {
@@ -105,7 +113,7 @@ public static class DocumentCondition
                 return new(Field(unwrapped), expression.Type, false, Nullable.GetUnderlyingType(expression.Type) is not null, true);
             }
             var value = Value(expression);
-            return new(Literal(value), expression.Type, value is null, false, false);
+            return new(Literal(value, escapeBackslashesAsHex), expression.Type, value is null, false, false);
         }
 
         private string Field(Expression expression)
@@ -186,11 +194,11 @@ public static class DocumentCondition
             throw Unsupported(convert);
     }
 
-    private static string Literal(object? value) => value switch
+    private static string Literal(object? value, bool escapeBackslashesAsHex) => value switch
     {
         null => "null",
         bool boolean => boolean ? "true" : "false",
-        string text => Quote(text),
+        string text => Quote(text, escapeBackslashesAsHex),
         long number when number == long.MinValue => "0x8000000000000000",
         byte or sbyte or short or ushort or int or uint or long => Convert.ToString(value, CultureInfo.InvariantCulture)!,
         decimal number => DecimalLiteral(number),
@@ -218,7 +226,7 @@ public static class DocumentCondition
         return (value < long.MinValue || value > long.MaxValue) && !text.Contains('.') ? text + ".0" : text;
     }
 
-    private static string Quote(string text)
+    private static string Quote(string text, bool escapeBackslashesAsHex)
     {
         // Document selectors use byte escapes (\xHH), not JSON's Unicode escapes.
         // Encode non-ASCII characters as UTF-8 bytes so exact equality round-trips.
@@ -227,7 +235,10 @@ public static class DocumentCondition
             switch (value)
             {
                 case (byte)'"': result.Append("\\\""); break;
-                case (byte)'\\': result.Append("\\\\"); break;
+                // The visitor's Java lexer can swallow the next literal after a
+                // terminal backslash. Field values are evaluated by C++, which
+                // accepts this byte escape; Java does not use them for routing.
+                case (byte)'\\': result.Append(escapeBackslashesAsHex ? "\\x5C" : "\\\\"); break;
                 case (byte)'\n': result.Append("\\n"); break;
                 case (byte)'\r': result.Append("\\r"); break;
                 case (byte)'\t': result.Append("\\t"); break;

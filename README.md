@@ -155,6 +155,8 @@ The options-only constructor configures its HTTP handler and owns its lifetime. 
 
 The following examples are independent and reuse the model and client above. Document extensions infer the schema and namespace from `[VespaDocument]`; search extensions infer the schema. `[VespaField(Name)]` drives both schema generation and JSON serialization.
 
+The lambda conditions and selections shown here are part of the upcoming 4.0 API.
+
 ```csharp
 // CRUD — no documentType needed
 await client.Documents.PutAsync(product.Id, product);
@@ -174,7 +176,7 @@ var results = await client.Search.NearestNeighborSearchAsync<Product>(
     queryEmbedding, p => p.Embedding, topK: 10, rankProfile: "semantic");
 
 // Visit
-await foreach (var d in client.Documents.VisitAsync<Product>(selection: "product.price > 100"))
+await foreach (var d in client.Documents.VisitAsync<Product>(selection: p => p.Price > 100))
     Console.WriteLine(d.Fields?.Name);
 
 // One visit page; persist Continuation after processing to resume later
@@ -188,8 +190,8 @@ if (!page.IsComplete)
 
 // Selection-based bulk ops — typed builder, auto-loops on Vespa's continuation token
 var resp = await client.Documents.UpdateBySelectionAsync<Product>(
-    "product.price > 100",
     ops => ops.Field(p => p.Price, FieldOp.Multiply(0.9)),
+    selection: p => p.Price > 100,
     cluster: "content");
 // resp.DocumentCount is the total across all chunks
 
@@ -197,6 +199,8 @@ await client.Documents.DeleteAsync<Product>(product.Id);
 ```
 
 Persist a visit continuation **after processing that page**. An empty page may still have a continuation; use `IsComplete` to decide whether visiting has ended.
+
+For selected document fields, build `DocumentFieldSet.For<Product>(p => p.Name, p => p.Price)` and pass it as the named `fieldSet:` argument on GET, or assign it to `VisitOptions.FieldSet`. See [Document field sets](docs/document-operations.md#document-field-sets).
 
 Pass a bare ID such as `"p-1"` or a full ID such as `"id:myapp:product::p-1"`. Full IDs retain their namespace, type and group/number addressing; incompatible targets throw. Returned documents expose `FullId` as well as the user-specified `Id`.
 
@@ -238,7 +242,7 @@ var results = await client.Search.SearchAsync<Product>(request);
 
 Additional query parameters can be sent with `request.WithParameter(name, value)`. For example, `request.WithParameter("ranking.matching.anntimebudget", "25ms")` sets an ANN time budget on Vespa 8.684.9 or newer.
 
-`SearchStreamAsync` paginates ordinary search results lazily and is subject to Vespa's `maxHits`/`maxOffset` limits. Use document visiting to export a corpus. Vespa's separate streaming search mode requires a streaming-mode content cluster and request properties such as `StreamingGroupName`.
+`SearchStreamAsync` paginates ordinary search results lazily and is subject to Vespa's `maxHits`/`maxOffset` limits. Use document visiting to export a corpus. Vespa's separate [streaming search mode](docs/search.md#native-streaming-search) requires a streaming-mode content cluster. Use `StreamingGroupName` or `WithStreamingGroups` to select groups and YQL to filter their contents.
 
 > Full predicate reference, boolean composition, and validation rules in **[docs/yql-builder.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/yql-builder.md)**
 

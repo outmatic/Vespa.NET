@@ -118,40 +118,6 @@ public interface IFeedOperations
 }
 
 /// <summary>
-/// Represents a document for feeding
-/// </summary>
-public sealed record FeedDocument<T> where T : class
-{
-    public string Id { get; init; } = string.Empty;
-    public T Fields { get; init; } = default!;
-
-    /// <summary>
-    /// Optional document selection condition for this document.
-    /// When set, the PUT will only succeed if the condition is met (HTTP 412 otherwise).
-    /// Example: <c>"music.year > 2000"</c>
-    /// </summary>
-    public string? Condition { get; init; }
-}
-
-/// <summary>
-/// Single request in a <see cref="IFeedOperations.BulkUpdateAsync"/> batch.
-/// Carries the document ID plus a dictionary of Vespa field operations (produced by
-/// <see cref="FieldOp"/> helpers), matching the shape expected by <c>PUT /document/v1</c>.
-/// </summary>
-public sealed record BulkFieldUpdate
-{
-    public string Id { get; init; } = string.Empty;
-
-    public Dictionary<string, FieldOperation> FieldOperations { get; init; } = [];
-
-    /// <summary>
-    /// Optional document selection condition for this update.
-    /// When set, the update only succeeds if the condition is met (HTTP 412 otherwise).
-    /// </summary>
-    public string? Condition { get; init; }
-}
-
-/// <summary>
 /// Progress snapshot emitted by <see cref="IFeedOperations.FeedAsync{T}"/> after each document outcome.
 /// </summary>
 /// <param name="ProcessedCount">

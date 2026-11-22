@@ -30,6 +30,64 @@ await client.Documents.DeleteAsync(product.Id, documentType: "product");
 
 ---
 
+## Document Field Sets
+
+Use `DocumentFieldSet` to choose fields for a document GET or visit. It resolves `[VespaField(Name = "...")]` and snake_case names from direct model properties:
+
+```csharp
+using Vespa.Documents;
+
+var fields = DocumentFieldSet.For<Product>(p => p.Name, p => p.Price);
+// "product:product_name,price" when Name maps to "product_name"
+
+var doc = await client.Documents.GetAsync<Product>(product.Id, fieldSet: fields);
+```
+
+On model-aware GET calls that start with the ID or address, pass **`fieldSet:` by name**. A positional string in that slot is interpreted as the native `documentType` argument. This applies to `GetAsync`, `GetByGroupAsync` and `GetByNumberAsync`. The options-first read overloads accept the field set either positionally or by name.
+
+Reuse the string in `VisitOptions` for automatic visits, manual pages or JSONL:
+
+```csharp
+var options = new VisitOptions { FieldSet = fields };
+
+await foreach (var doc in client.Documents.VisitAsync<Product>(
+    selection: p => p.Category == "electronics", options: options))
+    Console.WriteLine($"{doc.Fields?.Name}: {doc.Fields?.Price}");
+```
+
+The selection decides which documents match; the field set chooses fields to fetch. A field used in the selection does not have to appear in the field set. Keep the same options when resuming a manual page with its continuation token.
+
+For a model without `[VespaDocument]`, specify the document type explicitly:
+
+```csharp
+var fields = DocumentFieldSet.ForDocumentType<PlainProduct>(
+    "product", p => p.Price);
+
+var doc = await client.Documents.GetAsync<PlainProduct>(product.Id,
+    documentType: "product", @namespace: "catalog", fieldSet: fields);
+```
+
+`ForDocumentType` uses the supplied type even if the model has a different annotation. Field names still come from the selected properties. The qualifier does not set the request's target, namespace or document selection, so keep it consistent with the document type being read. A separate result model may be used on native reads or root visits.
+
+Both factories return a string and require at least one field. They preserve the first occurrence of each mapped name, comparing names ordinally, and retain no reference to the selector array. They validate schema identifier syntax locally; Vespa checks whether the document type and fields exist in the deployed application.
+
+Select a whole complex property such as `p => p.Address` to request that field. Nested paths such as `p => p.Address.City`, indexers, methods, document IDs and properties without an individual document JSON binding are rejected. To fetch identity alone, pass the native `[id]` field set. The factory uses the same binding checks as typed conditions and updates.
+
+Existing native strings remain available through `fieldSet:` and `VisitOptions.FieldSet`:
+
+| Field set | Fields requested |
+| --- | --- |
+| `[document]` | Original document fields and the document ID; this is the server default. |
+| `[all]` | All schema fields, including generated fields, and the document ID. |
+| `[id]` | The document ID. |
+| `product:product_name,price` | Named fields from the specified document type. |
+
+Use `[document]` instead of the deprecated `product:[document]` form. Vespa may return additional fields when omitting them offers no performance benefit. An unrequested property in a deserialized C# model can retain its default or initializer value. See [Vespa document field sets](https://docs.vespa.ai/en/schemas/documents.html#fieldsets).
+
+Document field sets apply to reads through `/document/v1/`. Searchable fieldsets declared with `[VespaFieldSet]` group fields for matching, and YQL `SELECT` chooses search result fields; those are separate features.
+
+---
+
 ## Conditional Writes
 
 Use a lambda to write a condition against a model decorated with `[VespaDocument]`. Property names follow `[VespaField(Name = "...")]`, or snake_case when no name is specified.
@@ -73,7 +131,7 @@ Set either `condition` or `rawCondition`. Supplying both with non-null values th
 
 Vespa stores decimal model properties as doubles. Comparisons on those fields follow that stored precision. Comparisons that promote an integer document field to decimal, such as `p.Quantity > 0m`, are rejected because native evaluation could round a decimal threshold and change the result; use an integer threshold instead. Evaluate decimal comparisons between captured values in C# and capture the resulting boolean.
 
-To reuse a typed predicate in a feed operation or another API that accepts a string, translate it explicitly:
+Feed operation factories accept typed predicates directly. To reuse a rendered native condition in a feed operation, pass it through `rawCondition:`:
 
 ```csharp
 using Vespa.Feed;
@@ -81,7 +139,7 @@ using Vespa.Feed;
 var condition = DocumentCondition.For<Product>(p => p.Price > 0);
 // "(product.price > 0)"
 
-var operation = FeedOperation.Put(product.Id, product, condition: condition);
+var operation = FeedOperation.Put(product.Id, product, rawCondition: condition);
 ```
 
 ---
@@ -184,6 +242,30 @@ await client.Documents.DeleteByNumberAsync<Product>(42L, product.Id);
 
 ## Selection-Based Operations
 
+In 4.0, the model-aware update, delete and copy methods accept `selection:` for a lambda or `rawSelection:` for a native selector. Each has an automatic form and a single-page form. Updates accept either a field-operation dictionary or the typed field builder:
+
+```csharp
+await client.Documents.UpdateBySelectionAsync<Product>(
+    update => update.Field(p => p.Price, FieldOp.Multiply(0.9)),
+    selection: p => p.Price > 100,
+    cluster: "content");
+
+await client.Documents.DeleteBySelectionAsync<Product>(
+    selection: p => p.Price <= 0,
+    cluster: "content");
+
+await client.Documents.CopyBySelectionAsync<Product>(
+    cluster: "content",
+    destinationCluster: "archive",
+    selection: p => p.Price > 100);
+```
+
+These methods infer the document type and namespace from `[VespaDocument]`. Keep `<Product>` on calls using dictionaries or native strings, since those arguments do not identify the model. Use named cluster arguments for copies to distinguish source from destination; copying leaves the source documents in place.
+
+Exactly one selection is required. Missing selections, conflicting non-null arguments and blank native strings throw `ArgumentException` before an update callback runs or an HTTP request is sent. To select every document of the model's exact type in its resolved namespace, pass `selection: p => true`. Passing `rawSelection: "true"` instead sends native `true` to the addressed operation without adding an exact-type guard. A typed selection is frozen before the update callback, so that callback cannot change the filter by modifying a captured value.
+
+For a native selector, write `UpdateBySelectionAsync<Product>(fields, rawSelection: "product.price < 10", cluster: "content")`. Nonblank native strings are forwarded without rewriting. The low-level methods with an explicit `documentType` retain their existing string `selection` argument, as in the examples below.
+
 Selection operations apply a Vespa selection expression across an entire document
 type — no document ID required. Vespa processes them in time-bounded chunks and
 returns a `continuation` token while more work remains; Vespa.NET **automatically
@@ -252,6 +334,8 @@ await client.Documents.DeleteBySelectionAsync(
 
 ### Manual Pagination (Crash-Safe Resume)
 
+The model-aware `UpdateBySelectionPageAsync<Product>`, `DeleteBySelectionPageAsync<Product>` and `CopyBySelectionPageAsync<Product>` accept the same typed or native selectors. For manual resume, render `DocumentSelection.For<Product>(...)` before starting, save that string with the continuation token and pass it as `rawSelection:` on each call. Calling a lambda again reads its captured values again. The automatic methods freeze one selector for their entire continuation loop.
+
 Each selection operation has a `...PageAsync` variant that performs exactly one
 HTTP call, returns a `SelectionPageResult`, and lets you drive the loop yourself.
 Use this when you need to persist the continuation token between chunks — for
@@ -303,6 +387,28 @@ The same pattern applies to `DeleteBySelectionPageAsync` and `CopyBySelectionPag
 
 ## Visit / Iterate
 
+### Typed Selections
+
+In 4.0, model-aware `VisitAsync`, `VisitPageAsync` and `VisitJsonlAsync` accept a lambda through `selection:` or a native selector through `rawSelection:`. They infer the document type and namespace from `[VespaDocument]`:
+
+```csharp
+await foreach (var doc in client.Documents.VisitAsync<Product>(
+    selection: p => p.Price > 100,
+    cluster: "content"))
+    Process(doc.Fields);
+
+await foreach (var doc in client.Documents.VisitJsonlAsync<Product>(
+    rawSelection: "product.price > 100",
+    cluster: "content"))
+    Process(doc.Fields);
+```
+
+Omit both selections to visit the addressed scope. Passing non-null values for both throws `ArgumentException` when the method is called, before enumeration or HTTP. A typed predicate is translated when the method is called, so changes to captured values after that call do not change the filter between pages or JSONL chunks.
+
+`DocumentSelection.For<Product>(p => p.Price > 100)` produces a native selector you can save or pass to other Document API methods. It scopes the entire predicate to the exact document type, including `p => true` and negations. This differs from `DocumentCondition.For`, which renders a write condition without adding a type filter. See the [document selector reference](https://docs.vespa.ai/en/reference/writing/document-selector-language.html).
+
+For an explicit target, use `DocumentSelection.For<Product>("other_product", p => p.Price > 100)` and pass the same document type to the native operation. This factory also accepts models without `[VespaDocument]`. The field mapping still comes from the selected properties.
+
 ### Standard Visit (continuation tokens)
 
 Common parameters (`selection`, `cluster`, `namespace`) stay on the method; everything
@@ -345,6 +451,17 @@ await foreach (var doc in client.Documents.VisitAllAsync<Dictionary<string, obje
     cluster: "content")) { }
 ```
 
+For a typed root filter, specify the result model first and the filter model second. The result model needs no `[VespaDocument]` attribute:
+
+```csharp
+await foreach (var doc in client.Documents.VisitAllAsync<ProductSummary, Product>(
+    cluster: "content",
+    selection: p => !(p.Price < 100)))
+    Process(doc.Fields);
+```
+
+This visits only the exact Product document type across namespaces. Derived document types are excluded. `VisitAllPageAsync<ProductSummary, Product>` provides the same filtering for manual pages. Existing root methods with one generic argument retain their unrestricted native selection; use `DocumentSelection.For<Product>(...)` as their `selection:` argument when you want a saved typed filter. Root visits still require a cluster and do not support group or number addressing.
+
 ### Manual Visit Pages and Checkpoints
 
 `VisitPageAsync<T>` makes one request and returns a `VespaVisitResponse<T>` with
@@ -353,13 +470,14 @@ not fetch the next page automatically. The model-aware overload infers the schem
 and namespace from `[VespaDocument]`:
 
 ```csharp
-var (continuation, completed) = await LoadCheckpointAsync();
+var (continuation, completed, selection) = await LoadCheckpointAsync();
+selection ??= DocumentSelection.For<Product>(p => p.Price > 100);
 var options = new VisitOptions { WantedDocumentCount = 500, Concurrency = 2 };
 
 while (!completed)
 {
     var page = await client.Documents.VisitPageAsync<Product>(
-        selection: "product.price > 100",
+        rawSelection: selection,
         cluster: "content",
         continuation: continuation,
         options: options,
@@ -368,7 +486,7 @@ while (!completed)
     await ProcessPageAsync(page.Documents, cancellationToken);
     continuation = page.Continuation;
     completed = page.IsComplete;
-    await SaveCheckpointAsync(continuation, completed);
+    await SaveCheckpointAsync(continuation, completed, selection);
 }
 ```
 
@@ -376,6 +494,8 @@ Save the continuation **after** processing the page. Treat it as an opaque strin
 and resume with the same schema, namespace, selection, cluster and visit options
 (including slice settings). Persist completion separately: a null continuation
 also represents the initial request. Reprocessing a page after a crash is possible.
+
+The example saves the rendered selection with the checkpoint. Reusing that string keeps the filter stable even if the original captured values change before a restart. A new call with a lambda reads its captured values again.
 
 An empty page can still have a continuation; only `IsComplete` signals completion.
 `WantedDocumentCount` is a best-effort lower bound, not a maximum page size.

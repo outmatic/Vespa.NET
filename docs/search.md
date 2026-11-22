@@ -96,7 +96,7 @@ var yql2 = YqlBuilder<Product>
 
 ---
 
-## Streaming Search (Auto-Paginated)
+## Auto-Paginated Search
 
 `SearchStreamAsync<T>` returns an `IAsyncEnumerable<SearchHit<T>>` that auto-paginates:
 
@@ -116,10 +116,60 @@ await foreach (var page in client.Search.SearchPagedAsync<Product>(request, page
     Console.WriteLine($"Page with {page.Root.Children.Count} hits");
 ```
 
-> **Server limits:** Vespa caps `hits` at `maxHits` (default 400) and `offset` at
-> `maxOffset` (default 1000) — deep pagination fails unless those query-profile
-> limits are raised. To export a full corpus, use document visiting
-> (`Documents.VisitAsync` / `VisitJsonlAsync`) instead of search pagination.
+> **Server limits:** Vespa caps `hits` at `maxHits` (default 400) and `offset` at `maxOffset` (default 1000). Deep pagination fails unless those query-profile limits are raised. To export a full corpus, use document visiting (`Documents.VisitAsync` / `VisitJsonlAsync`) instead of search pagination.
+
+## Native Streaming Search
+
+Configure the document type for `streaming` mode in the content cluster. To search one group, feed its documents with group-addressed IDs such as `id:catalog:product:g=tenant-a:123`. This is separate from `SearchStreamAsync`, which paginates search results. Select the group and put the content filter in YQL:
+
+```csharp
+using Vespa.Query;
+
+var request = YqlBuilder.Select().From("product")
+    .Where(w => w.Field("price").GreaterThan(100))
+    .ToSearchRequest();
+request.StreamingGroupName = "tenant-a";
+
+var results = await client.Search.SearchAsync<Product>(request);
+```
+
+For several groups, use `WithStreamingGroups` on a request without `StreamingGroupName`:
+
+```csharp
+var request = YqlBuilder.Select().From("product")
+    .Where(w => w.Field("price").GreaterThan(100))
+    .ToSearchRequest()
+    .WithStreamingGroups("tenant-a", "tenant-b");
+```
+
+This produces `streaming.selection` as `id.group == "tenant-a" or id.group == "tenant-b"`. Vespa can restrict visiting to those groups, then apply YQL to the selected documents. Other selector forms can scan all groups, so prefer group selection with a YQL filter for searches within known groups. See the [Vespa streaming query reference](https://docs.vespa.ai/en/reference/api/query.html#streaming).
+
+`WithStreamingGroups` freezes the names, escapes each literal and removes ordinal duplicates. Names that differ in case remain distinct. It rejects empty input, blank names, malformed Unicode and invalid Vespa text characters. A group ending in a backslash is placed last to avoid a Vespa selector-parser limitation; combining more than one distinct name ending in a backslash throws `NotSupportedException`. Use separate requests for those groups.
+
+For a document-field selector, use a typed predicate:
+
+```csharp
+var minimumPrice = 100;
+var request = new VespaSearchRequest
+{
+    Yql = "select * from product where true"
+}.WithStreamingSelection<Product>(p => p.Price > minimumPrice);
+```
+
+This uses the model's document type and mapped fields and restricts the entire predicate to that exact document type. It can scan all groups. The filter model does not choose the YQL source, namespace or result type; `SearchAsync<Summary>` can return a separate summary model. A document selector is not a namespace or authorization boundary.
+
+Both helpers set only `StreamingSelection`, return the same request and freeze captured values when called. They replace an existing selection. A null predicate or unsupported expression throws before replacement. An existing `StreamingGroupName`, or `streaming.selection`, `streaming.groupname` or `streaming.userid` in `CustomParameters`, causes `InvalidOperationException`; clear the conflicting property first. Later changes made through raw properties are the caller's responsibility.
+
+The native string property remains available, including for models without `[VespaDocument]`:
+
+```csharp
+using Vespa.Documents;
+
+request.StreamingSelection = DocumentSelection.For<PlainProduct>(
+    "product", p => p.Price > minimumPrice);
+```
+
+`StreamingMaxBucketsPerVisit` maps to `streaming.maxbucketspervisitor` and controls backend bucket concurrency. It does not limit the total buckets visited or prevent a scan across all groups. The public property name and wire format are unchanged.
 
 ---
 

@@ -765,37 +765,6 @@ public class VespaSchemaBuilderTests
     }
 
     [Fact]
-    public void GenerateApplicationPackage_SourcePath_AutoIncludesFiles()
-    {
-        var onnxBytes = new byte[] { 0x4F, 0x4E, 0x4E, 0x58 };
-        var onnxPath = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllBytes(onnxPath, onnxBytes);
-
-            // Use a doc type with SourcePath set dynamically — we test via AdditionalFiles
-            // since attributes are compile-time. SourcePath is tested separately below.
-            var opts = new ApplicationPackageOptions
-            {
-                AdditionalFiles = new Dictionary<string, string>
-                {
-                    ["models/my_model.onnx"] = onnxPath
-                }
-            };
-
-            var bytes = GeneratePackageBytes<OnnxModelDoc>(opts);
-
-            using var ms = new MemoryStream(bytes);
-            using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
-            Assert.NotNull(zip.GetEntry("models/my_model.onnx"));
-        }
-        finally
-        {
-            File.Delete(onnxPath);
-        }
-    }
-
-    [Fact]
     public void GenerateApplicationPackage_NoAdditionalFiles_StillWorks()
     {
         var bytes = GeneratePackageBytes<MusicDoc>();

@@ -13,7 +13,7 @@ public sealed class FeedOperationTests
         var options = new DocumentRequestOptions { Route = "default/chain.indexing", Timeout = TimeSpan.FromSeconds(2) };
         FeedOperation[] operations =
         [
-            FeedOperation.Put("item", new Item(), condition: "inventory.unit_price > 0", create: true, requestOptions: options),
+            FeedOperation.Put("item", new Item(), rawCondition: "inventory.unit_price > 0", create: true, requestOptions: options),
             FeedOperation.Update<Item>("item", update => update.Field(item => item.Price, FieldOp.Assign(12)), requestOptions: options),
             FeedOperation.Update<Item>("item", new Dictionary<string, FieldOperation> { ["unit_price"] = FieldOp.Assign(12) }, requestOptions: options),
             FeedOperation.Delete<Item>("item", requestOptions: options)

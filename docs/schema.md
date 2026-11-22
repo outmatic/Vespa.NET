@@ -225,6 +225,18 @@ var opts = new ApplicationPackageOptions
 
 ---
 
+## Bundled Files
+
+Set `SourcePath` on `[VespaOnnxModel]` or `[VespaConstant]` to copy a local file into the application package. `SourcePath` is an absolute filesystem path or a path relative to the process's current working directory. The attribute's `File` argument is the destination inside the ZIP, relative to the package root, such as `models/scorer.onnx` or `constants/weights.json`.
+
+ZIP entry names are compared exactly and case-sensitively. Document types are processed in the supplied order, with ONNX resources before constants within each type; for an identical entry name, the first source wins. `AdditionalFiles` cannot replace that entry. Use distinct destination paths for files with different contents.
+
+Bundled resources cannot share a destination with `services.xml`, a generated `hosts.xml` or any generated `schemas/<type>.sd`. Such a collision throws `InvalidOperationException`, including when the conflicting schema belongs to a later type in the sequence. Use `CustomServicesXml` to provide your own service configuration.
+
+Package generation finishes each ZIP entry before copying the next resource and leaves the caller's output stream open. A missing source file throws `FileNotFoundException` with its source path. This bundles files for deployment; their contents must still satisfy the corresponding Vespa model or tensor format.
+
+---
+
 ## Document Expiry (Selection)
 
 `[VespaDocument(Selection = "…")]` declares which documents to *keep*; the rest

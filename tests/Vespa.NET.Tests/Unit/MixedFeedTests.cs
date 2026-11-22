@@ -18,10 +18,10 @@ public sealed partial class MixedFeedTests
         var options = new DocumentRequestOptions { Timeout = TimeSpan.FromSeconds(2), Route = "default/chain.indexing", TraceLevel = 3, DryRun = true };
         FeedOperation[] operations =
         [
-            FeedOperation.Put("item", new Item { Price = 10 }, condition: "inventory.unit_price > 0", create: true, requestOptions: options),
+            FeedOperation.Put("item", new Item { Price = 10 }, rawCondition: "inventory.unit_price > 0", create: true, requestOptions: options),
             FeedOperation.Update<Item>("item", update => update.Field(item => item.Price, FieldOp.Assign(20)),
-                createIfMissing: true, condition: "inventory.unit_price == 10", requestOptions: options),
-            FeedOperation.Delete<Item>("item", condition: "inventory.unit_price == 20", requestOptions: options)
+                createIfMissing: true, rawCondition: "inventory.unit_price == 10", requestOptions: options),
+            FeedOperation.Delete<Item>("item", rawCondition: "inventory.unit_price == 20", requestOptions: options)
         ];
 
         var result = await harness.Feed.FeedAsync(operations);

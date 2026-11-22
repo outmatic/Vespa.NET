@@ -60,15 +60,16 @@ public sealed class VespaSearchRequest
     public string? StreamingGroupName { get; set; }
 
     /// <summary>
-    /// Additional document selection expression for streaming search
-    /// (applied on top of the YQL where clause).
+    /// Document selector used instead of StreamingGroupName for streaming search.
+    /// A disjunction of id.group equalities can restrict the groups visited.
+    /// Other selections can scan all groups; YQL filters the selected documents separately.
     /// </summary>
     [JsonPropertyName("streaming.selection")]
     public string? StreamingSelection { get; set; }
 
     /// <summary>
-    /// Maximum number of distribution buckets to visit per search call.
-    /// Tune for latency vs. coverage trade-off in streaming mode.
+    /// Maximum backend bucket concurrency for streaming search.
+    /// This does not cap the total buckets visited or the result coverage.
     /// </summary>
     [JsonPropertyName("streaming.maxbucketspervisitor")]
     public int? StreamingMaxBucketsPerVisit { get; set; }

@@ -11,7 +11,7 @@ namespace Vespa.Models;
 public sealed record VisitOptions
 {
     /// <summary>
-    /// Field set to return (e.g. <c>music:[document]</c>, <c>music:title,artist</c>).
+    /// Field set to return (e.g. <c>[document]</c>, <c>music:title,artist</c>).
     /// Maps to the <c>fieldSet</c> query parameter.
     /// </summary>
     public string? FieldSet { get; init; }

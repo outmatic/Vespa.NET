@@ -117,7 +117,7 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
                 });
                 var page = root
                     ? await reader.Documents.VisitAllPageAsync<TestProduct>("content", selection, continuation, options, deadline.Token)
-                    : await reader.Documents.VisitPageAsync<TestProduct>(selection: selection, cluster: "content",
+                    : await reader.Documents.VisitPageAsync<TestProduct>(rawSelection: selection, cluster: "content",
                         continuation: continuation, options: options, cancellationToken: deadline.Token);
                 visited.AddRange(page.Documents);
                 continuation = page.Continuation;

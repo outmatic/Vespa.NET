@@ -6,9 +6,7 @@ Vespa.NET provides high-throughput feed helpers built on Vespa's `/document/v1` 
 
 ## Mixed Operations
 
-Feed puts, field updates and deletes through one call, including operations for
-different schemas and namespaces. Both `IEnumerable<FeedOperation>` and
-`IAsyncEnumerable<FeedOperation>` are accepted:
+Feed puts, field updates and deletes through one call, including operations for different schemas and namespaces. Both `IEnumerable<FeedOperation>` and `IAsyncEnumerable<FeedOperation>` are accepted. The examples below use the planned 4.0 mixed-feed factories:
 
 ```csharp
 using Vespa.Feed;
@@ -20,7 +18,7 @@ FeedOperation[] operations =
     FeedOperation.Put("p-1", product, requestOptions: requestOptions),
     FeedOperation.Update<Product>("p-1", update => update
         .Field(p => p.Price, FieldOp.Assign(49.99m)),
-        condition: "product.price > 0", requestOptions: requestOptions),
+        condition: p => p.Price > 0, requestOptions: requestOptions),
     FeedOperation.Delete<Product>("p-2", requestOptions: requestOptions)
 ];
 
@@ -38,10 +36,7 @@ var result = await client.Feed.FeedAsync(
 Console.WriteLine($"{result.SuccessCount}/{result.TotalOperations} operations succeeded");
 ```
 
-Factories infer schema and namespace from `[VespaDocument]`. Use `@namespace` to
-override the model's namespace. Supplying `documentType` bypasses attribute
-inference and supports models without attributes; an omitted namespace then uses
-`VespaClientOptions.DefaultNamespace`:
+Factories infer schema and namespace from `[VespaDocument]`. Use `@namespace` to override the model's namespace. Supplying `documentType` bypasses attribute inference and supports models without attributes; an omitted namespace then uses `VespaClientOptions.DefaultNamespace`:
 
 ```csharp
 FeedOperation.Put("p-3", new { product_name = "Camera", price = 100.0 },
@@ -54,12 +49,29 @@ FeedOperation.Update("p-3",
 FeedOperation.Delete("p-3", documentType: "product", @namespace: "archive");
 ```
 
-`Put` supports `condition` and `create` (conditional put with create).
-`Update` supports `condition` and `createIfMissing`, with either a typed builder or
-a dictionary of Vespa field operations. `Delete` supports `condition`. Each factory
-accepts `DocumentRequestOptions`, including routing, dry-run, timeout and tracing.
-Keep payload objects unchanged until the feed completes; update dictionaries are
-shallow-copied when the operation is constructed.
+`Put` supports conditional put with `create`. `Update` supports `createIfMissing`, with either a typed builder or a dictionary of Vespa field operations. Each factory accepts `DocumentRequestOptions`, including routing, dry-run, timeout and tracing. Keep payload objects unchanged until the feed completes; update dictionaries are shallow-copied when the operation is constructed.
+
+### Conditions
+
+In 4.0, the four generic factories use `condition:` for a lambda and `rawCondition:` for a native Vespa condition. The target arguments come first, then the condition pair, creation flag where applicable and request options:
+
+```csharp
+var update = FeedOperation.Update<Product>("p-1",
+    fields => fields.Field(p => p.Price, FieldOp.Assign(49.99m)),
+    condition: p => p.Price > 0,
+    createIfMissing: true);
+
+var delete = FeedOperation.Delete<Product>("p-2",
+    rawCondition: "product.price <= 0");
+```
+
+The operation is unconditional when both condition arguments are omitted or null. If both are non-null, the factory throws `ArgumentException` before running an update callback. Native condition strings are stored unchanged; the non-generic `Update` and `Delete` factories retain their string `condition:` argument.
+
+Typed predicates use the actual resolved document type. For example, `FeedOperation.Put("p-1", product, documentType: "product_v2", condition: p => p.Price > 0)` qualifies the field as `product_v2.price`, even if the model's attribute names another schema. The explicit target changes the document-type qualifier; field names still come from the selected properties on `T` and their mappings. Models without `[VespaDocument]` work when you supply `documentType`. Keep the predicate's model type consistent with the payload; a pre-typed base-class predicate can affect generic type inference and select the base model's metadata and serialization contract.
+
+Captured values are read when the factory is called, before the update callback. The resulting `FeedOperation.Condition` is a native string that stays fixed while the operation waits in the queue and across retries. A lazy source may call the factory during enumeration; constructing that source does not construct its operations.
+
+A typed condition is evaluated against the stored document and does not add a document-type guard. `p => true` renders native `true`. Individual HTTP 412 failures are recorded in `FeedResult.Errors`; later operations for the same document are still attempted. See [Conditional writes](document-operations.md#conditional-writes) for supported expressions and native evaluation rules.
 
 ### Ordering and Backpressure
 
@@ -145,14 +157,49 @@ Console.WriteLine($"\n{result.SuccessCount}/{result.TotalDocuments} in {result.D
 
 ## Per-Document Conditions
 
+In 4.0, use `FeedDocument.Create(...)` to construct a homogeneous PUT entry with a typed condition. The payload supplies the model type:
+
+```csharp
+var docs = products.Select(product => FeedDocument.Create(
+    product.Id, product,
+    condition: stored => stored.Price > 100));
+
+var result = await client.Feed.BulkPutAsync(docs,
+    documentType: "product", @namespace: "catalog");
+```
+
+For field updates, use `BulkFieldUpdate.Create<Product>` with a dictionary or a callback. The condition is rendered before the callback runs, and the field-operation dictionary is shallow-copied:
+
+```csharp
+var updates = products.Select(product => BulkFieldUpdate.Create<Product>(
+    product.Id,
+    update => update.Field(p => p.Price, FieldOp.Assign(product.Price)),
+    condition: stored => stored.Price > 0));
+
+await client.Feed.BulkUpdateAsync(updates,
+    documentType: "product", @namespace: "catalog");
+```
+
+The factory accepts `documentType:` for models without attributes or an explicit schema override. A typed condition otherwise uses the model's `[VespaDocument]` schema. The batch supplies the namespace in every case; the model's namespace annotation is not used for these homogeneous entries. Both condition arguments omitted or null mean unconditional; conflicting non-null `condition` and `rawCondition` values throw before the update callback.
+
+An explicit schema binds the entry even when its condition is native or absent. Without an explicit schema, raw and unconditional entries remain unbound and need no document attribute. The actual request target is still the batch's `documentType`; the entry records the schema it expects, rather than choosing another route.
+
+The built-in feed client compares that expected schema with the batch schema before sending the entry. A mismatch produces a `FeedError` with no HTTP status, sends no request for that entry and allows the other entries to continue. Schema names are compared exactly, including case. This check belongs to the built-in `FeedOperations`; third-party implementations retain their existing interface contract.
+
+Copies made with `with` retain the expected schema, including copies that change or clear `Condition`. That binding is part of record equality. Construct a new entry to retarget it. Conditions are rendered at factory invocation and stay fixed during queuing and retries. A lazy source may invoke the factory during enumeration. Keep payloads and field-operation objects unchanged until the feed completes.
+
+Existing initializers and native condition strings remain supported:
+
 ```csharp
 var docs = products.Select(p => new FeedDocument<Product>
 {
     Id = p.Id,
     Fields = p,
-    Condition = "product.version == 1"  // per-document conditional write
+    Condition = "product.price > 100"
 });
 ```
+
+The schema binding is kept in memory and omitted from JSON. Deserializing a `FeedDocument<T>` recreates a raw entry without that binding. Persist the intended batch schema separately and reconstruct factory entries when the check is needed on replay. The existing `FieldOperation` converter writes operations but does not read them, so replaying populated update DTOs requires reconstructing their field operations.
 
 ---
 
