@@ -157,18 +157,22 @@ public sealed class TypedBatchFeedTests : IDisposable
     }
 
     [Fact]
-    public void RecordEqualityDistinguishesBindingsEvenWithIdenticalPublicData()
+    public void RecordEqualityDistinguishesBindingsWithoutPrintingInternalMetadata()
     {
         var model = new PlainModel();
         var put = FeedDocument.Create<PlainModel>("row", model, "first");
         var otherPut = FeedDocument.Create<PlainModel>("row", model, "second");
         Assert.Equal(put, put with { Condition = null });
         Assert.NotEqual(put, otherPut);
+        Assert.Equal(put.ToString(), otherPut.ToString());
+        Assert.DoesNotContain(nameof(FeedDocument<PlainModel>.ExpectedDocumentType), put.ToString());
 
         var update = BulkFieldUpdate.Create<PlainModel>("row", CreateFields(), "first");
         var otherUpdate = BulkFieldUpdate.Create<PlainModel>("row", CreateFields(), "second") with { FieldOperations = update.FieldOperations };
         Assert.Equal(update, update with { Condition = null });
         Assert.NotEqual(update, otherUpdate);
+        Assert.Equal(update.ToString(), otherUpdate.ToString());
+        Assert.DoesNotContain(nameof(BulkFieldUpdate.ExpectedDocumentType), update.ToString());
     }
 
     [Fact]

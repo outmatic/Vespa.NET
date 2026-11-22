@@ -275,15 +275,23 @@ public class ModelMetadataTests
     public void VisitAsync_Extension_PassesInferredDocType()
     {
         var mock = new Mock<IDocumentOperations>();
+        var source = EmptyDocuments();
         mock.Setup(m => m.VisitAsync<Music>("music", null, null, "mynamespace",
                 It.IsAny<VisitOptions?>(), It.IsAny<CancellationToken>()))
-            .Returns(AsyncEnumerable.Empty<VespaDocument<Music>>());
+            .Returns(source);
 
         // Use named arg to avoid ambiguity with the explicit overload
-        _ = mock.Object.VisitAsync<Music>(selection: null);
+        var result = mock.Object.VisitAsync<Music>(selection: null);
+        Assert.Same(source, result);
 
         mock.Verify(m => m.VisitAsync<Music>("music", null, null, "mynamespace",
             It.IsAny<VisitOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        static async IAsyncEnumerable<VespaDocument<Music>> EmptyDocuments()
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 
     [Fact]

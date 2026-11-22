@@ -31,9 +31,11 @@ public static class DocumentFieldSet
 
         List<string> names = [];
         HashSet<string> seen = new(StringComparer.Ordinal);
-        foreach (var field in fields)
+        for (var index = 0; index < fields.Length; index++)
         {
-            ArgumentNullException.ThrowIfNull(field, nameof(fields));
+            var field = fields[index];
+            if (field is null)
+                throw new ArgumentNullException(nameof(fields), $"Field selector at index {index} must not be null.");
             var name = DocumentFieldSelector.FieldName(field);
             if (!IsIdentifier(name))
                 throw new ArgumentException($"'{name}' is not a valid top-level document field name for a field set.", nameof(fields));

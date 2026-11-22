@@ -22,7 +22,7 @@ await client.Documents.PutAsync(product.Id, product,
 
 This also applies to model-aware deletes, dictionary updates, builder updates, and their group and number variants. Supply one condition argument at a time. Two non-null conditions throw `ArgumentException` before the update builder runs or any HTTP request is sent.
 
-Typed predicates compare enum properties through their supported numeric backing value. Use `rawCondition:` for `DateTime`, `TimeSpan`, `Guid`, `char`, collections, tensors, and enum properties with a JSON converter on the property or enum type, which may change the wire representation.
+Typed predicates compare enum properties through their supported numeric backing value; use `rawCondition:` when a JSON converter on the property or enum type may change the wire representation. Use `rawCondition:` for value comparisons on `DateTime`, `TimeSpan`, `Guid`, `char`, collections or tensors; typed collection null checks such as `p => p.Tags != null` remain supported.
 
 Omitting both arguments makes the write unconditional. Explicit `condition: null`, `condition: default`, and `rawCondition: null` are also supported. For an existing string variable, change `condition: selector` to `rawCondition: selector` at the call site.
 
@@ -112,6 +112,8 @@ var update = BulkFieldUpdate.Create<Product>(product.Id,
 Use `documentType:` on a factory for an explicit schema, including models without `[VespaDocument]`. A typed condition without this argument uses the model's schema. Pass the same schema to the batch; the batch owns the namespace, including the client default when it is omitted. A raw or unconditional factory entry without an explicit schema records no expected schema and requires no attribute.
 
 Factory-bound entries retain their schema through `with` copies, even when `Condition` changes. The built-in feed rejects a mismatching entry locally as one `FeedError` with no HTTP status and continues with the other entries. Vespa returns HTTP 412 when a submitted condition fails against the stored document. Construct a fresh entry for another schema. The condition is frozen before an update callback and remains stable across retries.
+
+`ExpectedDocumentType` participates in record equality, so entries with different bindings can compare unequal despite matching public data; the generated `ToString()` omits this internal binding.
 
 The expected schema is excluded from JSON. A deserialized `FeedDocument<T>` has the original raw DTO semantics; save the batch schema separately and rebuild a factory entry if schema validation is needed on replay. Custom `IFeedOperations` implementations keep their existing contract and do not inherit the built-in client's check. See [Per-document conditions](feed.md#per-document-conditions) for examples and serialization details.
 

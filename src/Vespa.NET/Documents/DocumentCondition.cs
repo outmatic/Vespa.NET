@@ -222,7 +222,8 @@ public static class DocumentCondition
     private static string FloatingLiteral(double value)
     {
         // A float must widen before formatting to retain the exact stored value.
-        // Vespa requires a decimal point, including in scientific notation.
+        // Keep whole-valued floating-point numbers in floating-point syntax.
+        // The inserted .0 preserves that form in exponent notation too.
         var text = value.ToString("R", CultureInfo.InvariantCulture);
         var exponent = text.IndexOf('E');
         return text.Contains('.') ? text : exponent >= 0 ? text.Insert(exponent, ".0") : text + ".0";

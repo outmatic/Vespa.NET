@@ -55,7 +55,9 @@ public sealed class DocumentFieldSetTests : IDisposable
         Assert.Throws<ArgumentException>(() => DocumentFieldSet.ForDocumentType<Plain>("inventory", []));
         Assert.Throws<ArgumentNullException>(() => DocumentFieldSet.For<Inventory>(null!));
         Assert.Throws<ArgumentNullException>(() => DocumentFieldSet.ForDocumentType<Plain>("inventory", default!));
-        Assert.Throws<ArgumentNullException>(() => DocumentFieldSet.For<Inventory>(p => p.Price, null!));
+        var error = Assert.Throws<ArgumentNullException>(() => DocumentFieldSet.For<Inventory>(p => p.Price, null!));
+        Assert.Equal("fields", error.ParamName);
+        Assert.Contains("index 1", error.Message);
         Assert.Throws<ArgumentNullException>(() => DocumentFieldSet.ForDocumentType<Plain>(null!, p => p.Price));
     }
 
