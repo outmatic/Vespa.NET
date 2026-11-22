@@ -22,6 +22,8 @@ await client.Documents.PutAsync(product.Id, product,
 
 This also applies to model-aware deletes, dictionary updates, builder updates, and their group and number variants. Supply one condition argument at a time. Two non-null conditions throw `ArgumentException` before the update builder runs or any HTTP request is sent.
 
+Typed predicates compare enum properties through their supported numeric backing value. Use `rawCondition:` for `DateTime`, `TimeSpan`, `Guid`, `char`, collections, tensors, and enum properties with a JSON converter on the property or enum type, which may change the wire representation.
+
 Omitting both arguments makes the write unconditional. Explicit `condition: null`, `condition: default`, and `rawCondition: null` are also supported. For an existing string variable, change `condition: selector` to `rawCondition: selector` at the call site.
 
 Use named arguments for conditions. `PutAsync(id, product, "value")` selects the explicit-target instance method and treats the string as `documentType`. A positional null or default in that slot also selects the document-type argument and fails validation.

@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Linq.Expressions;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Moq;
 using Vespa.Documents;
 using Vespa.Models.Attributes;
@@ -172,6 +174,113 @@ public sealed class DocumentConditionTests
         var condition = Expression.Lambda<Func<Inventory, bool>>(body, Expression.Parameter(typeof(Inventory), "p"));
         Assert.Throws<NotSupportedException>(() => DocumentCondition.For(condition));
         probe.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void EnumEquality_UsesTheNumericWireValueAndMappedFieldName()
+    {
+        var document = new EnumInventory { Level = Level.High };
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(document, VespaJsonOptions.Default));
+        Assert.Equal(2, json.RootElement.GetProperty("level").GetInt32());
+        Assert.Equal("(inventory.level == 2)", DocumentCondition.For<EnumInventory>(p => p.Level == Level.High));
+    }
+
+    [Fact]
+    public void EnumIntegralCast_RendersAnIntegerComparison()
+    {
+        Assert.Equal("(inventory.level > 1)", DocumentCondition.For<EnumInventory>(p => (int)p.Level > 1));
+        Assert.Equal("(inventory.byte_level > 1)", DocumentCondition.For<EnumInventory>(p => (int)p.ByteLevel > 1));
+        Assert.Throws<NotSupportedException>(() => DocumentCondition.For<EnumInventory>(p => (int)p.LongLevel > 1));
+    }
+
+    [Fact]
+    public void CapturedAndNullableEnums_PreserveNumericValuesAndNullabilityGuards()
+    {
+        var level = Level.High;
+        Assert.Equal("(inventory.level == 2)", DocumentCondition.For<EnumInventory>(p => p.Level == level));
+        Assert.Equal("(inventory.optional_level == 2)", DocumentCondition.For<EnumInventory>(p => p.OptionalLevel == level));
+        Assert.Equal("(inventory.optional_level == null)", DocumentCondition.For<EnumInventory>(p => p.OptionalLevel == null));
+        Assert.Throws<NotSupportedException>(() => DocumentCondition.For<EnumInventory>(p => (int)p.OptionalLevel! > 1));
+    }
+
+    [Fact]
+    public void HandBuiltEnumEquality_RendersItsNumericConstant()
+    {
+        var parameter = Expression.Parameter(typeof(EnumInventory), "p");
+        var body = Expression.Equal(Expression.Property(parameter, nameof(EnumInventory.Level)), Expression.Constant(Level.High));
+        Assert.Equal("(inventory.level == 2)", DocumentCondition.For(Expression.Lambda<Func<EnumInventory, bool>>(body, parameter)));
+    }
+
+    [Fact]
+    public void NullableEnumLift_PreservesSameEnumIdentity()
+    {
+        var parameter = Expression.Parameter(typeof(EnumInventory), "p");
+        var level = Expression.Convert(Expression.Property(parameter, nameof(EnumInventory.Level)), typeof(Level?));
+        var optional = Expression.Property(parameter, nameof(EnumInventory.OptionalLevel));
+        var body = Expression.Equal(level, optional);
+        Assert.Equal("(inventory.level == inventory.optional_level)",
+            DocumentCondition.For(Expression.Lambda<Func<EnumInventory, bool>>(body, parameter)));
+    }
+
+    [Fact]
+    public void EnumPropertyConverter_RequiresANativeCondition()
+    {
+        var error = Assert.Throws<NotSupportedException>(() => DocumentCondition.For<EnumInventory>(p => p.ConvertedLevel == Level.High));
+        Assert.Contains("rawCondition:", error.Message);
+    }
+
+    [Fact]
+    public void EnumTypeConverter_RequiresANativeCondition()
+    {
+        var error = Assert.Throws<NotSupportedException>(() => DocumentCondition.For<EnumInventory>(p => p.TypeConvertedLevel == StringLevel.High));
+        Assert.Contains("rawCondition:", error.Message);
+    }
+
+    [Fact]
+    public void EnumConverterOnVirtualOverride_IsCheckedOnTheSerializedProperty()
+    {
+        var parameter = Expression.Parameter(typeof(ConvertedOverride), "p");
+        var property = Expression.Property(parameter, typeof(EnumBase).GetProperty(nameof(EnumBase.Level))!);
+        var body = Expression.Equal(Expression.Convert(property, typeof(int)), Expression.Constant(2));
+        var error = Assert.Throws<NotSupportedException>(() => DocumentCondition.For(Expression.Lambda<Func<ConvertedOverride, bool>>(body, parameter)));
+        Assert.Contains("rawCondition:", error.Message);
+    }
+
+    [Fact]
+    public void DateTimeComparisons_RemainUnsupported()
+    {
+        var cutoff = new DateTime(2026, 1, 1);
+        Assert.Throws<NotSupportedException>(() => DocumentCondition.For<EnumInventory>(p => p.CreatedAt > cutoff));
+    }
+
+    private enum Level { None, Low, High }
+    private enum ByteLevel : byte { None, High = 2 }
+    private enum LongLevel : long { None, High = 2 }
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    private enum StringLevel { None, High = 2 }
+
+    [VespaDocument("inventory")]
+    private sealed class EnumInventory
+    {
+        [VespaField(Name = "level")] public Level Level { get; init; }
+        public ByteLevel ByteLevel { get; init; }
+        public LongLevel LongLevel { get; init; }
+        public Level? OptionalLevel { get; init; }
+        [JsonConverter(typeof(JsonStringEnumConverter))] public Level ConvertedLevel { get; init; }
+        public StringLevel TypeConvertedLevel { get; init; }
+        public DateTime CreatedAt { get; init; }
+    }
+
+    private class EnumBase
+    {
+        public virtual Level Level { get; init; }
+    }
+
+    [VespaDocument("inventory")]
+    private sealed class ConvertedOverride : EnumBase
+    {
+        [JsonConverter(typeof(JsonStringEnumConverter))]
+        public override Level Level { get; init; }
     }
 
     [VespaDocument("inventory", Namespace = "tenant")]

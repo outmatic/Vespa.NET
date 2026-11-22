@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using System.Text.Json.Serialization;
 using Vespa.Models.Attributes;
 
 namespace Vespa.Documents;
@@ -119,11 +120,16 @@ public static class DocumentCondition
         private string Field(Expression expression)
         {
             expression = Unwrap(expression);
-            if (expression is not MemberExpression { Member: PropertyInfo, Expression: var target } || target != parameter)
+            if (expression is not MemberExpression { Member: PropertyInfo property, Expression: var target } || target != parameter)
                 throw Unsupported(expression);
             var body = expression.Type.IsValueType ? Expression.Convert(expression, typeof(object)) : expression;
             var selector = Expression.Lambda<Func<T, object?>>(body, parameter);
             var name = DocumentFieldSelector.FieldName(selector);
+            var valueType = Underlying(expression.Type);
+            if (valueType.IsEnum &&
+                (DocumentFieldSelector.EffectiveProperty<T>(property).IsDefined(typeof(JsonConverterAttribute), inherit: false) ||
+                 valueType.IsDefined(typeof(JsonConverterAttribute), inherit: false)))
+                throw Unsupported(expression, "Enum fields with JSON converters require rawCondition: to match their stored representation.");
             ValidateIdentifier(name, isDocumentType: false);
             return $"{documentType}.{name}";
         }
@@ -140,6 +146,8 @@ public static class DocumentCondition
     private static bool IsScalar(Type type)
     {
         type = Nullable.GetUnderlyingType(type) ?? type;
+        if (type.IsEnum)
+            type = Enum.GetUnderlyingType(type);
         return type == typeof(string) || type == typeof(bool) || IsNumber(type);
     }
 
@@ -180,9 +188,12 @@ public static class DocumentCondition
     {
         var source = Nullable.GetUnderlyingType(convert.Operand.Type) ?? convert.Operand.Type;
         var target = Nullable.GetUnderlyingType(convert.Type) ?? convert.Type;
+        var sameType = source == target;
+        if (source.IsEnum)
+            source = Enum.GetUnderlyingType(source);
         var removesNullability = Nullable.GetUnderlyingType(convert.Operand.Type) is not null &&
             Nullable.GetUnderlyingType(convert.Type) is null;
-        var safe = source == target ||
+        var safe = sameType || source == target ||
             (source == typeof(int) && (target == typeof(long) || target == typeof(double) || target == typeof(decimal))) ||
             (source == typeof(float) && target == typeof(double)) ||
             ((source == typeof(byte) || source == typeof(sbyte) || source == typeof(short) || source == typeof(ushort)) &&
@@ -199,6 +210,7 @@ public static class DocumentCondition
         null => "null",
         bool boolean => boolean ? "true" : "false",
         string text => Quote(text, escapeBackslashesAsHex),
+        Enum number => Literal(Convert.ChangeType(number, Enum.GetUnderlyingType(number.GetType()), CultureInfo.InvariantCulture), escapeBackslashesAsHex),
         long number when number == long.MinValue => "0x8000000000000000",
         byte or sbyte or short or ushort or int or uint or long => Convert.ToString(value, CultureInfo.InvariantCulture)!,
         decimal number => DecimalLiteral(number),
@@ -260,6 +272,7 @@ public static class DocumentCondition
             throw new ArgumentException($"'{name}' is not a valid document condition {(isDocumentType ? "document type" : "field name")}.");
     }
 
-    private static NotSupportedException Unsupported(Expression expression) => new(
-        $"Unsupported document condition expression '{expression.NodeType}'. Use direct scalar properties, constants or captured locals, comparisons, &&, ||, !, and null checks. Use a string condition for other native selector features.");
+    private static NotSupportedException Unsupported(Expression expression, string? explanation = null) => new(
+        $"Unsupported document condition expression '{expression.NodeType}'. " +
+        (explanation ?? "Use direct scalar properties, constants or captured locals, comparisons, &&, ||, !, and null checks. Use a string condition for other native selector features."));
 }

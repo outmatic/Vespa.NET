@@ -45,7 +45,7 @@ internal static class DocumentFieldSelector
         return name;
     }
 
-    private static PropertyInfo EffectiveProperty<T>(PropertyInfo selected)
+    internal static PropertyInfo EffectiveProperty<T>(PropertyInfo selected)
     {
         if (selected.DeclaringType == typeof(T))
             return selected;
