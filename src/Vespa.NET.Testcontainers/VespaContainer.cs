@@ -32,8 +32,13 @@ public sealed class VespaContainer : IAsyncDisposable
     public const int ConfigPort = 19071;
 
     private readonly string _image;
+    private readonly SemaphoreSlim _lifecycle = new(1);
     private readonly List<IDisposable> _ownedClients = [];
     private IContainer? _container;
+    private volatile ContainerEndpoints? _endpoints;
+    private volatile bool _disposed;
+
+    private sealed record ContainerEndpoints(string Application, string Config);
 
     /// <summary>
     /// Initialises a new <see cref="VespaContainer"/> using the specified or default image.
@@ -45,9 +50,30 @@ public sealed class VespaContainer : IAsyncDisposable
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     /// <summary>Starts the Vespa container and waits until it is healthy.</summary>
+    /// <remarks>Repeated calls while started do nothing. After a stop, this restarts the same container and refreshes its endpoints.</remarks>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _container = new ContainerBuilder(_image)
+        await _lifecycle.WaitAsync(cancellationToken);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_endpoints is not null)
+                return;
+
+            _container ??= BuildContainer();
+            await _container.StartAsync(cancellationToken);
+            _endpoints = new ContainerEndpoints(
+                $"http://{_container.Hostname}:{_container.GetMappedPublicPort(DefaultPort)}",
+                $"http://{_container.Hostname}:{_container.GetMappedPublicPort(ConfigPort)}");
+        }
+        finally
+        {
+            _lifecycle.Release();
+        }
+    }
+
+    private IContainer BuildContainer() =>
+        new ContainerBuilder(_image)
             .WithPortBinding(DefaultPort, assignRandomHostPort: true)
             .WithPortBinding(ConfigPort, assignRandomHostPort: true)
             .WithEnvironment("VESPA_IGNORE_NOT_ENOUGH_MEMORY", "true")
@@ -59,25 +85,53 @@ public sealed class VespaContainer : IAsyncDisposable
                         .ForStatusCode(System.Net.HttpStatusCode.OK)))
             .Build();
 
-        await _container.StartAsync(cancellationToken);
-    }
-
     /// <summary>Stops the Vespa container.</summary>
-    public Task StopAsync(CancellationToken cancellationToken = default)
-        => _container?.StopAsync(cancellationToken) ?? Task.CompletedTask;
+    public async Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        await _lifecycle.WaitAsync(cancellationToken);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _endpoints = null;
+            if (_container is not null)
+                await _container.StopAsync(cancellationToken);
+        }
+        finally
+        {
+            _lifecycle.Release();
+        }
+    }
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        lock (_ownedClients)
+        await _lifecycle.WaitAsync();
+        try
         {
-            foreach (var client in _ownedClients)
-                client.Dispose();
-            _ownedClients.Clear();
+            try
+            {
+                lock (_ownedClients)
+                {
+                    _disposed = true;
+                    _endpoints = null;
+                    foreach (var client in _ownedClients)
+                        client.Dispose();
+                    _ownedClients.Clear();
+                }
+            }
+            finally
+            {
+                if (_container is not null)
+                {
+                    await _container.DisposeAsync();
+                    _container = null;
+                }
+            }
         }
-
-        if (_container is not null)
-            await _container.DisposeAsync();
+        finally
+        {
+            _lifecycle.Release();
+        }
     }
 
     // ── Connection info ────────────────────────────────────────────────────────
@@ -86,19 +140,21 @@ public sealed class VespaContainer : IAsyncDisposable
     /// Returns the HTTP endpoint for the running Vespa instance
     /// (e.g. <c>http://localhost:32768</c>).
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown before <see cref="StartAsync"/> is called.</exception>
-    public string Endpoint => _container is null
-        ? throw new InvalidOperationException("Container has not been started. Call StartAsync() first.")
-        : $"http://{_container.Hostname}:{_container.GetMappedPublicPort(DefaultPort)}";
+    /// <exception cref="InvalidOperationException">The container has not finished starting or has been stopped.</exception>
+    public string Endpoint => GetEndpoints().Application;
 
     /// <summary>
     /// Returns the config server endpoint for deploying application packages
     /// (e.g. <c>http://localhost:32769</c>).
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown before <see cref="StartAsync"/> is called.</exception>
-    public string ConfigEndpoint => _container is null
-        ? throw new InvalidOperationException("Container has not been started. Call StartAsync() first.")
-        : $"http://{_container.Hostname}:{_container.GetMappedPublicPort(ConfigPort)}";
+    /// <exception cref="InvalidOperationException">The container has not finished starting or has been stopped.</exception>
+    public string ConfigEndpoint => GetEndpoints().Config;
+
+    private ContainerEndpoints GetEndpoints()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _endpoints ?? throw new InvalidOperationException("The container is not running. Call StartAsync() first.");
+    }
 
     // ── Client factory ─────────────────────────────────────────────────────────
 
@@ -115,10 +171,11 @@ public sealed class VespaContainer : IAsyncDisposable
         string defaultNamespace = "default",
         ILogger<VespaClient>? logger = null)
     {
+        var endpoints = GetEndpoints();
         var options = new VespaClientOptions
         {
-            Endpoint = Endpoint,
-            ConfigServerEndpoint = ConfigEndpoint,
+            Endpoint = endpoints.Application,
+            ConfigServerEndpoint = endpoints.Config,
             DefaultNamespace = defaultNamespace,
             EnableRetry = false   // tests should fail fast
         };
@@ -128,7 +185,7 @@ public sealed class VespaContainer : IAsyncDisposable
         // Without this, a bare HttpClient has no AutomaticDecompression and would
         // receive gzipped bodies as opaque bytes.
         var handler = VespaServiceCollectionExtensions.BuildSocketsHttpHandler(options);
-        var http = new HttpClient(handler, disposeHandler: true) { BaseAddress = new Uri(Endpoint) };
+        var http = new HttpClient(handler, disposeHandler: true) { BaseAddress = new Uri(endpoints.Application) };
         var client = new VespaClient(http, options, logger);
         return (client, http);
     }
@@ -143,13 +200,13 @@ public sealed class VespaContainer : IAsyncDisposable
         string defaultNamespace = "default",
         ILogger<VespaClient>? logger = null)
     {
-        var (client, http) = CreateClientWithHttp(defaultNamespace, logger);
         lock (_ownedClients)
         {
+            var (client, http) = CreateClientWithHttp(defaultNamespace, logger);
             _ownedClients.Add(client);
             _ownedClients.Add(http);
+            return client;
         }
-        return client;
     }
 
     /// <summary>
@@ -162,10 +219,11 @@ public sealed class VespaContainer : IAsyncDisposable
     /// </param>
     /// <param name="readyTimeout">
     /// How long to wait for the application port to serve health after activation.
-    /// Default: 2 minutes.
+    /// Default: 2 minutes. Must be positive and at most 4,294,967,294 milliseconds.
     /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <exception cref="InvalidOperationException">Thrown when deployment fails.</exception>
+    /// <exception cref="InvalidOperationException">Deployment failed or the application was not ready before the deadline.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The readiness timeout is outside the supported range.</exception>
     public async Task DeployApplicationAsync(
         string packageZipPath,
         TimeSpan? deployTimeout = null,
@@ -173,58 +231,76 @@ public sealed class VespaContainer : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageZipPath);
+        var readinessTimeout = readyTimeout ?? TimeSpan.FromMinutes(2);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(readinessTimeout, TimeSpan.Zero, nameof(readyTimeout));
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(readinessTimeout, TimeSpan.FromMilliseconds(uint.MaxValue - 1), nameof(readyTimeout));
+        var endpoints = GetEndpoints();
 
         using var http = new HttpClient();
         if (deployTimeout is { } requestTimeout)
             http.Timeout = requestTimeout;
-        using var stream = File.OpenRead(packageZipPath);
-        using var content = new StreamContent(stream);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
-
-        var url = $"{ConfigEndpoint}/application/v2/tenant/default/prepareandactivate";
-        var response = await http.PostAsync(url, content, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        using (var stream = File.OpenRead(packageZipPath))
+        using (var content = new StreamContent(stream))
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException(
-                $"Vespa application deployment failed ({response.StatusCode}): {body}");
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+            var url = $"{endpoints.Config}/application/v2/tenant/default/prepareandactivate";
+            using var response = await http.PostAsync(url, content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                throw new InvalidOperationException(
+                    $"Vespa application deployment failed ({response.StatusCode}): {body}");
+            }
         }
 
         // prepareandactivate returns before the application port serves traffic —
         // wait for the app health endpoint so callers don't race the activation.
-        await WaitForApplicationReadyAsync(http, readyTimeout ?? TimeSpan.FromMinutes(2), cancellationToken);
+        await WaitForApplicationReadyAsync(http, endpoints.Application, readinessTimeout, cancellationToken);
     }
 
-    private async Task WaitForApplicationReadyAsync(HttpClient http, TimeSpan deadline, CancellationToken cancellationToken)
+    internal static async Task WaitForApplicationReadyAsync(
+        HttpClient http, string endpoint, TimeSpan deadline, CancellationToken cancellationToken,
+        TimeProvider? timeProvider = null)
     {
-        var healthUrl = $"{Endpoint}/state/v1/health";
+        timeProvider ??= TimeProvider.System;
+        var healthUrl = $"{endpoint}/state/v1/health";
         var pollInterval = TimeSpan.FromMilliseconds(500);
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var started = timeProvider.GetTimestamp();
+        using var timeout = new CancellationTokenSource(deadline, timeProvider);
+        using var probe = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
 
-        while (true)
+        bool HasTimeLeft() => !probe.IsCancellationRequested && timeProvider.GetElapsedTime(started) < deadline;
+
+        try
         {
-            try
+            while (HasTimeLeft())
             {
-                using var health = await http.GetAsync(healthUrl, cancellationToken);
-                if (health.IsSuccessStatusCode)
-                    return;
-            }
-            catch (HttpRequestException)
-            {
-                // port not serving yet
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // HttpClient timeout (not the caller's token) — still not ready
-            }
+                try
+                {
+                    using var health = await http.GetAsync(healthUrl, HttpCompletionOption.ResponseHeadersRead, probe.Token);
+                    if (health.IsSuccessStatusCode && HasTimeLeft())
+                        return;
+                }
+                catch (HttpRequestException)
+                {
+                    // The application port may not be serving yet.
+                }
+                catch (OperationCanceledException) when (!probe.IsCancellationRequested)
+                {
+                    // An individual HttpClient timeout can be retried within the readiness budget.
+                }
 
-            // Wall-clock deadline: the GETs themselves can take up to the client timeout
-            if (stopwatch.Elapsed >= deadline)
-                throw new InvalidOperationException(
-                    $"Vespa application did not become ready on {Endpoint} within {deadline.TotalSeconds:F0}s after deployment.");
-
-            await Task.Delay(pollInterval, cancellationToken);
+                if (HasTimeLeft())
+                    await Task.Delay(pollInterval, timeProvider, probe.Token);
+            }
         }
+        catch (OperationCanceledException) when (probe.IsCancellationRequested)
+        {
+            // Report whether the caller or the readiness deadline canceled the probe.
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException(
+            $"Vespa application did not become ready on {endpoint} within {deadline:c} after deployment.");
     }
 }

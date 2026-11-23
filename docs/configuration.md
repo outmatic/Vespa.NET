@@ -234,6 +234,8 @@ using (http)
 }
 ```
 
+Calling `StartAsync` again while the container is running keeps the current deployment. After `StopAsync`, call `StartAsync` to restart the same container with its data. Read the endpoints again and create a new client after restart because Docker may assign different host ports. Use `DeployApplicationAsync` to deploy a ZIP and wait for its health endpoint within a separate readiness deadline.
+
 **Environment variables:**
 - `VESPA_INTEGRATION_TESTS=1` — enable integration tests in CI
 - `VESPA_ENDPOINT=http://localhost:8080` — use pre-running Vespa instead of container
