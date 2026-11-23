@@ -568,9 +568,7 @@ python3 scripts/verify-vector-data-package.py artifacts/vector-data
 python3 scripts/verify-agent-framework-package.py artifacts/agent-framework
 ```
 
-Each verifier requires both .NET runtimes and tests the actual package against the
-published Vespa.NET client in a fresh consumer project. Sample-only tests run in
-the repository suite; package verification exercises the reusable library.
+Each verifier requires both .NET runtimes and tests the actual package against the published Vespa.NET client in a fresh consumer project. The Agent Framework package checks cover history, compaction, file memory and the Harness tool loop. The repository suite also covers the sample, retrieval benchmark fixtures and live Vespa.
 
 A manual CI run verifies and uploads both artifacts without publishing:
 
