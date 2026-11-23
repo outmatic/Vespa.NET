@@ -38,15 +38,16 @@ public sealed class VespaFixture : IAsyncLifetime
 
     public VespaClient Client { get; private set; } = null!;
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync() => IntegrationEnabled
+        ? InitializeAsync(Environment.GetEnvironmentVariable("VESPA_ENDPOINT"),
+            Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT"))
+        : Task.CompletedTask;
+
+    internal async Task InitializeAsync(string? explicitEndpoint, string? explicitConfigEndpoint)
     {
-        if (!IntegrationEnabled) return;
-
-        var explicitEndpoint = Environment.GetEnvironmentVariable("VESPA_ENDPOINT");
-
         if (explicitEndpoint is not null)
         {
-            var configEndpoint = Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT")
+            var configEndpoint = explicitConfigEndpoint
                 ?? new UriBuilder(explicitEndpoint) { Port = 19071 }.Uri.ToString();
 
             var options = new VespaClientOptions
@@ -57,7 +58,7 @@ public sealed class VespaFixture : IAsyncLifetime
                 EnableRetry = false
             };
             var handler = VespaServiceCollectionExtensions.BuildSocketsHttpHandler(options);
-            _http = new HttpClient(handler, disposeHandler: true) { BaseAddress = new Uri(explicitEndpoint) };
+            _http = new HttpClient(handler, disposeHandler: true);
             Client = new VespaClient(_http, options);
         }
         else
@@ -76,9 +77,22 @@ public sealed class VespaFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        _http?.Dispose();
-        if (_vespa is not null)
-            await _vespa.DisposeAsync();
+        try
+        {
+            Client?.Dispose();
+        }
+        finally
+        {
+            try
+            {
+                _http?.Dispose();
+            }
+            finally
+            {
+                if (_vespa is not null)
+                    await _vespa.DisposeAsync();
+            }
+        }
     }
 
     /// <summary>The Vespa endpoint URL (for container-level assertions).</summary>

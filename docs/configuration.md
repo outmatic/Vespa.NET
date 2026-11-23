@@ -224,6 +224,7 @@ await vespa.StartAsync();
 
 var (client, http) = vespa.CreateClientWithHttp("mynamespace");
 using (http)
+using (client)
 {
     await client.Admin.DeploySchemaAsync<Product>();
 
@@ -233,6 +234,8 @@ using (http)
     // Run integration tests ...
 }
 ```
+
+`CreateClientWithHttp()` returns two objects you own. Dispose the `VespaClient` to close its admin connection, then dispose the `HttpClient` to close the data connection. If you only need a Vespa client, use `CreateClient()` and let the container dispose both.
 
 Calling `StartAsync` again while the container is running keeps the current deployment. After `StopAsync`, call `StartAsync` to restart the same container with its data. Read the endpoints again and create a new client after restart because Docker may assign different host ports. Use `DeployApplicationAsync` to deploy a ZIP and wait for its health endpoint within a separate readiness deadline.
 

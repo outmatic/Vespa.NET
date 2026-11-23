@@ -164,8 +164,8 @@ public sealed class VespaContainer : IAsyncDisposable
     /// <param name="defaultNamespace">Default document namespace (default: <c>"default"</c>).</param>
     /// <param name="logger">Optional logger.</param>
     /// <returns>
-    /// A tuple of (<see cref="VespaClient"/>, <see cref="HttpClient"/>).
-    /// Dispose the <see cref="HttpClient"/> when done to release connections.
+    /// The caller owns both the <see cref="VespaClient"/> and the <see cref="HttpClient"/>.
+    /// Dispose the Vespa client first to release its admin resources, then dispose the HTTP client.
     /// </returns>
     public (VespaClient Client, HttpClient Http) CreateClientWithHttp(
         string defaultNamespace = "default",
@@ -185,16 +185,22 @@ public sealed class VespaContainer : IAsyncDisposable
         // Without this, a bare HttpClient has no AutomaticDecompression and would
         // receive gzipped bodies as opaque bytes.
         var handler = VespaServiceCollectionExtensions.BuildSocketsHttpHandler(options);
-        var http = new HttpClient(handler, disposeHandler: true) { BaseAddress = new Uri(endpoints.Application) };
-        var client = new VespaClient(http, options, logger);
-        return (client, http);
+        var http = new HttpClient(handler, disposeHandler: true);
+        try
+        {
+            return (new VespaClient(http, options, logger), http);
+        }
+        catch
+        {
+            http.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
-    /// Convenience overload — creates a <see cref="VespaClient"/> whose
-    /// <see cref="HttpClient"/> is owned by this container and disposed in
-    /// <see cref="DisposeAsync"/>. Use <see cref="CreateClientWithHttp"/> when you
-    /// need to control the HTTP client's lifetime yourself.
+    /// Creates a <see cref="VespaClient"/> owned by this container.
+    /// <see cref="DisposeAsync"/> disposes the Vespa client and its underlying HTTP client.
+    /// Use <see cref="CreateClientWithHttp"/> to manage both lifetimes yourself.
     /// </summary>
     public VespaClient CreateClient(
         string defaultNamespace = "default",
