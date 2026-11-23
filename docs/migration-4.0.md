@@ -218,3 +218,7 @@ await client.Documents.PutAsync(product.Id, product,
 The non-generic feed factories and native selection APIs retain their string parameters. Use `DocumentCondition.For<Product>(p => p.Price > 0)` to pre-render a write condition when the target schema matches the model's annotation, then pass that string through the appropriate native argument or a generic factory's `rawCondition:`. For native selections and visits restricted to that document type, use `DocumentSelection.For<Product>(p => p.Price > 0)`. A condition alone adds no type filter: on a raw root visit, `DocumentCondition.For<Product>(p => true)` would visit every type. See [Conditional writes](document-operations.md#conditional-writes) for supported expressions and evaluation rules.
 
 Rebuild applications and libraries that use the model-aware document extensions or the four generic mixed-feed factories. Their method signatures have changed, including unconditional calls. The methods declared by `IDocumentOperations` and `IFeedOperations` keep their current signatures, so custom implementations of these interfaces need no changes for these features.
+
+## Named client registration
+
+`Vespa.NET` is the HTTP client name reserved for the unnamed registration. Passing that exact name to the named `AddVespaClient` overload now throws `ArgumentException` during registration. If you used it as a keyed client name, choose a different name and update keyed lookups, health checks and any `IHttpClientFactory` calls intended for that client.

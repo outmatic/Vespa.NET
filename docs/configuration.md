@@ -105,6 +105,8 @@ public class ProductService(IVespaClient vespa)
 }
 ```
 
+Resolve a named client with `GetRequiredKeyedService<IVespaClient>(name)`. Names are case-sensitive. `Vespa.NET` is reserved for the unnamed client, so choose a different name for a keyed registration.
+
 ---
 
 ## Vespa Cloud (mTLS)

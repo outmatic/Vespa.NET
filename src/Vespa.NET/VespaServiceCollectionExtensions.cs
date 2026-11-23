@@ -66,6 +66,7 @@ public static partial class VespaServiceCollectionExtensions
     /// <param name="options">VespaClient configuration options</param>
     /// <param name="configureHttpClient">Optional additional HttpClient configuration</param>
     /// <returns>An IHttpClientBuilder for further configuration</returns>
+    /// <exception cref="ArgumentException">The name <c>Vespa.NET</c> is reserved for the unnamed client.</exception>
     /// <remarks>
     /// Repeated calls with the same name replace the previous Vespa configuration.
     /// Registrations with other names and the unnamed client are unaffected.
@@ -79,6 +80,9 @@ public static partial class VespaServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(options);
+
+        if (string.Equals(name, DefaultHttpClientName, StringComparison.Ordinal))
+            throw new ArgumentException($"'{DefaultHttpClientName}' is reserved for the unnamed Vespa client. Choose a different name.", nameof(name));
 
         options.Validate();
 
