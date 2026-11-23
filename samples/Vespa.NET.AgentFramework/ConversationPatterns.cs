@@ -134,7 +134,7 @@ internal sealed class PreferenceContextProvider : AIContextProvider
     {
         var state = _state.GetOrInitializeState(context.Session);
         var memory = new PreferenceMemory(_memories, _embeddings, state.UserId);
-        var recalled = await memory.RecallAsync(cancellationToken);
+        var recalled = await memory.FindSavedPreferenceAsync(cancellationToken);
         return new()
         {
             Messages = string.IsNullOrEmpty(recalled) ? [] : [new(ChatRole.User, "Stored code-example preference: " + recalled)],
