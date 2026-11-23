@@ -3,7 +3,9 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Xml;
 using Vespa.Models.Attributes;
+using Vespa.Models.Schema;
 
 namespace Vespa.Documents;
 
@@ -29,14 +31,32 @@ public static class DocumentCondition
     }
 
     internal static string Render<T>(string documentType, Expression<Func<T, bool>> condition, bool escapeBackslashesAsHex = false) where T : class
+        => Render(documentType, condition, escapeBackslashesAsHex ? RenderContext.Visitor : RenderContext.Write);
+
+    internal static string RenderForPackage<T>(string documentType, Expression<Func<T, bool>> selection) where T : class
+    {
+        var rendered = Render(documentType, selection, RenderContext.Package);
+        try
+        {
+            return XmlConvert.VerifyXmlChars(rendered);
+        }
+        catch (XmlException exception)
+        {
+            throw new NotSupportedException("Package selections require valid XML characters. Use DocumentSelections for native expressions.", exception);
+        }
+    }
+
+    private enum RenderContext { Write, Visitor, Package }
+
+    private static string Render<T>(string documentType, Expression<Func<T, bool>> condition, RenderContext context) where T : class
     {
         ArgumentNullException.ThrowIfNull(condition);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
         ValidateIdentifier(documentType, isDocumentType: true);
-        return new Renderer<T>(documentType, condition.Parameters[0], escapeBackslashesAsHex).Predicate(condition.Body);
+        return new Renderer<T>(documentType, condition.Parameters[0], context).Predicate(condition.Body);
     }
 
-    private sealed class Renderer<T>(string documentType, ParameterExpression parameter, bool escapeBackslashesAsHex) where T : class
+    private sealed class Renderer<T>(string documentType, ParameterExpression parameter, RenderContext context) where T : class
     {
         internal string Predicate(Expression expression) => expression switch
         {
@@ -46,7 +66,9 @@ public static class DocumentCondition
                 $"not ({Predicate(unary.Operand)})",
             BinaryExpression binary when IsComparison(binary.NodeType) => Comparison(binary),
             MemberExpression { Member.Name: nameof(Nullable<int>.HasValue), Expression: { } target }
-                when Nullable.GetUnderlyingType(target.Type) is not null => $"({Field(target)} != null)",
+                when Nullable.GetUnderlyingType(target.Type) is not null => context == RenderContext.Package
+                    ? NullComparison(Operand(target), equalsNull: false)
+                    : $"({Field(target)} != null)",
             MemberExpression member when member.Type == typeof(bool) && member.Expression == parameter =>
                 $"({Field(member)} == true)",
             _ => Value(expression) is bool value ? value ? "true" : "false" : throw Unsupported(expression)
@@ -80,6 +102,19 @@ public static class DocumentCondition
                 (Underlying(left.Type) == typeof(decimal) || Underlying(right.Type) == typeof(decimal)))
                 throw Unsupported(binary); // Evaluate constant decimal predicates in C# before capturing the resulting bool.
 
+            if (context == RenderContext.Package && !(left.IsNull || right.IsNull))
+            {
+                if (left.IsField && right.IsField && binary.NodeType is not (ExpressionType.Equal or ExpressionType.NotEqual))
+                    throw Unsupported(binary, "Package routing does not support ordering two fields. Use DocumentSelections for native expressions.");
+                // Java routing compares numbers as doubles; C++ GC keeps integral precision.
+                // A bounded operand prevents rounding from changing an integral comparison.
+                if (left.IsIntegral && right.IsIntegral && !left.HasExactIntegerRange && !right.HasExactIntegerRange)
+                    throw Unsupported(binary, "Package integer comparisons need a byte/int field or a value strictly between -2^53 and 2^53. Use DocumentSelections for native expressions.");
+            }
+
+            if (context == RenderContext.Package && (left.IsNull || right.IsNull))
+                return NullComparison(left.IsNull ? right : left, binary.NodeType == ExpressionType.Equal);
+
             var op = binary.NodeType switch
             {
                 ExpressionType.Equal => "==",
@@ -97,24 +132,59 @@ public static class DocumentCondition
             if (binary.IsLifted && binary.NodeType is not (ExpressionType.Equal or ExpressionType.NotEqual))
             {
                 if (left.IsNullableField)
-                    comparison = $"({left.Text} != null and {comparison})";
+                    comparison = context == RenderContext.Package
+                        ? $"({NullComparison(left, equalsNull: false)} and {comparison})"
+                        : $"({left.Text} != null and {comparison})";
                 if (right.IsNullableField)
-                    comparison = $"({right.Text} != null and {comparison})";
+                    comparison = context == RenderContext.Package
+                        ? $"({NullComparison(right, equalsNull: false)} and {comparison})"
+                        : $"({right.Text} != null and {comparison})";
             }
             return comparison;
+        }
+
+        private string NullComparison(RenderedOperand operand, bool equalsNull)
+        {
+            if (context != RenderContext.Package || !operand.IsField)
+                return $"({operand.Text} {(equalsNull ? "==" : "!=")} null)";
+            if (!IsScalar(operand.Type))
+                throw new NotSupportedException("Package null checks require scalar fields. Use DocumentSelections for native expressions.");
+            // ID-only operations cannot inspect fields. Keep Java's INVALID result
+            // so reads, updates and removes still route to the content cluster.
+            var field = operand.Text;
+            var isNull = $"(({field} == null) or (({field} == {field}) and ({field} != {field})))";
+            return equalsNull ? isNull : $"not ({isNull})";
         }
 
         private RenderedOperand Operand(Expression expression)
         {
             var unwrapped = Unwrap(expression);
-            if (unwrapped is MemberExpression { Expression: var target } && target == parameter)
+            if (unwrapped is MemberExpression { Member: PropertyInfo property, Expression: var target } && target == parameter)
             {
                 if (Underlying(expression.Type) == typeof(decimal) && Underlying(unwrapped.Type) != typeof(decimal))
                     throw Unsupported(expression); // Native mixed numeric comparisons round decimal fractions to double.
-                return new(Field(unwrapped), expression.Type, false, Nullable.GetUnderlyingType(expression.Type) is not null, true);
+                var (integral, bounded) = context == RenderContext.Package ? IntegerFieldInfo(property) : (false, false);
+                return new(Field(unwrapped), expression.Type, false, Nullable.GetUnderlyingType(expression.Type) is not null, true, integral, bounded);
             }
             var value = Value(expression);
-            return new(Literal(value, escapeBackslashesAsHex), expression.Type, value is null, false, false);
+            var literal = Literal(value, context);
+            if (context == RenderContext.Package && literal == "0x8000000000000000")
+                throw Unsupported(expression, "Vespa rewrites the minimum signed 64-bit literal into a form its GC parser rejects. Use DocumentSelections for native expressions.");
+            var integer = context == RenderContext.Package && value is not null &&
+                (IsIntegral(expression.Type) || value is decimal && !literal.Contains('.'));
+            return new(literal, expression.Type, value is null, false, false, integer,
+                integer && Convert.ToDecimal(value, CultureInfo.InvariantCulture) is > -9007199254740992m and < 9007199254740992m);
+        }
+
+        private static (bool Integral, bool Bounded) IntegerFieldInfo(PropertyInfo property)
+        {
+            property = DocumentFieldSelector.EffectiveProperty<T>(property);
+            var fieldType = property.GetCustomAttribute<VespaFieldAttribute>()?.FieldType ?? VespaFieldType.None;
+            if (fieldType != VespaFieldType.None)
+                return (fieldType is VespaFieldType.Byte or VespaFieldType.Int or VespaFieldType.Long,
+                    fieldType is VespaFieldType.Byte or VespaFieldType.Int);
+            var type = Underlying(property.PropertyType);
+            return (IsIntegral(type), type == typeof(sbyte) || type == typeof(short) || type == typeof(ushort) || type == typeof(int));
         }
 
         private string Field(Expression expression)
@@ -125,17 +195,40 @@ public static class DocumentCondition
             var body = expression.Type.IsValueType ? Expression.Convert(expression, typeof(object)) : expression;
             var selector = Expression.Lambda<Func<T, object?>>(body, parameter);
             var name = DocumentFieldSelector.FieldName(selector);
+            var effectiveProperty = DocumentFieldSelector.EffectiveProperty<T>(property);
+            if (context == RenderContext.Package && !IsPackageScalar(effectiveProperty))
+                throw Unsupported(expression, "Package fields must use matching native scalar categories (string, boolean or numeric). Use DocumentSelections for other native field types.");
             var valueType = Underlying(expression.Type);
             if (valueType.IsEnum &&
-                (DocumentFieldSelector.EffectiveProperty<T>(property).IsDefined(typeof(JsonConverterAttribute), inherit: false) ||
+                (effectiveProperty.IsDefined(typeof(JsonConverterAttribute), inherit: false) ||
                  valueType.IsDefined(typeof(JsonConverterAttribute), inherit: false)))
                 throw Unsupported(expression, "Enum fields with JSON converters require rawCondition: to match their stored representation.");
             ValidateIdentifier(name, isDocumentType: false);
             return $"{documentType}.{name}";
         }
+
+        private static bool IsPackageScalar(PropertyInfo property)
+        {
+            if (property.GetCustomAttribute<VespaTensorAttribute>() is not null)
+                return false;
+            var type = Underlying(property.PropertyType);
+            if (type.IsEnum)
+                type = Enum.GetUnderlyingType(type);
+            var field = property.GetCustomAttribute<VespaFieldAttribute>();
+            if (field is null)
+                return false;
+            return field.FieldType switch
+            {
+                VespaFieldType.None => IsScalar(type),
+                VespaFieldType.String => type == typeof(string),
+                VespaFieldType.Bool => type == typeof(bool),
+                VespaFieldType.Byte or VespaFieldType.Int or VespaFieldType.Long or VespaFieldType.Float or VespaFieldType.Double => IsNumber(type),
+                _ => false
+            };
+        }
     }
 
-    private readonly record struct RenderedOperand(string Text, Type Type, bool IsNull, bool IsNullableField, bool IsField);
+    private readonly record struct RenderedOperand(string Text, Type Type, bool IsNull, bool IsNullableField, bool IsField, bool IsIntegral = false, bool HasExactIntegerRange = false);
 
     private static Type Underlying(Type type) => Nullable.GetUnderlyingType(type) ?? type;
 
@@ -154,6 +247,15 @@ public static class DocumentCondition
     private static bool IsNumber(Type type) => type == typeof(byte) || type == typeof(sbyte) ||
         type == typeof(short) || type == typeof(ushort) || type == typeof(int) || type == typeof(uint) ||
         type == typeof(long) || type == typeof(float) || type == typeof(double) || type == typeof(decimal);
+
+    private static bool IsIntegral(Type type)
+    {
+        type = Underlying(type);
+        if (type.IsEnum)
+            type = Enum.GetUnderlyingType(type);
+        return type == typeof(byte) || type == typeof(sbyte) || type == typeof(short) || type == typeof(ushort) ||
+            type == typeof(int) || type == typeof(uint) || type == typeof(long);
+    }
 
     private static Expression Unwrap(Expression expression)
     {
@@ -205,12 +307,12 @@ public static class DocumentCondition
             throw Unsupported(convert);
     }
 
-    private static string Literal(object? value, bool escapeBackslashesAsHex) => value switch
+    private static string Literal(object? value, RenderContext context) => value switch
     {
         null => "null",
         bool boolean => boolean ? "true" : "false",
-        string text => Quote(text, escapeBackslashesAsHex),
-        Enum number => Literal(Convert.ChangeType(number, Enum.GetUnderlyingType(number.GetType()), CultureInfo.InvariantCulture), escapeBackslashesAsHex),
+        string text => context == RenderContext.Package ? QuoteForPackage(text) : Quote(text, context == RenderContext.Visitor),
+        Enum number => Literal(Convert.ChangeType(number, Enum.GetUnderlyingType(number.GetType()), CultureInfo.InvariantCulture), context),
         long number when number == long.MinValue => "0x8000000000000000",
         byte or sbyte or short or ushort or int or uint or long => Convert.ToString(value, CultureInfo.InvariantCulture)!,
         decimal number => DecimalLiteral(number),
@@ -258,6 +360,28 @@ public static class DocumentCondition
                 case (byte)'\f': result.Append("\\f"); break;
                 case >= 32 and <= 126: result.Append((char)value); break;
                 default: result.Append("\\x").Append(value.ToString("X2", CultureInfo.InvariantCulture)); break;
+            }
+        return result.Append('"').ToString();
+    }
+
+    private static string QuoteForPackage(string text)
+    {
+        if (text.EndsWith('\\'))
+            throw new NotSupportedException("Package string literals ending in a backslash are ambiguous to the routing parser. Use DocumentSelections for native expressions.");
+        // Java rewrites this literal before passing it to C++ GC. Its Unicode
+        // escapes are not accepted there, so keep literals in the shared subset.
+        var result = new StringBuilder("\"");
+        foreach (var value in text)
+            switch (value)
+            {
+                case '"': result.Append("\\\""); break;
+                case '\\': result.Append("\\\\"); break;
+                case '\n': result.Append("\\n"); break;
+                case '\r': result.Append("\\r"); break;
+                case '\t': result.Append("\\t"); break;
+                case '\f': result.Append("\\f"); break;
+                case < ' ' or > '~': throw new NotSupportedException("Typed package string literals require printable ASCII or tab, newline, carriage return and form feed. Vespa's GC configuration rewrites other characters into unsupported Unicode escapes.");
+                default: result.Append(value); break;
             }
         return result.Append('"').ToString();
     }

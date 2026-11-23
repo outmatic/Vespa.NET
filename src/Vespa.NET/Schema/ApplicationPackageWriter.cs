@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using System.Xml;
+using Vespa.Documents;
 using Vespa.Models.Attributes;
 
 namespace Vespa.Models.Schema;
@@ -18,6 +20,8 @@ internal static class ApplicationPackageWriter
 
         var opts = options ?? new ApplicationPackageOptions();
         ValidatePackageOptions(opts);
+        if (opts.DocumentSelections is { Count: > 0 })
+            documentTypes = ValidateDocumentSelections(documentTypes, opts);
 
         using var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
 
@@ -41,7 +45,10 @@ internal static class ApplicationPackageWriter
             if (!seenDocTypes.Add(docAttr.DocumentType))
                 throw new InvalidOperationException(
                     $"Duplicate document type '{docAttr.DocumentType}': two of the supplied types map to the same schema file.");
-            docInfos.Add((docAttr.DocumentType, docAttr.Global, docAttr.Mode, docAttr.Selection));
+            var selection = opts.DocumentSelections?.TryGetValue(docAttr.DocumentType, out var configured) == true
+                ? configured
+                : docAttr.Selection;
+            docInfos.Add((docAttr.DocumentType, docAttr.Global, docAttr.Mode, selection));
 
             var schemaPath = $"schemas/{docAttr.DocumentType}.sd";
             if (includedPaths.Contains(schemaPath))
@@ -106,6 +113,36 @@ internal static class ApplicationPackageWriter
             throw new ArgumentException(
                 $"ApplicationPackageOptions.HostNames has {opts.HostNames.Count} entries but NodeCount is {opts.NodeCount}; the counts must match.",
                 nameof(opts));
+    }
+
+    private static Type[] ValidateDocumentSelections(IEnumerable<Type> documentTypes, ApplicationPackageOptions opts)
+    {
+        if (opts.CustomServicesXml is not null)
+            throw new ArgumentException("Document selections cannot be combined with CustomServicesXml.", nameof(opts));
+
+        var types = documentTypes.ToArray();
+        var targets = types.Select(type => type.GetCustomAttribute<VespaDocumentAttribute>()).ToArray();
+        foreach (var (documentType, selection) in opts.DocumentSelections!)
+        {
+            VespaIdentifier.ValidateDocumentType(documentType);
+            ArgumentException.ThrowIfNullOrWhiteSpace(selection);
+            try
+            {
+                XmlConvert.VerifyXmlChars(selection);
+            }
+            catch (XmlException exception)
+            {
+                throw new ArgumentException($"Document selection for '{documentType}' contains invalid XML characters.", nameof(opts), exception);
+            }
+            var matches = targets.Where(target => target?.DocumentType == documentType).ToArray();
+            if (matches.Length == 0)
+                throw new ArgumentException($"Document selection target '{documentType}' is not included in the package.", nameof(opts));
+            if (matches.Length > 1)
+                throw new InvalidOperationException($"Duplicate document type '{documentType}': two of the supplied types map to the same schema file.");
+            if (matches.Any(target => target!.Selection is not null))
+                throw new ArgumentException($"Document type '{documentType}' already declares an attribute selection; remove it before configuring a runtime selection.", nameof(opts));
+        }
+        return types;
     }
 
     private static void CopyFileToZip(ZipArchive zip, string entryPath, string sourcePath)

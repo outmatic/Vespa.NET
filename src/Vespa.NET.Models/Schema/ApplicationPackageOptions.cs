@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace Vespa.Models.Schema;
 
 /// <summary>
@@ -5,6 +7,21 @@ namespace Vespa.Models.Schema;
 /// </summary>
 public sealed record ApplicationPackageOptions
 {
+    private readonly IReadOnlyDictionary<string, string>? _documentSelections;
+
+    /// <summary>
+    /// Native keep selections keyed by document type. Values are copied when assigned.
+    /// Selections control feed routing and enable garbage collection of non-matching documents.
+    /// A target must belong to the package and must not also declare an attribute selection.
+    /// Cannot be combined with <see cref="CustomServicesXml"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? DocumentSelections
+    {
+        get => _documentSelections;
+        init => _documentSelections = value is null ? null :
+            new Dictionary<string, string>(value, StringComparer.Ordinal).ToFrozenDictionary(StringComparer.Ordinal);
+    }
+
     /// <summary>
     /// Number of redundant copies of each document. Default: 1.
     /// </summary>

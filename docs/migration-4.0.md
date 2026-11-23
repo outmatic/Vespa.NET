@@ -197,6 +197,10 @@ Typed updates, conditions and selections require a direct, public property with 
 
 The resolved field name must also match the name used in document JSON. Declare `[VespaField(Name = "...")]` directly on an override if it inherits a different alias, and use this attribute for custom JSON names. It takes precedence over `[JsonPropertyName]`. A remaining mismatch throws `NotSupportedException`; native conditions and explicit update field names remain available. Typed YQL can still query fields that JSON ignores, such as fields populated by another writer.
 
+## Document retention in generated packages
+
+Existing attribute selections continue to work. To supply a cutoff when building the package, use the options returned by `WithDocumentSelection<T>(...)`. For a moving cutoff, put a native expression using `now()` in `ApplicationPackageOptions.DocumentSelections`. Both forms affect feed routing and enable garbage collection. Choose one source per document type and pass the options to the existing generation or deployment method. [Document expiry and routing examples](schema.md#document-expiry-selection)
+
 ## Application-package resources
 
 Files declared with `SourcePath` on `[VespaOnnxModel]` or `[VespaConstant]` are now copied after the schema's ZIP entry has been closed. A bundled resource that shares a destination with a generated schema, `services.xml` or generated `hosts.xml` throws `InvalidOperationException`. Use a separate asset path, or `CustomServicesXml` for service configuration. Public package-generation signatures are unchanged; see [Bundled files](schema.md#bundled-files) for path resolution and duplicate-resource precedence.

@@ -55,7 +55,9 @@ internal static class ApplicationPackageXml
                 _ => "index"
             };
             var globalAttr = global ? " global=\"true\"" : "";
-            var selectionAttr = selection is not null ? $" selection=\"{XmlEscape(selection)}\"" : "";
+            var selectionAttr = selection is not null
+                ? $" selection=\"{(opts.DocumentSelections?.ContainsKey(docType) == true ? SelectionEscape(selection) : XmlEscape(selection))}\""
+                : "";
             sb.Append(CultureInfo.InvariantCulture, $"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}{selectionAttr}/>\n");
         }
 
@@ -75,6 +77,11 @@ internal static class ApplicationPackageXml
         sb.Append("</services>\n");
         return sb.ToString();
     }
+
+    private static string SelectionEscape(string selection) => XmlEscape(selection)
+        .Replace("\t", "&#x9;", StringComparison.Ordinal)
+        .Replace("\n", "&#xA;", StringComparison.Ordinal)
+        .Replace("\r", "&#xD;", StringComparison.Ordinal);
 
     internal static string GenerateHostsXml(ApplicationPackageOptions opts)
     {

@@ -239,9 +239,9 @@ Package generation finishes each ZIP entry before copying the next resource and 
 
 ## Document Expiry (Selection)
 
-`[VespaDocument(Selection = "…")]` declares which documents to *keep*; the rest
-are garbage-collected. The expression is rendered into the generated
-`services.xml` (not into the `.sd` schema, where Vespa does not accept it):
+A document selection tells Vespa which documents to keep. It controls feed routing and enables garbage collection in the content cluster. A PUT that fails the selection can return HTTP 200 even though the cluster did not store the document. Vespa can also remove stored documents once they stop matching. [Document routing](https://docs.vespa.ai/en/writing/document-routing.html) · [Content cluster configuration](https://docs.vespa.ai/en/reference/applications/services/content.html#documents)
+
+Use `[VespaDocument(Selection = "…")]` for a policy fixed in the model. This example keeps music documents whose Unix timestamp is less than a day old. The generator writes the selection into `services.xml`:
 
 ```csharp
 [VespaDocument("music", Selection = "music.timestamp > now() - 86400")]
@@ -252,3 +252,33 @@ are garbage-collected. The expression is rendered into the generated
   <document type="music" mode="index" selection="music.timestamp &gt; now() - 86400"/>
 </documents>
 ```
+
+In 4.0 you can also configure a policy when building the package. For a model named `product` with a `long Timestamp` property in Unix seconds, the following example sets a fixed cutoff. `WithDocumentSelection` reads the captured value immediately and returns a new options record. Pass that record to the existing package generator or deployment method.
+
+```csharp
+using Vespa.Models.Schema;
+
+long cutoff = DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds();
+var options = new ApplicationPackageOptions()
+    .WithDocumentSelection<Product>(p => p.Timestamp > cutoff);
+
+VespaSchemaBuilder.GenerateApplicationPackage<Product>(output, options);
+```
+
+For a rolling one-day lifetime, let Vespa evaluate `now()` in a native selector. Set `DocumentSelections` on a separate options instance for this alternative:
+
+```csharp
+var rollingOptions = new ApplicationPackageOptions
+{
+    DocumentSelections = new Dictionary<string, string>
+    {
+        ["product"] = "product.timestamp > now() - 86400"
+    }
+};
+```
+
+The options snapshot the dictionary when assigned and compare document type names case-sensitively. Each configured type must occur in the package and may have only one selection. Adding a typed selection for an already configured type throws. Package generation rejects a selection for a missing type or a type that also declares an attribute selection, even an empty one. Configured selections also conflict with `CustomServicesXml`. These conflicts are detected before the ZIP is written.
+
+Typed policies support scalar properties declared with `[VespaField]`, including strings, numbers, booleans and scalar null checks. The CLR property and its declared Vespa field must share the same category: string, boolean or numeric. The renderer preserves routing for GET, update and remove operations that have only a document ID. Collection null checks and ordering comparisons between two fields require a native selector. Decimal fields use Vespa's double precision. When both operands are native integers, at least one must be a native `byte` or `int` field or a constant or captured value strictly between −2⁵³ and 2⁵³. This keeps comparisons consistent between routing and garbage collection.
+
+Typed policies accept printable ASCII string literals, plus tab, newline, carriage return and form feed. They reject a trailing backslash, other characters and the minimum signed 64-bit integer literal. These guards cover cases where Vespa's Java configuration rewrites a value into a form its C++ garbage collector cannot parse; this was reproduced on Vespa 8.703.17. They apply to selection literals; document contents may still contain Unicode. Native selectors in `DocumentSelections` are forwarded as supplied and must work in both routing and garbage collection.
