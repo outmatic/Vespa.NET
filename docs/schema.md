@@ -239,9 +239,9 @@ Package generation finishes each ZIP entry before copying the next resource and 
 
 ## Document Expiry (Selection)
 
-A document selection tells Vespa which documents to keep. It controls feed routing and enables garbage collection in the content cluster. A PUT that fails the selection can return HTTP 200 even though the cluster did not store the document. Vespa can also remove stored documents once they stop matching. [Document routing](https://docs.vespa.ai/en/writing/document-routing.html) · [Content cluster configuration](https://docs.vespa.ai/en/reference/applications/services/content.html#documents)
+A document selection tells Vespa which documents to keep. The default feed route evaluates the selection, and the SDK enables garbage collection in the generated `services.xml`. A PUT that fails the selection can return HTTP 200 even though the cluster did not store the document. Garbage collection can remove stored documents that fail the selection in the background. [Document routing](https://docs.vespa.ai/en/writing/document-routing.html#document-selection) · [Content cluster configuration](https://docs.vespa.ai/en/reference/applications/services/content.html#documents)
 
-Use `[VespaDocument(Selection = "…")]` for a policy fixed in the model. This example keeps music documents whose Unix timestamp is less than a day old. The generator writes the selection into `services.xml`:
+Use `[VespaDocument(Selection = "…")]` for a policy fixed in the model. This example keeps music documents with a Unix timestamp newer than a rolling one-day cutoff. The generator writes the selection into `services.xml`:
 
 ```csharp
 [VespaDocument("music", Selection = "music.timestamp > now() - 86400")]
@@ -265,7 +265,7 @@ var options = new ApplicationPackageOptions()
 VespaSchemaBuilder.GenerateApplicationPackage<Product>(output, options);
 ```
 
-For a rolling one-day lifetime, let Vespa evaluate `now()` in a native selector. Set `DocumentSelections` on a separate options instance for this alternative:
+For a rolling one-day cutoff, let Vespa evaluate `now()` in a native selector. Set `DocumentSelections` on a separate options instance:
 
 ```csharp
 var rollingOptions = new ApplicationPackageOptions
@@ -277,8 +277,10 @@ var rollingOptions = new ApplicationPackageOptions
 };
 ```
 
+The examples assume stored documents have a timestamp. An ordering comparison against a missing timestamp evaluates to `invalid`, so garbage collection keeps those documents. To make documents with a missing timestamp eligible for removal, use an explicit presence check, for example `(product.timestamp != null) and (product.timestamp > now() - 86400)`. [Comparisons with missing fields](https://docs.vespa.ai/en/reference/writing/document-selector-language.html#comparisons-with-missing-fields-null-values)
+
 The options snapshot the dictionary when assigned and compare document type names case-sensitively. Each configured type must occur in the package and may have only one selection. Adding a typed selection for an already configured type throws. Package generation rejects a selection for a missing type or a type that also declares an attribute selection, even an empty one. Configured selections also conflict with `CustomServicesXml`. These conflicts are detected before the ZIP is written.
 
-Typed policies support scalar properties declared with `[VespaField]`, including strings, numbers, booleans and scalar null checks. The CLR property and its declared Vespa field must share the same category: string, boolean or numeric. The renderer preserves routing for GET, update and remove operations that have only a document ID. Collection null checks and ordering comparisons between two fields require a native selector. Decimal fields use Vespa's double precision. When both operands are native integers, at least one must be a native `byte` or `int` field or a constant or captured value strictly between −2⁵³ and 2⁵³. This keeps comparisons consistent between routing and garbage collection.
+Typed policies support scalar properties declared with `[VespaField]`, including strings, numbers, booleans and scalar null checks. The CLR property and its declared Vespa field must share the same category: string, boolean or numeric. The renderer allows routing to proceed when an operation provides only a document ID and omits the fields in the selection. Typed policies reject collection null checks and ordering comparisons between two fields. Decimal fields use Vespa's double precision. When both operands are native integers, at least one must be a native `byte` or `int` field or a constant or captured value strictly between −2⁵³ and 2⁵³. This keeps comparisons consistent between routing and garbage collection.
 
-Typed policies accept printable ASCII string literals, plus tab, newline, carriage return and form feed. They reject a trailing backslash, other characters and the minimum signed 64-bit integer literal. These guards cover cases where Vespa's Java configuration rewrites a value into a form its C++ garbage collector cannot parse; this was reproduced on Vespa 8.703.17. They apply to selection literals; document contents may still contain Unicode. Native selectors in `DocumentSelections` are forwarded as supplied and must work in both routing and garbage collection.
+Typed policies accept printable ASCII string literals, plus tab, newline, carriage return and form feed. They reject a trailing backslash, other characters and the minimum signed 64-bit integer literal. The Unicode restriction covers a Java-to-C++ garbage collection parser failure reproduced on Vespa 8.703.17. The other guards protect values that the routing or garbage collection parser may interpret incorrectly. They apply to selection literals; document contents may still contain Unicode. Native selectors in `DocumentSelections` are forwarded as supplied and must work in both routing and garbage collection.

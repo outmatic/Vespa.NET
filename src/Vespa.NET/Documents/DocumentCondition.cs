@@ -105,7 +105,7 @@ public static class DocumentCondition
             if (context == RenderContext.Package && !(left.IsNull || right.IsNull))
             {
                 if (left.IsField && right.IsField && binary.NodeType is not (ExpressionType.Equal or ExpressionType.NotEqual))
-                    throw Unsupported(binary, "Package routing does not support ordering two fields. Use DocumentSelections for native expressions.");
+                    throw Unsupported(binary, "Package routing does not support ordering two fields. Compare a field with a literal or a captured value.");
                 // Java routing compares numbers as doubles; C++ GC keeps integral precision.
                 // A bounded operand prevents rounding from changing an integral comparison.
                 if (left.IsIntegral && right.IsIntegral && !left.HasExactIntegerRange && !right.HasExactIntegerRange)

@@ -199,7 +199,7 @@ The resolved field name must also match the name used in document JSON. Declare 
 
 ## Document retention in generated packages
 
-Existing attribute selections continue to work. To supply a cutoff when building the package, use the options returned by `WithDocumentSelection<T>(...)`. For a moving cutoff, put a native expression using `now()` in `ApplicationPackageOptions.DocumentSelections`. Both forms affect feed routing and enable garbage collection. Choose one source per document type and pass the options to the existing generation or deployment method. [Document expiry and routing examples](schema.md#document-expiry-selection)
+Existing attribute selections continue to work. To supply a cutoff when building the package, use the options returned by `WithDocumentSelection<T>(...)`. For a moving cutoff, put a native expression using `now()` in `ApplicationPackageOptions.DocumentSelections`. The default feed route evaluates either selection, and the SDK enables garbage collection in the generated package. Choose one source per document type and pass the options to the existing generation or deployment method. [Document expiry and routing examples](schema.md#document-expiry-selection)
 
 ## Application-package resources
 

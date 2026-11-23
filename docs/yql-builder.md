@@ -74,6 +74,8 @@ and connectivity (`termId` + `connectivityWeight`).
 
 ## Clause-Level Predicates
 
+Vespa added `totalTargetHits` in different releases for each operator: 8.639.59 for `nearestNeighbor`, 8.640.27 for `weakAnd` and 8.664.22 for `wand`. Use `targetHits` for a per-node target. [Nearest-neighbor support](https://github.com/vespa-engine/vespa/pull/35803) · [WeakAnd support](https://github.com/vespa-engine/vespa/pull/35815) · [Wand support](https://github.com/vespa-engine/vespa/pull/36233)
+
 | Method | YQL Output |
 |---|---|
 | `w.NearestNeighbor("emb", "q", 10)` | `{targetHits:10}nearestNeighbor(emb, q)` |

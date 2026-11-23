@@ -42,7 +42,7 @@ Hex data without a type is rejected with `JsonException` rather than decoded by 
 
 ## Nearest-Neighbor Search
 
-`NearestNeighborSearchAsync` generates `{totalTargetHits: topK}nearestNeighbor(...)`. The `filter` string is embedded verbatim in the YQL — never pass unvalidated end-user input; build it with `YqlBuilder` where possible.
+`NearestNeighborSearchAsync` generates `{totalTargetHits: topK}nearestNeighbor(...)`. Vespa added this annotation to `nearestNeighbor` in 8.639.59. The annotation sets a candidate target across the content group serving the query. The `filter` string is embedded verbatim in the YQL. Build it with `YqlBuilder` where possible and validate any user input. [Nearest-neighbor support](https://github.com/vespa-engine/vespa/pull/35803) · [YQL annotations](https://docs.vespa.ai/en/reference/querying/yql.html#totaltargethits)
 
 ```csharp
 // Lambda — resolves field name via [VespaTensor]

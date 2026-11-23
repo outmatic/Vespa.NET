@@ -172,11 +172,13 @@ await client.Documents.UpdateFieldsAsync(product.Id, new Dictionary<string, Fiel
 | `FieldOp.Remove(value)` | Remove element from array/weightedset |
 | `FieldOp.Match(predicate)` | Match-based update |
 | `FieldOp.ClearField()` | Remove field entirely |
-| `FieldOp.Modify(op, cells, create)` | Tensor cell-level update (`create: true` treats an unset tensor as empty) |
+| `FieldOp.Modify(op, cells, create)` | Tensor cell-level update |
 | `FieldOp.ModifyCells(op, cells, create)` | Tensor modify, short-form `cells` object (single mapped dimension) |
 | `FieldOp.ModifyBlocks(op, blocks, create)` | Tensor modify, `blocks` form (mixed tensors) |
 | `FieldOp.TensorAdd(cells)` | Add cells to a mapped/mixed tensor (`{"add":{"cells":[…]}}`) |
 | `FieldOp.TensorRemove(addresses)` | Remove cells/blocks by address (`{"remove":{"addresses":[…]}}`) |
+
+For tensor `modify`, set `create: true` to create missing cells. Vespa supports this flag from 8.217.46 for an existing tensor and from 8.218.31 when the tensor field is unset. Newly created mapped cells start at zero for `replace` and `add`, and at one for `multiply`. [Document JSON](https://docs.vespa.ai/en/reference/schemas/document-json-format.html#modify-tensors) · [Vespa operation defaults](https://github.com/vespa-engine/vespa/blob/v8.217.46/document/src/main/java/com/yahoo/document/update/TensorModifyUpdate.java#L60)
 
 ### Typed Lambda Builder
 
