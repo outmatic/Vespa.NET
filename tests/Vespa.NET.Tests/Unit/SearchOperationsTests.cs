@@ -19,6 +19,7 @@ public class SearchOperationsTests : IDisposable
     private readonly Mock<HttpMessageHandler> _mockHandler;
     private readonly HttpClient _httpClient;
     private readonly SearchOperations _searchOps;
+    private string? _sentSearchBody;
 
     public SearchOperationsTests()
     {
@@ -255,7 +256,7 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert - Verify request contains the embedding
-        await VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
     }
 
     [Fact]
@@ -275,7 +276,7 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert
-        await VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
     }
 
     [Fact]
@@ -295,7 +296,7 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert
-        await VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
     }
 
     [Fact]
@@ -351,7 +352,7 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert - Verify YQL contains filter
-        await VerifySearchRequestContainsYql("category = 'news'");
+        VerifySearchRequestContainsYql("category = 'news'");
     }
 
     [Fact]
@@ -389,8 +390,8 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert - Verify YQL uses the preferred totalTargetHits annotation
-        await VerifySearchRequestContainsYql("{totalTargetHits: 20}");
-        await VerifySearchRequestContainsYql("nearestNeighbor(embedding, query_embedding)");
+        VerifySearchRequestContainsYql("{totalTargetHits: 20}");
+        VerifySearchRequestContainsYql("nearestNeighbor(embedding, query_embedding)");
     }
 
     [Fact]
@@ -497,17 +498,7 @@ public class SearchOperationsTests : IDisposable
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
 
-        _mockHandler
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>()
-            )
-            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(json)
-            });
+        SetupRawSearchResponse(json);
     }
 
     private void SetupRawSearchResponse(string json)
@@ -519,9 +510,11 @@ public class SearchOperationsTests : IDisposable
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>()
             )
-            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            .Returns(async (HttpRequestMessage request, CancellationToken cancellationToken) =>
             {
-                Content = new StringContent(json)
+                Assert.NotNull(request.Content);
+                _sentSearchBody = await request.Content.ReadAsStringAsync(cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
             });
     }
 
@@ -555,69 +548,21 @@ public class SearchOperationsTests : IDisposable
             );
     }
 
-    private async Task VerifySearchRequestContainsEmbedding(double[] expectedValues)
+    private void VerifySearchRequestContainsEmbedding(double[] expectedValues)
     {
-        _mockHandler
-            .Protected()
-            .Verify(
-                "SendAsync",
-                Times.Once(),
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    VerifyEmbeddingInRequest(req, expectedValues).Result
-                ),
-                ItExpr.IsAny<CancellationToken>()
-            );
+        VerifyHttpCall(HttpMethod.Post, "/search/");
+        Assert.NotNull(_sentSearchBody);
+        using var doc = JsonDocument.Parse(_sentSearchBody);
+        var values = doc.RootElement.GetProperty("input").GetProperty("query(query_embedding)").GetProperty("values");
+        Assert.Equal(expectedValues, values.EnumerateArray().Select(value => value.GetDouble()));
     }
 
-    private async Task VerifySearchRequestContainsYql(string expectedYqlFragment)
+    private void VerifySearchRequestContainsYql(string expectedYqlFragment)
     {
-        _mockHandler
-            .Protected()
-            .Verify(
-                "SendAsync",
-                Times.Once(),
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    VerifyYqlInRequest(req, expectedYqlFragment).Result
-                ),
-                ItExpr.IsAny<CancellationToken>()
-            );
-    }
-
-    private static async Task<bool> VerifyEmbeddingInRequest(HttpRequestMessage request, double[] expectedValues)
-    {
-        if (request.Content == null) return false;
-
-        var json = await request.Content.ReadAsStringAsync();
-        var doc = JsonDocument.Parse(json);
-
-        if (!doc.RootElement.TryGetProperty("input", out var input))
-            return false;
-
-        if (!input.TryGetProperty("query(query_embedding)", out var queryEmbedding))
-            return false;
-
-        if (!queryEmbedding.TryGetProperty("values", out var values))
-            return false;
-
-        var actualValues = values.EnumerateArray()
-            .Select(v => v.GetDouble())
-            .ToArray();
-
-        return actualValues.SequenceEqual(expectedValues);
-    }
-
-    private static async Task<bool> VerifyYqlInRequest(HttpRequestMessage request, string expectedFragment)
-    {
-        if (request.Content == null) return false;
-
-        var json = await request.Content.ReadAsStringAsync();
-        var doc = JsonDocument.Parse(json);
-
-        if (!doc.RootElement.TryGetProperty("yql", out var yql))
-            return false;
-
-        var yqlString = yql.GetString();
-        return yqlString != null && yqlString.Contains(expectedFragment);
+        VerifyHttpCall(HttpMethod.Post, "/search/");
+        Assert.NotNull(_sentSearchBody);
+        using var doc = JsonDocument.Parse(_sentSearchBody);
+        Assert.Contains(expectedYqlFragment, doc.RootElement.GetProperty("yql").GetString());
     }
 
     #endregion

@@ -157,7 +157,11 @@ public sealed partial class DocumentOperations
 
         var url = BuildUrl(DocBasePath(documentType, @namespace), null, [.. queryParams]);
 
-        using var request = new HttpRequestMessage(method, url);
+        using var request = new HttpRequestMessage(method, url)
+        {
+            Version = _httpClient.DefaultRequestVersion,
+            VersionPolicy = _httpClient.DefaultVersionPolicy
+        };
         if (contentFactory is not null)
             request.Content = contentFactory();
 

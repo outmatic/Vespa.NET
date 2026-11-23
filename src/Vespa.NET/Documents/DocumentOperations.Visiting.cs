@@ -134,7 +134,11 @@ public sealed partial class DocumentOperations
         {
             var url = BuildVisitUrl(basePath, selection, cluster, options, continuation, stream: true);
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url)
+            {
+                Version = _httpClient.DefaultRequestVersion,
+                VersionPolicy = _httpClient.DefaultVersionPolicy
+            };
             request.Headers.Accept.Clear();
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(JsonlMediaType));
 

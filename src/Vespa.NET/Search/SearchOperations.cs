@@ -160,8 +160,10 @@ public sealed partial class SearchOperations(
             // ResponseHeadersRead lets large result sets stream into the JSON parser
             // instead of buffering the whole body first. The error path is safe: it
             // reads the (unbuffered) body to a string exactly once.
-            var httpRequest = new HttpRequestMessage(HttpMethod.Post, VespaPaths.Search)
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, VespaPaths.Search)
             {
+                Version = _httpClient.DefaultRequestVersion,
+                VersionPolicy = _httpClient.DefaultVersionPolicy,
                 Content = JsonContent.Create(request, options: VespaJsonOptions.Default)
             };
             using var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
