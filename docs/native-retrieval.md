@@ -92,6 +92,8 @@ Raw query text is passed as a bound parameter. Vespa parses and analyzes it; the
 
 Vector and lexical candidate targets are independent. The global reranking budget can be set independently. Targets are search budgets rather than guaranteed recall or result counts. Query features control `vector_weight` and `title_weight`; the deployed profile owns the calculation. BM25 and vector scores are not assumed to share a scale.
 
+An article without an embedding can still match the lexical branch. Its semantic score is set to the lower bound of cosine similarity, and its semantic contribution to the final score is zero in both hybrid modes.
+
 With `approximate: true`, Vespa can use its HNSW vector index to avoid comparing the query with every stored vector. `hnswExploreAdditionalHits` increases the search effort in that index. More exploration can improve agreement with exact search, at the cost of latency; a very selective filter can make Vespa choose exact search instead.
 
 Results expose native match features (`lexical_score`, `semantic_score` and vector distance) for diagnostics. An HTTP success with backend errors, incomplete coverage or missing supporting text fails retrieval instead of presenting an empty or partial context as a successful search.
