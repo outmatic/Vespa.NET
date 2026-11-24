@@ -223,6 +223,21 @@ var opts = new ApplicationPackageOptions
 > [!NOTE]
 > When `CustomServicesXml` is set, `ContainerOptions` and `ContentOptions` are ignored.
 
+### Minimum server version
+
+Set `MinimumRequiredVespaVersion` when a generated application package requires a particular Vespa release.
+
+```csharp
+var options = new ApplicationPackageOptions
+{
+    MinimumRequiredVespaVersion = new Version(8, 640, 27)
+};
+
+VespaSchemaBuilder.GenerateApplicationPackage<Product>(output, options);
+```
+
+Use a three-component version. The generator writes `minimum-required-vespa-version` on the root `services` element alongside the XML format version `1.0`. Vespa checks the requirement when preparing the deployment. If you provide `CustomServicesXml` or deploy your own ZIP, declare the requirement in your own `services.xml`. [Vespa deployment check](https://github.com/vespa-engine/vespa/pull/29967)
+
 ---
 
 ## Bundled Files

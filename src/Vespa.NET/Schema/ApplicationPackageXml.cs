@@ -16,7 +16,10 @@ internal static class ApplicationPackageXml
         var multiNode = opts.NodeCount > 1;
         var sb = new StringBuilder();
         sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        sb.Append("<services version=\"1.0\">\n");
+        sb.Append("<services version=\"1.0\"");
+        if (opts.MinimumRequiredVespaVersion is { } minimumVersion)
+            sb.Append(" minimum-required-vespa-version=\"").Append(minimumVersion).Append('"');
+        sb.Append(">\n");
         sb.Append("  <container id=\"default\" version=\"1.0\">\n");
         sb.Append("    <search/>\n");
         sb.Append("    <document-api/>\n");

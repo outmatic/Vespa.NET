@@ -67,6 +67,14 @@ public sealed record ApplicationPackageOptions
     public string? CustomServicesXml { get; init; }
 
     /// <summary>
+    /// Minimum Vespa server version declared in the generated <c>services.xml</c>.
+    /// Supply a three-component version such as <c>8.640.27</c>.
+    /// The config server checks it during deployment. Omit it to leave the requirement unset.
+    /// For <see cref="CustomServicesXml"/>, declare the requirement directly in the XML.
+    /// </summary>
+    public Version? MinimumRequiredVespaVersion { get; init; }
+
+    /// <summary>
     /// Additional raw XML fragments to inject inside the <c>&lt;container&gt;</c> element
     /// of the generated <c>services.xml</c>.
     /// Keys are identifiers (for documentation only), values are raw XML strings.

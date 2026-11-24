@@ -2,6 +2,14 @@
 
 This guide covers the planned 4.0 document API changes. The release date and the rest of the major's scope are still being decided. Model-aware calls require a `[VespaDocument]` attribute; calls with an explicit document type can use an undecorated model.
 
+## Vespa server compatibility
+
+The server baseline for the core client and VectorData is Vespa 8.640.27. The nearest-neighbor helper uses `totalTargetHits` with `nearestNeighbor`, and VectorData hybrid search also uses it with `weakAnd`. The integration checks ran on 8.640.27 and 8.788.13.
+
+Individual server features can require a newer release. For example, `totalTargetHits` with `wand` requires 8.664.22, and the ANN time budget requires 8.684.9. [YQL builder](yql-builder.md#clause-level-predicates) · [Search](search.md)
+
+Use `MinimumRequiredVespaVersion` to have Vespa check the requirement when deploying a generated package. `GetVersionAsync` reports the version of the service that answers. During a rolling upgrade, choose feature requirements based on the oldest service that can handle the operation. [Package configuration](schema.md#minimum-server-version) · [Vespa State API](https://docs.vespa.ai/en/reference/api/state-v1.html)
+
 ## Conditions
 
 Model-aware writes use `condition:` for a lambda and `rawCondition:` for a native Vespa selector string:

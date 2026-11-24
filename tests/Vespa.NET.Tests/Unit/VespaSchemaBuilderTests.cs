@@ -995,6 +995,36 @@ public class VespaSchemaBuilderTests
         Assert.Equal(-1, schema.IndexOf("inputs {", child, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void GenerateApplicationPackage_EmitsExplicitMinimumServerVersion()
+    {
+        var opts = new ApplicationPackageOptions { MinimumRequiredVespaVersion = new Version(8, 640, 27) };
+        var servicesXml = ReadServicesXml(GeneratePackageBytes<MusicDoc>(opts));
+
+        Assert.Contains("<services version=\"1.0\" minimum-required-vespa-version=\"8.640.27\">", servicesXml);
+        Assert.DoesNotContain("minimum-required-vespa-version", ReadServicesXml(GeneratePackageBytes<MusicDoc>()));
+    }
+
+    [Theory]
+    [InlineData("8.640", null, "three version components")]
+    [InlineData("8.640.27.1", null, "three version components")]
+    [InlineData("8.640.27", "<services version=\"1.0\"/>", "CustomServicesXml")]
+    public void GenerateApplicationPackage_RejectsInvalidMinimumServerVersionBeforeWriting(
+        string version, string? customServicesXml, string expectedMessage)
+    {
+        var opts = new ApplicationPackageOptions
+        {
+            MinimumRequiredVespaVersion = Version.Parse(version),
+            CustomServicesXml = customServicesXml
+        };
+        using var output = new MemoryStream();
+
+        var error = Assert.Throws<ArgumentException>(() => VespaSchemaBuilder.GenerateApplicationPackage<MusicDoc>(output, opts));
+
+        Assert.Contains(expectedMessage, error.Message);
+        Assert.Equal(0, output.Length);
+    }
+
     // --- Multi-node packages (hosts.xml) ---
 
     [Fact]

@@ -101,6 +101,13 @@ internal static class ApplicationPackageWriter
 
     private static void ValidatePackageOptions(ApplicationPackageOptions opts)
     {
+        if (opts.MinimumRequiredVespaVersion is { } minimumVersion)
+        {
+            if (minimumVersion.Build < 0 || minimumVersion.Revision >= 0)
+                throw new ArgumentException("MinimumRequiredVespaVersion must have exactly three version components.", nameof(opts));
+            if (opts.CustomServicesXml is not null)
+                throw new ArgumentException("Set minimum-required-vespa-version directly in CustomServicesXml.", nameof(opts));
+        }
         if (opts.NodeCount < 1)
             throw new ArgumentException("ApplicationPackageOptions.NodeCount must be at least 1.", nameof(opts));
         if (opts.Redundancy < 1)
