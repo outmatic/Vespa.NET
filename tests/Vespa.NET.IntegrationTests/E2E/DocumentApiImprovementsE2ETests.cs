@@ -100,7 +100,8 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
 
             var endpoint = fixture.Endpoint ?? Environment.GetEnvironmentVariable("VESPA_ENDPOINT")!;
             var options = new VisitOptions { WantedDocumentCount = 1, Concurrency = 1 };
-            var selection = $"product.category == \"{category}\"";
+            var filterCategory = category;
+            var selection = DocumentSelection.For<TestProduct>(product => product.Category == filterCategory);
             var visited = new List<VespaDocument<TestProduct>>();
             string? continuation = null;
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -119,6 +120,11 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
                     ? await reader.Documents.VisitAllPageAsync<TestProduct>("content", selection, continuation, options, deadline.Token)
                     : await reader.Documents.VisitPageAsync<TestProduct>(rawSelection: selection, cluster: "content",
                         continuation: continuation, options: options, cancellationToken: deadline.Token);
+                if (continuation is null)
+                {
+                    Assert.NotNull(page.Continuation);
+                    filterCategory = "changed-after-first-page";
+                }
                 visited.AddRange(page.Documents);
                 continuation = page.Continuation;
             }

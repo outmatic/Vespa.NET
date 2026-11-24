@@ -50,7 +50,10 @@ public sealed class TypedVisitE2ETests(VespaFixture fixture)
                     : documents.VisitAsync<TestProduct>(selection: p => p.Category == category, cluster: "content", options: options);
                 category = "changed-before-enumeration";
                 await foreach (var document in visit)
+                {
                     found.Add(document);
+                    category = "changed-after-document";
+                }
             }
 
             Assert.Equal(ids.Take(2).Order(), found.Select(p => p.Id).Order());
