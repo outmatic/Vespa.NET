@@ -17,6 +17,9 @@ public sealed class VespaFixture : IAsyncLifetime
     public static bool IntegrationEnabled =>
         Environment.GetEnvironmentVariable("VESPA_INTEGRATION_TESTS") == "1";
 
+    internal static string Image =>
+        Environment.GetEnvironmentVariable("VESPA_INTEGRATION_IMAGE") ?? VespaContainer.DefaultImage;
+
     /// <summary>
     /// Every document type in the deployed application package. Tests that redeploy
     /// must use this full list: a package missing any of these schemas is rejected
@@ -38,10 +41,20 @@ public sealed class VespaFixture : IAsyncLifetime
 
     public VespaClient Client { get; private set; } = null!;
 
-    public Task InitializeAsync() => IntegrationEnabled
-        ? InitializeAsync(Environment.GetEnvironmentVariable("VESPA_ENDPOINT"),
-            Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT"))
-        : Task.CompletedTask;
+    public async Task InitializeAsync()
+    {
+        var expectedVersion = Environment.GetEnvironmentVariable("VESPA_EXPECTED_VERSION");
+        if (!IntegrationEnabled)
+        {
+            Assert.True(expectedVersion is null, "VESPA_EXPECTED_VERSION requires VESPA_INTEGRATION_TESTS=1.");
+            return;
+        }
+
+        await InitializeAsync(Environment.GetEnvironmentVariable("VESPA_ENDPOINT"),
+            Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT"));
+        if (expectedVersion is not null)
+            Assert.Equal(expectedVersion, await Client.GetVersionAsync());
+    }
 
     internal async Task InitializeAsync(string? explicitEndpoint, string? explicitConfigEndpoint)
     {
@@ -63,7 +76,7 @@ public sealed class VespaFixture : IAsyncLifetime
         }
         else
         {
-            _vespa = new VespaContainer();
+            _vespa = new VespaContainer(Image);
             await _vespa.StartAsync();
             (Client, _http) = _vespa.CreateClientWithHttp("test");
         }

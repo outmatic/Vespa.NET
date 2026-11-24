@@ -14,7 +14,7 @@ public sealed class VespaClientOwnershipTests
     {
         if (!VespaFixture.IntegrationEnabled) return;
 
-        await using var external = useExplicitEndpoint ? new VespaContainer() : null;
+        await using var external = useExplicitEndpoint ? new VespaContainer(VespaFixture.Image) : null;
         if (external is not null)
             await external.StartAsync();
 
@@ -48,7 +48,7 @@ public sealed class VespaClientOwnershipTests
     {
         if (!VespaFixture.IntegrationEnabled) return;
 
-        await using var container = new VespaContainer();
+        await using var container = new VespaContainer(VespaFixture.Image);
         await container.StartAsync();
         var owned = container.CreateClient();
         var ownedAdmin = owned.Admin;

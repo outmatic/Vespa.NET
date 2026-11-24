@@ -32,7 +32,7 @@ public sealed class TypedPackageSelectionE2ETests
         if (!VespaFixture.IntegrationEnabled) return;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(8));
         var token = deadline.Token;
-        await using var container = new VespaContainer();
+        await using var container = new VespaContainer(VespaFixture.Image);
         await container.StartAsync(token);
         var client = container.CreateClient(HomeNamespace);
         var documents = client.Documents;

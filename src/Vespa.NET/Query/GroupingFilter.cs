@@ -40,6 +40,7 @@ public abstract class GroupingFilter
     /// <summary>
     /// <c>istrue(expression)</c> — collect only documents where the boolean
     /// expression evaluates to true. The <paramref name="expression"/> is embedded verbatim.
+    /// Requires Vespa 8.646.22 or later.
     /// </summary>
     public static GroupingFilter IsTrue(string expression)
     {

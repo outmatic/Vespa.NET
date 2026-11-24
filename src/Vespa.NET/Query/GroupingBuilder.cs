@@ -125,9 +125,8 @@ public sealed class GroupingBuilder
 
     /// <summary>
     /// <c>max(inf)</c> — return all groups (no group-count cap).
-    /// Vespa rejects unbounded group counts while <c>grouping.globalMaxGroups</c> is
-    /// enabled — disable it per query via
-    /// <c>VespaSearchRequest.GroupingGlobalMaxGroups = -1</c>.
+    /// Use a deployed query profile with <c>grouping.globalMaxGroups</c> set to <c>-1</c>
+    /// when the application needs unbounded grouping.
     /// </summary>
     public GroupingBuilder MaxAll()
     {

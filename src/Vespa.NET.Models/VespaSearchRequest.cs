@@ -222,7 +222,10 @@ public sealed class VespaSearchRequest
     [JsonPropertyName("grouping.defaultMaxHits")]
     public int? GroupingDefaultMaxHits { get; set; }
 
-    /// <summary>Global cost limit for grouping (default 10000).</summary>
+    /// <summary>
+    /// Global cost limit for grouping (default 10000).
+    /// Set this limit in a deployed query profile on Vespa versions that restrict request overrides.
+    /// </summary>
     [JsonPropertyName("grouping.globalMaxGroups")]
     public int? GroupingGlobalMaxGroups { get; set; }
 

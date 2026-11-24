@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Vespa.Documents;
 using Vespa.IntegrationTests.Fixtures;
 using Vespa.Models;
+using Vespa.Models.Schema;
 using Vespa.Models.Tensors;
 using Vespa.Query;
 using Vespa.Search;
@@ -9,10 +11,8 @@ using Xunit;
 namespace Vespa.IntegrationTests.E2E;
 
 /// <summary>
-/// Acceptance tests for the newly expressible YQL and grouping syntax: each test
-/// runs a real query and asserts Vespa parses and executes it (no VespaException),
-/// not full ranking semantics. Mock-based unit tests cannot catch
-/// plausible-but-wrong syntax; these do.
+/// Exercises generated YQL and grouping syntax against Vespa, including features
+/// whose behavior differs between server versions.
 /// </summary>
 [Collection("Vespa")]
 [Trait("Category", "E2E")]
@@ -108,18 +108,28 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
     }
 
     [Fact]
-    public async Task GroupingFilter_IsTrue_Accepted()
+    public async Task GroupingFilter_IsTrue_RequiresBooleanGroupingSupport()
     {
         if (!Enabled) return;
         var (ids, tag) = await SeedAsync();
         try
         {
-            var result = await fixture.Client.Search.GroupByAsync<TestProduct>(
-                GroupingRequest(tag, GroupingBuilder.All()
-                    .Group("category")
-                    .Filter(GroupingFilter.IsTrue("in_stock"))
-                    .Each(e => e.Output(GroupingAgg.Count()))));
+            var request = GroupingRequest(tag, GroupingBuilder.All()
+                .Group("category")
+                .Filter(GroupingFilter.IsTrue("in_stock"))
+                .Each(e => e.Output(GroupingAgg.Count())));
 
+            if (await ServerVersionAsync() < new Version(8, 646, 22))
+            {
+                var error = await Assert.ThrowsAsync<VespaException>(() =>
+                    fixture.Client.Search.GroupByAsync<TestProduct>(request));
+                Assert.Equal(400, error.StatusCode);
+                Assert.Contains("Encountered", error.Message);
+                Assert.Contains("istrue", error.Message);
+                return;
+            }
+
+            var result = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
             Assert.NotEmpty(result.GroupingResults);
         }
         finally { await CleanupAsync(ids); }
@@ -151,10 +161,9 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         var (ids, tag) = await SeedAsync();
         try
         {
-            // not (regex) and (range or istrue)
             var composite = GroupingFilter
                 .Not(GroupingFilter.Regex(".*-gamma", "category"))
-                .And(GroupingFilter.Range(0, 100, "quantity").Or(GroupingFilter.IsTrue("in_stock")));
+                .And(GroupingFilter.Range(0, 30, "quantity").Or(GroupingFilter.Regex(".*-beta", "category")));
 
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(
                 GroupingRequest(tag, GroupingBuilder.All()
@@ -281,9 +290,11 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                 .ToSearchRequest()
                 .WithRankProfile("closeness_profile")
                 .WithQueryTensor("query_embedding", new float[] { 1, 0, 0, 0 });
+            request.TraceLevel = 5;
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
             Assert.NotEmpty(result.Root.Children);
+            Assert.Contains("totalTargetHits: 5", ParsedYql(result));
         }
         finally { await CleanupAsync(ids); }
     }
@@ -305,14 +316,15 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                     }, totalTargetHits: 10))
                 .Build();
 
-            var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql, hits: 10);
+            var result = await fixture.Client.Search.SearchAsync<TestProduct>(new() { Yql = yql, Hits = 10, TraceLevel = 5 });
             Assert.NotEmpty(result.Root.Children);
+            Assert.Contains("totalTargetHits: 10", ParsedYql(result));
         }
         finally { await CleanupAsync(ids); }
     }
 
     [Fact]
-    public async Task Wand_TotalTargetHits_Accepted()
+    public async Task Wand_TotalTargetHits_IsAppliedOnSupportedServers()
     {
         if (!Enabled) return;
         var (ids, tag) = await SeedAsync();
@@ -326,10 +338,40 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                         totalTargetHits: 10))
                 .Build();
 
-            var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql, hits: 10);
-            Assert.NotEmpty(result.Root.Children); // red/green docs match
+            var result = await fixture.Client.Search.SearchAsync<TestProduct>(new() { Yql = yql, Hits = 10, TraceLevel = 5 });
+            Assert.NotEmpty(result.Root.Children);
+            var parsed = ParsedYql(result);
+            if (await ServerVersionAsync() < new Version(8, 664, 22))
+                Assert.DoesNotContain("totalTargetHits", parsed);
+            else
+                Assert.Contains("totalTargetHits: 10", parsed);
         }
         finally { await CleanupAsync(ids); }
+    }
+
+    private async Task<Version> ServerVersionAsync()
+    {
+        var reportedVersion = await fixture.Client.GetVersionAsync();
+        Assert.True(Version.TryParse(reportedVersion, out var version), $"Unexpected Vespa version: '{reportedVersion}'.");
+        return version;
+    }
+
+    private static string ParsedYql(VespaSearchResponse<TestProduct> result)
+    {
+        var messages = result.Trace?.Children?.OfType<JsonElement>().SelectMany(TraceMessages) ?? [];
+        return Assert.Single(messages, message => message.StartsWith("YQL query parsed:", StringComparison.Ordinal));
+    }
+
+    private static IEnumerable<string> TraceMessages(JsonElement entry)
+    {
+        if (entry.ValueKind != JsonValueKind.Object)
+            yield break;
+        if (entry.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+            yield return message.GetString()!;
+        if (entry.TryGetProperty("children", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                foreach (var text in TraceMessages(child))
+                    yield return text;
     }
 
     // ── Term annotations ─────────────────────────────────────────────────────
@@ -588,7 +630,26 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
     {
         if (!Enabled) return;
 
-        // 12 distinct categories exceed Vespa's default group cap of 10
+        var profilePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(profilePath, """
+                <query-profile id="unbounded-grouping">
+                    <field name="grouping.globalMaxGroups">-1</field>
+                </query-profile>
+                """);
+            await fixture.Client.Admin.DeploySchemaAsync(VespaFixture.SchemaTypes,
+                options: new ApplicationPackageOptions
+                {
+                    AdditionalFiles = new Dictionary<string, string>
+                    {
+                        ["search/query-profiles/unbounded-grouping.xml"] = profilePath
+                    }
+                });
+        }
+        finally { File.Delete(profilePath); }
+
+        // 12 distinct categories exceed Vespa's default group count of 10.
         var tag = $"maxinf-{Guid.NewGuid():N}";
         const int categoryCount = 12;
         var ids = new List<string>();
@@ -608,13 +669,11 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             }
             await Task.Delay(2000);
 
-            // max(inf) is rejected while grouping.globalMaxGroups is enabled —
-            // Vespa requires disabling the global cap for unbounded group counts.
             var request = GroupingRequest(tag, GroupingBuilder.All()
                 .Group("category")
                 .MaxAll()
                 .Each(e => e.Output(GroupingAgg.Count())));
-            request.GroupingGlobalMaxGroups = -1;
+            request.QueryProfile = "unbounded-grouping";
 
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
 

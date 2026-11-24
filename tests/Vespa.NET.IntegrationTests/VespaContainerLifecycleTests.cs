@@ -12,7 +12,7 @@ public sealed class VespaContainerLifecycleTests
     [Fact]
     public async Task DisposalIsIdempotentAndPreventsStartingAgain()
     {
-        await using var vespa = new VespaContainer();
+        await using var vespa = new VespaContainer(VespaFixture.Image);
         await vespa.StopAsync();
         await Task.WhenAll(vespa.DisposeAsync().AsTask(), vespa.DisposeAsync().AsTask());
 
@@ -29,7 +29,7 @@ public sealed class VespaContainerLifecycleTests
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
         var token = timeout.Token;
-        await using var vespa = new VespaContainer();
+        await using var vespa = new VespaContainer(VespaFixture.Image);
         await vespa.StartAsync(token);
         var endpoints = (vespa.Endpoint, vespa.ConfigEndpoint);
         var packagePath = Path.GetTempFileName();

@@ -167,7 +167,11 @@ GroupingFilter.Range(1990, 2012, "year", minInclusive: true, maxInclusive: true)
 GroupingFilter.IsTrue("my_bool").And(GroupingFilter.Not(GroupingFilter.Regex(".*foo", "f")));
 ```
 
+`GroupingFilter.IsTrue` requires Vespa 8.646.22 or later. [Boolean grouping filter](https://github.com/vespa-engine/vespa/pull/35907)
+
 ### Labels, parallel each blocks, max(inf), multi-key order
+
+Use bounded grouping for routine queries. To use `MaxAll()` with `max(inf)`, select a deployed query profile where `grouping.globalMaxGroups` is set to `-1`. Current Vespa versions enforce this setting at the query-profile level. [Vespa query parameters](https://docs.vespa.ai/en/reference/api/query.html#grouping)
 
 ```csharp
 GroupingBuilder.All()

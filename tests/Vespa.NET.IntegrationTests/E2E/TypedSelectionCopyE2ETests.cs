@@ -46,7 +46,7 @@ public sealed class TypedSelectionCopyE2ETests
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(7));
         var token = deadline.Token;
 
-        await using var container = new VespaContainer();
+        await using var container = new VespaContainer(VespaFixture.Image);
         await container.StartAsync(token);
         // CreateClient makes the container responsible for disposing both the client and its HTTP transport.
         var client = container.CreateClient(Namespace);
