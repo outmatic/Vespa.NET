@@ -18,7 +18,7 @@ public sealed record VespaResponse
     public bool HadIgnoredFields { get; init; }
 
     /// <summary>
-    /// Number of documents affected by a selection operation
+    /// Number of documents visited and selected by Vespa during a selection operation
     /// (<c>UpdateBySelectionAsync</c>, <c>DeleteBySelectionAsync</c>, <c>CopyBySelectionAsync</c>),
     /// summed across all continuation chunks. <see langword="null"/> for single-document operations.
     /// </summary>

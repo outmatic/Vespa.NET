@@ -67,8 +67,9 @@ public sealed class TypedSelectionMutationE2ETests(VespaFixture fixture)
             }
 
             Assert.Equal(2L, count);
-            Assert.Equal(110, (await documents.GetAsync<MutationProduct>(ids[0]))?.Fields?.Price);
-            Assert.Equal(120, (await documents.GetAsync<MutationProduct>(ids[1]))?.Fields?.Price);
+            // Vespa can finish the selection visit before the individual updates are visible to GET.
+            await AssertUpdatedPriceAsync(documents, ids[0], original: 10, expected: 110);
+            await AssertUpdatedPriceAsync(documents, ids[1], original: 20, expected: 120);
             Assert.Equal(30, (await documents.GetAsync<MutationProduct>(ids[2]))?.Fields?.Price);
         }
         finally
@@ -169,6 +170,29 @@ public sealed class TypedSelectionMutationE2ETests(VespaFixture fixture)
             await documents.DeleteAsync<MutationBase>(id);
             await documents.DeleteAsync<MutationChild>(id);
         }
+    }
+
+    private static async Task AssertUpdatedPriceAsync(IDocumentOperations documents, string id, double original, double expected)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        double? price = null;
+        try
+        {
+            do
+            {
+                price = (await documents.GetAsync<MutationProduct>(id, cancellationToken: deadline.Token))?.Fields?.Price;
+                if (price != original)
+                    break;
+                await Task.Delay(20, deadline.Token);
+            }
+            while (true);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            // Report the last observed price through the assertion below.
+        }
+
+        Assert.Equal(expected, price);
     }
 
     private static async Task SeedProducts(IDocumentOperations documents, string[] ids, string tag)

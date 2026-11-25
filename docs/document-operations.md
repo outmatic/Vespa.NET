@@ -270,11 +270,9 @@ Exactly one selection is required. Missing selections, conflicting non-null argu
 
 For a native selector, write `UpdateBySelectionAsync<Product>(fields, rawSelection: "product.price < 10", cluster: "content")`. Nonblank native strings are forwarded without rewriting. The low-level methods with an explicit `documentType` retain their existing string `selection` argument, as in the examples below.
 
-Selection operations apply a Vespa selection expression across an entire document
-type — no document ID required. Vespa processes them in time-bounded chunks and
-returns a `continuation` token while more work remains; Vespa.NET **automatically
-loops on that token** until the operation completes, and the returned
-`VespaResponse.DocumentCount` is the sum of documents affected across all chunks.
+Selection operations apply a Vespa selection expression across an entire document type. Vespa processes them in time-bounded chunks and returns a `continuation` token while more work remains. Vespa.NET follows those tokens and sums the number of documents visited and selected in `VespaResponse.DocumentCount`.
+
+A selection update can return before the individual writes are visible to `GetAsync`. If a subsequent step needs to observe the change, verify the affected documents with a bounded read retry. [Vespa Document API](https://docs.vespa.ai/en/reference/api/document-v1.html#response-formats)
 
 ```csharp
 // Update all matching documents (loops internally until complete)
@@ -284,7 +282,7 @@ var result = await client.Documents.UpdateBySelectionAsync(
     documentType: "product",
     cluster: "content");
 
-Console.WriteLine($"Updated {result.DocumentCount} documents");
+Console.WriteLine($"Matched {result.DocumentCount} documents");
 
 // Delete all matching documents
 await client.Documents.DeleteBySelectionAsync(
@@ -347,7 +345,7 @@ example, to resume a long-running backfill after a crash or deployment.
 
 `SelectionPageResult` exposes:
 
-- `DocumentCount` — documents affected **in this chunk only** (not cumulative).
+- `DocumentCount` — documents visited and selected by Vespa in this chunk.
 - `Continuation` — token to pass back to resume; `null` when complete.
 - `IsComplete` — `true` iff `Continuation is null`.
 - `StatusCode`, `HadIgnoredFields` — same as `VespaResponse` (`HadIgnoredFields` is a
@@ -356,7 +354,7 @@ example, to resume a long-running backfill after a crash or deployment.
 
 ```csharp
 string? token = await LoadCheckpoint();  // e.g. from database, null on first run
-long totalUpdated = 0;
+long totalMatched = 0;
 
 while (true)
 {
@@ -367,7 +365,7 @@ while (true)
         cluster: "content",
         continuation: token);
 
-    totalUpdated += page.DocumentCount;
+    totalMatched += page.DocumentCount;
 
     if (page.IsComplete)
         break;

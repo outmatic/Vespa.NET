@@ -12,13 +12,13 @@ namespace Vespa.Models;
 public sealed record SelectionPageResult
 {
     /// <summary>
-    /// Number of documents affected in this chunk only (not cumulative across chunks).
+    /// Number of documents visited and selected by Vespa in this chunk.
     /// </summary>
     public long DocumentCount { get; init; }
 
     /// <summary>
     /// Token to pass to the next call to resume processing.
-    /// <see langword="null"/> when the operation is complete.
+    /// <see langword="null"/> when the visit has no further chunks.
     /// </summary>
     public string? Continuation { get; init; }
 
@@ -35,8 +35,7 @@ public sealed record SelectionPageResult
     public bool HadIgnoredFields { get; init; }
 
     /// <summary>
-    /// <see langword="true"/> when no continuation token was returned — i.e. this chunk
-    /// processed the final remaining documents.
+    /// <see langword="true"/> when no continuation token was returned.
     /// </summary>
     public bool IsComplete => Continuation is null;
 }
