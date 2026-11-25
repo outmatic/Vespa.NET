@@ -55,7 +55,7 @@ await client.Documents.UpdateFieldsAsync<Product>(product.Id,
     cancellationToken: cancellationToken);
 ```
 
-Model-aware writes place `condition` and `rawCondition` together. Puts then take `create`; updates take `createIfMissing`. All writes end with `requestOptions` and `cancellationToken`, so deletes go directly from `rawCondition` to these arguments. Use named creation flags when migrating positional calls. Read methods, including `GetAsync`, addressed reads and `GetManyAsync`, retain their existing options-first overloads.
+Model-aware writes place `condition` and `rawCondition` together. Puts then take `create`; updates take `createIfMissing`. All writes end with `requestOptions` and `cancellationToken`, so deletes go directly from `rawCondition` to these arguments. Use named creation flags when migrating positional calls.
 
 For example, a positional update creation flag moves behind the condition arguments:
 
@@ -179,7 +179,7 @@ var typedVisit = client.Documents.VisitAsync<Product>(
     selection: p => p.Price > 100);
 ```
 
-This applies to `VisitAsync`, `VisitPageAsync` and `VisitJsonlAsync`. Use named arguments when migrating positional cluster, continuation, options or cancellation arguments. A positional first string still selects the native method and means `documentType`.
+This applies to `VisitAsync`, `VisitPageAsync` and `VisitJsonlAsync`. Use named arguments when migrating positional cluster, continuation, options or cancellation arguments. For example, `VisitPageAsync<Product>("archive", cluster: "content")` visits the explicit document type `archive`. Use `rawSelection:` to send a native predicate with the type inferred from `Product`.
 
 Typed visit filters are rendered when the method is called and stay fixed during automatic continuation. For manual resume, save `DocumentSelection.For<Product>(...)` with the continuation token. Pass the saved string as `rawSelection:` to the model-aware `VisitPageAsync<Product>`, or as `selection:` to the native root `VisitAllPageAsync<Result>`. The two-type root overload takes a lambda. Calling a lambda again reads its captured values again.
 
@@ -195,9 +195,25 @@ The group helper removes ordinal duplicates and escapes the names. It rejects mo
 
 ## Document field sets
 
-`DocumentFieldSet.For<Product>(p => p.Name, p => p.Price)` builds a native field-list string using mapped property names. `ForDocumentType<PlainProduct>("product", p => p.Price)` uses an explicit document type as the field-list qualifier without requiring a document attribute. Use `using Vespa.Documents;` and pass the result as `fieldSet:` on GET by ID, group or number, or assign it to `VisitOptions.FieldSet`.
+`DocumentFieldSet.For<Product>(p => p.Name, p => p.Price)` builds a native field-list string using mapped property names. `ForDocumentType<PlainProduct>("product", p => p.Price)` uses an explicit document type as the field-list qualifier without requiring a document attribute. Use `using Vespa.Documents;` and pass the result as `fieldSet:` on GET by ID, group or number, or on `GetManyAsync`. For visits, assign it to `VisitOptions.FieldSet`.
 
-This is an additive API: GET signatures and the string field-set properties are unchanged. On model-aware reads that start with the ID or address, a positional field-set string still binds to the native `documentType` parameter and is rejected locally as an invalid document type; use the named `fieldSet:` argument. The options-first overloads accept the field set positionally or by name. Built-in strings such as `[document]`, `[all]` and `[id]` remain available. Replace the deprecated `product:[document]` spelling with `[document]`. See [Document field sets](document-operations.md#document-field-sets) for examples and validation rules.
+Built-in strings such as `[document]`, `[all]` and `[id]` can also be passed as `fieldSet:`. Replace the deprecated `product:[document]` spelling with `[document]`. See [Document field sets](document-operations.md#document-field-sets) for examples and validation rules.
+
+## Read request options
+
+Move options from the first argument of the read extensions to `requestOptions:` after the address or list of IDs. Pass `fieldSet:` by name when inferring a target from the model. A positional string immediately after the address is interpreted as an explicit document type, even with `requestOptions:` present.
+
+```csharp
+// 3.x
+var oldRead = client.Documents.GetAsync<Product>(options, id, fieldSet: fields, cancellationToken: token);
+
+// 4.0
+var read = client.Documents.GetAsync<Product>(id, fieldSet: fields, requestOptions: options, cancellationToken: token);
+var batch = client.Documents.GetManyAsync<Product>(ids, maxConcurrency: 4,
+    fieldSet: fields, requestOptions: options, cancellationToken: token);
+```
+
+Apply the same migration to `GetByGroupAsync` and `GetByNumberAsync`. For an explicit batch target, pass `documentType:` and, if needed, `@namespace:`. `GetManyAsync` applies the field set to each individual GET and omits missing documents. Name any previously positional cancellation token and rebuild callers of the read extensions. [Request options](document-operations.md#request-options)
 
 ## Typed field selectors
 

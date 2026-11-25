@@ -43,7 +43,7 @@ var fields = DocumentFieldSet.For<Product>(p => p.Name, p => p.Price);
 var doc = await client.Documents.GetAsync<Product>(product.Id, fieldSet: fields);
 ```
 
-On model-aware GET calls that start with the ID or address, pass **`fieldSet:` by name**. A positional string in that slot is interpreted as the native `documentType` argument. This applies to `GetAsync`, `GetByGroupAsync` and `GetByNumberAsync`. The options-first read overloads accept the field set either positionally or by name.
+On model-aware GET calls, pass **`fieldSet:` by name**. A string immediately after the ID or address binds to the native `documentType` argument in `GetAsync`, `GetByGroupAsync` and `GetByNumberAsync`. Pass `fieldSet:` to `GetManyAsync` to use the same projection for every GET in the batch. [Vespa field sets](https://docs.vespa.ai/en/reference/api/document-v1.html#fieldset)
 
 Reuse the string in `VisitOptions` for automatic visits, manual pages or JSONL:
 
@@ -568,7 +568,7 @@ var opts = new DocumentRequestOptions
 await client.Documents.PutAsync(product.Id, product, documentType: "product", requestOptions: opts);
 ```
 
-Model-aware writes accept `requestOptions:` after the document arguments. Model-aware reads accept the options object before the document ID. Cancellation tokens remain the final parameter:
+Pass `requestOptions:` after the document or address arguments. Use `cancellationToken:` for the final parameter.
 
 ```csharp
 var readOptions = new DocumentRequestOptions
@@ -579,15 +579,15 @@ var readOptions = new DocumentRequestOptions
 };
 var writeOptions = new DocumentRequestOptions { Timeout = TimeSpan.FromSeconds(10) };
 
-var doc = await client.Documents.GetAsync<Product>(readOptions, product.Id);
+var doc = await client.Documents.GetAsync<Product>(product.Id, requestOptions: readOptions);
 await client.Documents.PutAsync(product.Id, product, requestOptions: writeOptions);
 await client.Documents.UpdateFieldsAsync<Product>(product.Id,
     update => update.Field(p => p.Price, FieldOp.Assign(49.99m)), requestOptions: writeOptions);
 await client.Documents.DeleteAsync<Product>(product.Id, requestOptions: writeOptions);
 
-// Addressed reads and GetManyAsync also accept options before the ID.
-var groupDoc = await client.Documents.GetByGroupAsync<Product>(readOptions, "tenant-42", product.Id);
-var docs = await client.Documents.GetManyAsync<Product>(readOptions, ["p-1", "p-2"]);
+var groupDoc = await client.Documents.GetByGroupAsync<Product>("tenant-42", product.Id, requestOptions: readOptions);
+var docs = await client.Documents.GetManyAsync<Product>(["p-1", "p-2"],
+    fieldSet: DocumentFieldSet.For<Product>(p => p.Name, p => p.Price), requestOptions: readOptions);
 ```
 
 All model-aware group and number writes accept `requestOptions:` as a named argument. `Cluster` is forwarded only on reads; write routing uses `Route`.

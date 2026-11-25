@@ -68,9 +68,9 @@ public sealed class TypedSelectionCopyE2ETests
             });
 
         var probeId = Id(items[0]);
-        var sourceDoc = await documents.GetAsync<CopyItem>(new DocumentRequestOptions { Cluster = Source }, probeId, cancellationToken: token);
+        var sourceDoc = await documents.GetAsync<CopyItem>(probeId, requestOptions: new() { Cluster = Source }, cancellationToken: token);
         Assert.Equal(items[0], sourceDoc?.Fields);
-        Assert.Null(await documents.GetAsync<CopyItem>(new DocumentRequestOptions { Cluster = Destination }, probeId, cancellationToken: token));
+        Assert.Null(await documents.GetAsync<CopyItem>(probeId, requestOptions: new() { Cluster = Destination }, cancellationToken: token));
         await AssertContentsAsync(documents, Destination, [], token);
 
         var automatic = await documents.CopyBySelectionAsync<CopyItem>(cluster: Source, destinationCluster: Destination,
@@ -107,8 +107,8 @@ public sealed class TypedSelectionCopyE2ETests
                 try
                 {
                     foreach (var cluster in new[] { Source, Destination })
-                        await client.Documents.GetAsync<CopyItem>(new DocumentRequestOptions { Cluster = cluster },
-                            "readiness", cancellationToken: cancellationToken);
+                        await client.Documents.GetAsync<CopyItem>("readiness",
+                            requestOptions: new() { Cluster = cluster }, cancellationToken: cancellationToken);
                     return;
                 }
                 catch (VespaException ex) when (ex.StatusCode is 429 or 503 or 504)

@@ -14,8 +14,12 @@ public static partial class DocumentOperationsExtensions
         this IDocumentOperations ops,
         string documentId,
         string? fieldSet = null,
-        CancellationToken cancellationToken = default) where T : class =>
-        GetAsync<T>(ops, null, documentId, fieldSet, cancellationToken);
+        DocumentRequestOptions? requestOptions = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        var (docType, ns) = VespaDocumentMeta.For<T>();
+        return ops.GetAsync<T>(documentId, docType, ns, fieldSet, requestOptions, cancellationToken);
+    }
 
     /// <summary>
     /// Get by group — document type and namespace inferred from <c>[VespaDocument]</c>.
@@ -25,8 +29,12 @@ public static partial class DocumentOperationsExtensions
         string group,
         string localId,
         string? fieldSet = null,
-        CancellationToken cancellationToken = default) where T : class =>
-        GetByGroupAsync<T>(ops, null, group, localId, fieldSet, cancellationToken);
+        DocumentRequestOptions? requestOptions = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        var (docType, ns) = VespaDocumentMeta.For<T>();
+        return ops.GetByGroupAsync<T>(group, localId, docType, ns, fieldSet, requestOptions, cancellationToken);
+    }
 
     /// <summary>
     /// Get by number bucket — document type and namespace inferred from <c>[VespaDocument]</c>.
@@ -36,22 +44,49 @@ public static partial class DocumentOperationsExtensions
         long number,
         string localId,
         string? fieldSet = null,
-        CancellationToken cancellationToken = default) where T : class =>
-        GetByNumberAsync<T>(ops, null, number, localId, fieldSet, cancellationToken);
+        DocumentRequestOptions? requestOptions = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        var (docType, ns) = VespaDocumentMeta.For<T>();
+        return ops.GetByNumberAsync<T>(number, localId, docType, ns, fieldSet, requestOptions, cancellationToken);
+    }
 
     /// <summary>
     /// Fetch multiple documents by ID in parallel. Vespa has no native batch-get endpoint,
     /// so this issues parallel <see cref="IDocumentOperations.GetAsync{T}"/> calls with
-    /// bounded concurrency. Documents not found (404) are silently omitted from the result.
+    /// bounded concurrency. The field set and request options apply to each GET.
+    /// Documents not found (404) are silently omitted from the result.
     /// </summary>
-    public static Task<IReadOnlyList<VespaDocument<T>>> GetManyAsync<T>(
+    public static async Task<IReadOnlyList<VespaDocument<T>>> GetManyAsync<T>(
         this IDocumentOperations ops,
         IReadOnlyList<string> documentIds,
         string documentType,
         string? @namespace = null,
         int maxConcurrency = 10,
-        CancellationToken cancellationToken = default) where T : class =>
-        GetManyAsync<T>(ops, null, documentIds, documentType, @namespace, maxConcurrency, cancellationToken);
+        string? fieldSet = null,
+        DocumentRequestOptions? requestOptions = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        if (documentIds.Count == 0)
+            return [];
+
+        using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        var tasks = documentIds.Select(async id =>
+        {
+            await semaphore.WaitAsync(cancellationToken);
+            try
+            {
+                return await ops.GetAsync<T>(id, documentType, @namespace, fieldSet, requestOptions, cancellationToken);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        var results = await Task.WhenAll(tasks);
+        return results.Where(r => r is not null).ToList()!;
+    }
 
     /// <summary>
     /// Fetch multiple documents by ID in parallel — document type and namespace inferred from <c>[VespaDocument]</c>.
@@ -60,6 +95,11 @@ public static partial class DocumentOperationsExtensions
         this IDocumentOperations ops,
         IReadOnlyList<string> documentIds,
         int maxConcurrency = 10,
-        CancellationToken cancellationToken = default) where T : class =>
-        GetManyAsync<T>(ops, null, documentIds, maxConcurrency, cancellationToken);
+        string? fieldSet = null,
+        DocumentRequestOptions? requestOptions = null,
+        CancellationToken cancellationToken = default) where T : class
+    {
+        var (docType, ns) = VespaDocumentMeta.For<T>();
+        return ops.GetManyAsync<T>(documentIds, docType, ns, maxConcurrency, fieldSet, requestOptions, cancellationToken);
+    }
 }

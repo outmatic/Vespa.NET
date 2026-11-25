@@ -112,7 +112,7 @@ public sealed class TypedPackageSelectionE2ETests
             (await documents.GetAsync<PackageItem>(id, ItemType, ns, requestOptions: ReadCluster, cancellationToken: token))?.Fields;
 
         async Task<ExpiryItem?> ReadExpiry(string id) =>
-            (await documents.GetAsync<ExpiryItem>(ReadCluster, id, cancellationToken: token))?.Fields;
+            (await documents.GetAsync<ExpiryItem>(id, requestOptions: ReadCluster, cancellationToken: token))?.Fields;
     }
 
     private static async Task DeployWithGcAsync(VespaClient client, ApplicationPackageOptions options, bool enabled, CancellationToken token)

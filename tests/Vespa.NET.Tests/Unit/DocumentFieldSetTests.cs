@@ -106,9 +106,9 @@ public sealed class DocumentFieldSetTests : IDisposable
 
         if (withOptions)
         {
-            await documents.GetAsync<Inventory>(options, "one", fieldSet: fieldSet);
-            await _operations.GetByGroupAsync<Inventory>(options, "team", "two", fieldSet: fieldSet);
-            await documents.GetByNumberAsync<Inventory>(options, 42, "three", fieldSet: fieldSet);
+            await documents.GetAsync<Inventory>("one", fieldSet: fieldSet, requestOptions: options);
+            await _operations.GetByGroupAsync<Inventory>("team", "two", fieldSet: fieldSet, requestOptions: options);
+            await documents.GetByNumberAsync<Inventory>(42, "three", fieldSet: fieldSet, requestOptions: options);
         }
         else
         {
@@ -134,18 +134,21 @@ public sealed class DocumentFieldSetTests : IDisposable
     public async Task PositionalStringInGetMethodsBindsToTheExplicitDocumentType()
     {
         const string documentType = "other_inventory";
+        var options = new DocumentRequestOptions { Cluster = "content" };
         IDocumentOperations documents = _operations;
         _handler.QueueResponses(new(HttpStatusCode.NotFound), new(HttpStatusCode.NotFound), new(HttpStatusCode.NotFound));
 
-        await _operations.GetAsync<Inventory>("one", documentType);
-        await documents.GetByGroupAsync<Inventory>("team", "two", documentType);
-        await _operations.GetByNumberAsync<Inventory>(42, "three", documentType);
+        await _operations.GetAsync<Inventory>("one", documentType, requestOptions: options);
+        await documents.GetByGroupAsync<Inventory>("team", "two", documentType, requestOptions: options);
+        await _operations.GetByNumberAsync<Inventory>(42, "three", documentType, requestOptions: options);
 
         foreach (var request in _handler.Requests)
         {
             var uri = request.RequestUri!;
             Assert.StartsWith("/document/v1/fallback/other_inventory/", uri.AbsolutePath);
-            Assert.Null(HttpUtility.ParseQueryString(uri.Query)["fieldSet"]);
+            var query = HttpUtility.ParseQueryString(uri.Query);
+            Assert.Null(query["fieldSet"]);
+            Assert.Equal("content", query["cluster"]);
         }
     }
 

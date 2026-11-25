@@ -22,19 +22,21 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
         try
         {
             await documents.PutAsync(id, new TestProduct { Name = "Typed options", Price = 10 }, requestOptions: WriteOptions);
-            var before = await documents.GetAsync<TestProduct>(ReadOptions, id, fieldSet: "product:product_name,price");
+            var before = await documents.GetAsync<TestProduct>(id, fieldSet: "product:product_name,price", requestOptions: ReadOptions);
             Assert.Equal("Typed options", before!.Fields!.Name);
             Assert.Equal(10, before.Fields.Price);
 
             await documents.UpdateFieldsAsync<TestProduct>(id,
                 update => update.Field(product => product.Price, FieldOp.Assign(25.0)), requestOptions: WriteOptions);
 
-            var after = Assert.Single(await documents.GetManyAsync<TestProduct>(ReadOptions, [id]));
+            var after = Assert.Single(await documents.GetManyAsync<TestProduct>([id, id + "-missing"],
+                fieldSet: DocumentFieldSet.For<TestProduct>(p => p.Price), requestOptions: ReadOptions));
             Assert.Equal(25, after.Fields!.Price);
+            Assert.Equal("", after.Fields.Name);
             Assert.Equal($"id:test:product::{id}", after.FullId);
 
             await documents.DeleteAsync<TestProduct>(id, requestOptions: WriteOptions);
-            Assert.Null(await documents.GetAsync<TestProduct>(ReadOptions, id));
+            Assert.Null(await documents.GetAsync<TestProduct>(id, requestOptions: ReadOptions));
         }
         finally
         {
@@ -70,8 +72,8 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
             }
 
             var read = groupAddressing
-                ? await documents.GetByGroupAsync<TestEvent>(ReadOptions, group, localId)
-                : await documents.GetByNumberAsync<TestEvent>(ReadOptions, number, localId);
+                ? await documents.GetByGroupAsync<TestEvent>(group, localId, requestOptions: ReadOptions)
+                : await documents.GetByNumberAsync<TestEvent>(number, localId, requestOptions: ReadOptions);
             Assert.Equal("after", read!.Fields!.Payload);
             Assert.Equal(localId, read.Id);
         }
