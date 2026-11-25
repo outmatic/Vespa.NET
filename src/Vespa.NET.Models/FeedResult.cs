@@ -9,20 +9,23 @@ public sealed class FeedResult
     /// <summary>Default maximum number of <see cref="FeedError"/> entries retained in <see cref="Errors"/>.</summary>
     public const int DefaultMaxRetainedErrors = 1000;
 
-    /// <summary>Total feed entries accepted from the source, counting each mutation separately.</summary>
+    /// <summary>Total feed entries accepted from the source. This property sets the count returned by <see cref="TotalOperations"/>.</summary>
     public int TotalDocuments { get; init; }
 
-    /// <summary>Total operations accepted from the source (alias of <see cref="TotalDocuments"/>).</summary>
+    /// <summary>
+    /// Total operations accepted from the source. Each mutation counts separately, including repeated
+    /// mutations of the same document. Retries count as part of the original operation.
+    /// </summary>
     public int TotalOperations => TotalDocuments;
 
-    /// <summary>Number of documents fed successfully.</summary>
+    /// <summary>Number of successful operations.</summary>
     public int SuccessCount { get; init; }
 
-    /// <summary>Number of documents that failed (exact, unaffected by the error cap).</summary>
+    /// <summary>Number of failed operations (exact, unaffected by the error cap).</summary>
     public int FailureCount { get; init; }
 
     /// <summary>
-    /// Per-document error details, capped at the configured maximum
+    /// Per-operation error details, capped at the configured maximum
     /// (first errors win). See <see cref="ErrorsTruncated"/>.
     /// </summary>
     public IReadOnlyList<FeedError> Errors { get; init; } = [];
@@ -43,10 +46,10 @@ public sealed class FeedResult
     /// <summary>Total elapsed pipeline time.</summary>
     public TimeSpan Duration { get; init; }
 
-    /// <summary><see langword="true"/> if no document failed.</summary>
+    /// <summary><see langword="true"/> if no operation failed.</summary>
     public bool IsSuccess => FailureCount == 0;
 
-    /// <summary>Fraction of <see cref="TotalDocuments"/> fed successfully.</summary>
+    /// <summary>Fraction of <see cref="TotalOperations"/> that succeeded.</summary>
     public double SuccessRate => TotalDocuments > 0 ? (double)SuccessCount / TotalDocuments : 0;
 }
 

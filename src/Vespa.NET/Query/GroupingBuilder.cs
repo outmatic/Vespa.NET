@@ -102,7 +102,7 @@ public sealed class GroupingBuilder
     /// .GroupByBuckets("price",
     ///     GroupingBucket.Numeric(null, 100),          // bucket[-inf,100)
     ///     GroupingBucket.Numeric(100, 500, toInclusive: true),
-    ///     GroupingBucket.Numeric(500, null))          // bucket[500,inf)
+    ///     GroupingBucket.Numeric(500, null, fromInclusive: false)) // bucket&lt;500,inf)
     /// </code>
     /// </example>
     public GroupingBuilder GroupByBuckets(string field, params GroupingBucket[] buckets)
@@ -333,7 +333,7 @@ public sealed class EachGroupingBuilder
 /// <summary>
 /// A single bucket for <c>predefined(...)</c> grouping, with control over bound
 /// inclusivity and infinite endpoints
-/// (grammar: <c>bucket[from,to)</c>, <c>bucket(from,to]</c>, <c>-inf</c>/<c>inf</c>).
+/// (grammar: <c>bucket[from,to)</c>, <c>bucket&lt;from,to]</c>, <c>-inf</c>/<c>inf</c>).
 /// </summary>
 public sealed class GroupingBucket
 {
@@ -370,12 +370,12 @@ public sealed class GroupingBucket
     /// </summary>
     public static GroupingBucket Text(string? from, string? to, bool fromInclusive = true, bool toInclusive = false)
         => new(
-            from is null ? "-inf" : $"\"{Escape(from)}\"",
-            to is null ? "inf" : $"\"{Escape(to)}\"",
+            from is null ? "-inf" : $"\"{EscapeGroupingStringContent(from)}\"",
+            to is null ? "inf" : $"\"{EscapeGroupingStringContent(to)}\"",
             fromInclusive, toInclusive);
 
     internal string Build() =>
-        $"bucket{(_fromInclusive ? '[' : '(')}{_from},{_to}{(_toInclusive ? ']' : ')')}";
+        $"bucket{(_fromInclusive ? '[' : '<')}{_from},{_to}{(_toInclusive ? ']' : ')')}";
 
-    private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    private static string EscapeGroupingStringContent(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 }

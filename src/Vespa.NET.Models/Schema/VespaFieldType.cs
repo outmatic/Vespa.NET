@@ -60,68 +60,65 @@ public enum VespaFieldType
     /// </summary>
     Predicate,
 
-    /// <summary>
-    /// Tensor field (use VespaTensorAttribute for full configuration)
-    /// </summary>
-    Tensor,
+    // Value 11 was Tensor and remains reserved for previously compiled attributes.
 
     /// <summary>
     /// Array of booleans
     /// </summary>
-    ArrayBool,
+    ArrayBool = 12,
 
     /// <summary>
     /// Array of bytes
     /// </summary>
-    ArrayByte,
+    ArrayByte = 13,
 
     /// <summary>
     /// Array of integers
     /// </summary>
-    ArrayInt,
+    ArrayInt = 14,
 
     /// <summary>
     /// Array of longs
     /// </summary>
-    ArrayLong,
+    ArrayLong = 15,
 
     /// <summary>
     /// Array of floats
     /// </summary>
-    ArrayFloat,
+    ArrayFloat = 16,
 
     /// <summary>
     /// Array of doubles
     /// </summary>
-    ArrayDouble,
+    ArrayDouble = 17,
 
     /// <summary>
     /// Array of strings
     /// </summary>
-    ArrayString,
+    ArrayString = 18,
 
     /// <summary>
     /// Weighted set of strings
     /// </summary>
-    WeightedSetString,
+    WeightedSetString = 19,
 
     /// <summary>
     /// Weighted set of integers
     /// </summary>
-    WeightedSetInt,
+    WeightedSetInt = 20,
 
     /// <summary>
     /// Map from string to string
     /// </summary>
-    MapStringString,
+    MapStringString = 21,
 
     /// <summary>
     /// Map from string to int
     /// </summary>
-    MapStringInt,
+    MapStringInt = 22,
 
     /// <summary>
     /// Reference to another document
     /// </summary>
-    Reference
+    Reference = 23
 }

@@ -79,6 +79,49 @@ public class RankProfileBuilderTests
     }
 
     [Fact]
+    public void QueryInputs_FreezeDefaultsAndRenderIndependentlyOfInheritedTensorInputs()
+    {
+        RankProfileBuilder<RankedArticle> builder = null!;
+        var options = new ApplicationPackageOptions().WithRankProfile<RankedArticle>("weighted", profile =>
+        {
+            builder = profile;
+            profile.Inherits("default").QueryInput("weight", 0.25).FirstPhase(RankExpression.Query("weight"));
+        });
+        builder.QueryInput("added_later", 1);
+
+        var culture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("it-IT");
+            var schema = VespaSchemaBuilder.GenerateSchema<RankedArticle>(options);
+            var weighted = schema.Split("rank-profile weighted inherits default", StringSplitOptions.None)[1];
+            Assert.Contains("query(weight) double: 0.25", weighted);
+            Assert.DoesNotContain("query(query_vector_embedding)", weighted);
+            Assert.DoesNotContain("added_later", schema);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culture;
+        }
+    }
+
+    [Fact]
+    public void QueryInputs_RejectDuplicateNamesInvalidDefaultsAndTensorConflicts()
+    {
+        var options = new ApplicationPackageOptions();
+        Assert.Throws<ArgumentException>("name", () => options.WithRankProfile<RankedArticle>(
+            "weighted", profile => profile.QueryInput("query(weight)", 1)));
+        Assert.Throws<ArgumentOutOfRangeException>("defaultValue", () => options.WithRankProfile<RankedArticle>(
+            "weighted", profile => profile.QueryInput("weight", double.PositiveInfinity)));
+        Assert.Throws<ArgumentException>("name", () => options.WithRankProfile<RankedArticle>(
+            "weighted", profile => profile.QueryInput("weight", 1).QueryInput("weight", 2)));
+
+        var conflict = options.WithRankProfile<RankedArticle>(
+            "weighted", profile => profile.Inherits("default").QueryInput("query_vector_embedding", 1));
+        Assert.Throws<InvalidOperationException>(() => VespaSchemaBuilder.GenerateSchema<RankedArticle>(conflict));
+    }
+
+    [Fact]
     public void Expressions_PreserveOperandGroupingAndIgnoreCurrentCulture()
     {
         var culture = CultureInfo.CurrentCulture;

@@ -960,6 +960,51 @@ public class FeedOperationsTests
         Assert.True(ex.PartialResult.Duration > TimeSpan.Zero);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task FeedAsync_ProgressCallbackFault_PreservesFailedOperation(int errorCap)
+    {
+        var feed = CreateFeedOps(maxRetainedErrors: errorCap);
+        SetupPut(() => throw new VespaException("Write rejected.", statusCode: 400));
+        var progress = new List<FeedProgress>();
+        var callbackError = new InvalidOperationException("Progress callback failed.");
+
+        var failure = await Assert.ThrowsAsync<VespaFeedException>(() =>
+            feed.FeedAsync(GenerateDocuments(1), "testdoc", maxConcurrency: 1,
+                onProgress: snapshot =>
+                {
+                    progress.Add(snapshot);
+                    throw callbackError;
+                }));
+
+        Assert.Same(callbackError, failure.InnerException);
+        Assert.Equal(new FeedProgress(1, 0, 1, "doc-0"), Assert.Single(progress));
+        Assert.Equal(1, failure.PartialResult.FailureCount);
+        Assert.Equal(errorCap, failure.PartialResult.Errors.Count);
+        Assert.Equal(errorCap == 0, failure.PartialResult.ErrorsTruncated);
+    }
+
+    [Fact]
+    public async Task FeedAsync_ErrorMessageFault_StillCountsFailedOperation()
+    {
+        var feed = CreateFeedOps(maxRetainedErrors: 0);
+        SetupPut(() => throw new UnreadableMessageException());
+
+        var failure = await Assert.ThrowsAsync<VespaFeedException>(() =>
+            feed.FeedAsync(GenerateDocuments(1), "testdoc", maxConcurrency: 1));
+
+        Assert.Equal("Cannot read the exception message.", Assert.IsType<InvalidOperationException>(failure.InnerException).Message);
+        Assert.Equal(1, failure.PartialResult.FailureCount);
+        Assert.Empty(failure.PartialResult.Errors);
+        Assert.False(failure.PartialResult.ErrorsTruncated);
+    }
+
+    private sealed class UnreadableMessageException : Exception
+    {
+        public override string Message => throw new InvalidOperationException("Cannot read the exception message.");
+    }
+
     [Fact]
     public async Task FeedAsync_MultipleRealFaults_AggregatesInsideVespaFeedException()
     {
@@ -1129,36 +1174,41 @@ public class FeedOperationsTests
 
     #region Error cap (E5)
 
-    [Fact]
-    public async Task BulkPutAsync_ErrorCap_TruncatesRetainedErrorsButCountsAllFailures()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    public async Task BulkPutAsync_ErrorCap_TruncatesRetainedErrorsButCountsAllFailures(int errorCap)
     {
-        var feedOps = CreateFeedOps(maxRetainedErrors: 5);
+        var feedOps = CreateFeedOps(maxRetainedErrors: errorCap);
         var documents = Enumerable.Range(0, 20)
             .Select(i => TestDataFactory.CreateFeedDocument($"doc-{i}", new { value = i }))
             .ToList();
 
-        SetupPut(() => throw new VespaException("Test error", statusCode: 400));
+        SetupPut(async () =>
+        {
+            await Task.Delay(1);
+            throw new VespaException("Test error", statusCode: 400);
+        });
 
         var result = await feedOps.BulkPutAsync(documents, "testdoc", maxConcurrency: 4);
 
         Assert.Equal(20, result.TotalDocuments);
         Assert.Equal(20, result.FailureCount);
-        Assert.Equal(5, result.Errors.Count);
+        Assert.Equal(errorCap, result.Errors.Count);
         Assert.True(result.ErrorsTruncated);
         Assert.False(result.IsSuccess);
     }
 
     [Fact]
-    public void FeedResult_UnderCap_ErrorsTruncatedIsFalse()
+    public void FeedResult_AtErrorCap_ErrorsTruncatedIsFalse()
     {
         var accumulator = new FeedResultAccumulator(maxRetainedErrors: 5);
+        var error = new VespaException("Test error", statusCode: 400);
         for (var i = 0; i < 5; i++)
-        {
-            accumulator.IncrementFailure();
-            accumulator.AddError(new FeedError { DocumentId = $"doc-{i}" });
-        }
+            accumulator.RecordFailure($"doc-{i}", error);
 
         var result = accumulator.ToResult(TimeSpan.Zero);
+        Assert.Equal(5, result.FailureCount);
         Assert.Equal(5, result.Errors.Count);
         Assert.False(result.ErrorsTruncated);
     }

@@ -193,11 +193,12 @@ public sealed class VespaClientOptions
     public bool EnableCircuitBreaker { get; init; } = true;
 
     /// <summary>
-    /// Minimum number of requests in the sampling window before the circuit breaker
-    /// can open; it opens when at least half of them fail. Must be at least 2
-    /// (Polly's <c>MinimumThroughput</c> lower bound).
+    /// Minimum number of HTTP attempts in the sampling window before the default
+    /// circuit breaker can open. Once the minimum is reached, a handled failure opens
+    /// the circuit if at least half of the sampled attempts have failed.
+    /// Defaults to 5 and must be at least 2 when the circuit breaker is enabled.
     /// </summary>
-    public int CircuitBreakerFailureThreshold { get; init; } = 5;
+    public int CircuitBreakerMinimumThroughput { get; init; } = 5;
 
     /// <summary>
     /// Duration to keep circuit breaker open
@@ -277,11 +278,11 @@ public sealed class VespaClientOptions
         ArgumentOutOfRangeException.ThrowIfNegative(MaxRetryAttempts);
         ThrowIfTimeSpanZeroOrNegative(FeedRetryBaseDelay, nameof(FeedRetryBaseDelay));
         ArgumentOutOfRangeException.ThrowIfNegative(FeedMaxRetainedErrors);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CircuitBreakerFailureThreshold);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CircuitBreakerMinimumThroughput);
         // Polly's HttpCircuitBreakerStrategyOptions requires MinimumThroughput >= 2;
         // validating here surfaces the error at registration instead of on the first request.
         if (EnableCircuitBreaker)
-            ArgumentOutOfRangeException.ThrowIfLessThan(CircuitBreakerFailureThreshold, 2);
+            ArgumentOutOfRangeException.ThrowIfLessThan(CircuitBreakerMinimumThroughput, 2);
         ThrowIfTimeSpanZeroOrNegative(CircuitBreakerDuration, nameof(CircuitBreakerDuration));
         ThrowIfTimeSpanZeroOrNegative(Timeout, nameof(Timeout));
         ThrowIfTimeSpanZeroOrNegative(PooledConnectionLifetime, nameof(PooledConnectionLifetime));

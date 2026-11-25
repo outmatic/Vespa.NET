@@ -65,7 +65,7 @@ var yql = YqlBuilder
 | `.ONear(["t1", "t2"])` | `field contains onear("t1", "t2")` |
 | `.Equiv("t1", "t2")` | `field contains equiv("t1", "t2")` |
 | `.SameElement(...)` | `field contains sameElement(...)` — `elementFilter: [0, 2]` adds `{elementFilter:[0, 2]}` |
-| `.Uri("vespa.ai")` | `field contains uri("vespa.ai")` (deprecated upstream) |
+| `.Uri("vespa.ai")` | `field contains (uri("vespa.ai"))` (deprecated upstream) |
 
 Pass a `YqlTermAnnotations` object to set term weight, ranking, matching, or linguistic options. Omitted properties use Vespa's defaults. Set `TermId` to identify the current term and `Connectivity` to give the target term's ID and a proximity weight. [Vespa term annotations](https://docs.vespa.ai/en/reference/querying/yql.html#annotations)
 
@@ -77,6 +77,12 @@ var query = YqlBuilder<Product>.Select().Where(w =>
     name.ContainsAnnotated("headphones", new() { TermId = 2 });
 }).Build();
 ```
+
+### URL component matching
+
+`Uri(...)` queries an existing indexed Vespa `uri` field or one of its URL components. If the field is named `url`, `w.Field("url.hostname").Uri("vespa.ai")` matches both `vespa.ai` and `docs.vespa.ai`. With the default end anchor, adding `startAnchor: true` restricts the match to `vespa.ai`. [Vespa hostname anchors](https://docs.vespa.ai/en/reference/querying/yql.html#endanchor)
+
+Vespa recommends `string` for new schemas. If an application needs exact hostname lookup, store the normalized hostname in a dedicated field and query that field using exact matching. [Vespa URI fields](https://docs.vespa.ai/en/reference/schemas/schemas.html#uri)
 
 ## Clause-Level Predicates
 

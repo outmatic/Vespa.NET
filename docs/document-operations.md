@@ -180,6 +180,8 @@ await client.Documents.UpdateFieldsAsync(product.Id, new Dictionary<string, Fiel
 
 Pass `TensorModifyOperation.Replace`, `Add`, or `Multiply` to the tensor modify factories. Set `create: true` to create missing cells. Vespa supports this flag from 8.217.46 for an existing tensor and from 8.218.31 when the tensor field is unset. Newly created mapped cells start at zero for `replace` and `add`, and at one for `multiply`. [Document JSON](https://docs.vespa.ai/en/reference/schemas/document-json-format.html#modify-tensors) · [Vespa operation defaults](https://github.com/vespa-engine/vespa/blob/v8.217.46/document/src/main/java/com/yahoo/document/update/TensorModifyUpdate.java#L60)
 
+`FieldOp.Modify` sends a `cells` array with an `address` and `value` for each cell. Vespa accepts this form on both 8.640.27 and 8.788.13. [Vespa system test](https://github.com/vespa-engine/system-test/blob/master/tests/search/tensor_feed/tensor_modify_update/modify_replace.json)
+
 ### Typed Lambda Builder
 
 ```csharp

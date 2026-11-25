@@ -301,7 +301,7 @@ public static class DocumentCondition
     {
         null => "null",
         bool boolean => boolean ? "true" : "false",
-        string text => context == RenderContext.Package ? QuoteForPackage(text) : Quote(text, context == RenderContext.Visitor),
+        string text => context == RenderContext.Package ? QuotePackageSelectionString(text) : QuoteDocumentSelectorString(text, context == RenderContext.Visitor),
         Enum number => Literal(Convert.ChangeType(number, Enum.GetUnderlyingType(number.GetType()), CultureInfo.InvariantCulture), context),
         long number when number == long.MinValue => "0x8000000000000000",
         byte or sbyte or short or ushort or int or uint or long => Convert.ToString(value, CultureInfo.InvariantCulture)!,
@@ -331,7 +331,7 @@ public static class DocumentCondition
         return (value < long.MinValue || value > long.MaxValue) && !text.Contains('.') ? text + ".0" : text;
     }
 
-    private static string Quote(string text, bool escapeBackslashesAsHex)
+    private static string QuoteDocumentSelectorString(string text, bool escapeBackslashesAsHex)
     {
         // Document selectors use byte escapes (\xHH), not JSON's Unicode escapes.
         // Encode non-ASCII characters as UTF-8 bytes so exact equality round-trips.
@@ -354,7 +354,7 @@ public static class DocumentCondition
         return result.Append('"').ToString();
     }
 
-    private static string QuoteForPackage(string text)
+    private static string QuotePackageSelectionString(string text)
     {
         if (text.EndsWith('\\'))
             throw new NotSupportedException("Package string literals ending in a backslash are ambiguous to the routing parser. Use DocumentSelections for native expressions.");

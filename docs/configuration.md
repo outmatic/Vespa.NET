@@ -38,7 +38,7 @@ var options = new VespaClientOptions
     MaxRetryAttempts      = 3,
     EnableCircuitBreaker  = true,
     CircuitBreakerDuration = TimeSpan.FromSeconds(30),
-    CircuitBreakerFailureThreshold = 10,
+    CircuitBreakerMinimumThroughput = 10,
 
     // Performance
     UseConnectionPooling  = true,
@@ -63,6 +63,7 @@ Notes:
 - `ApiKey`, `DefaultRequestHeaders`, timeout, compression, and mTLS settings apply to both the main query/document client and the admin config-server client.
 - `Endpoint` and `ConfigServerEndpoint` must be absolute `http://`/`https://` URLs; `DefaultNamespace` and `Tenant` must be non-empty.
 - `EnableRetry`/`EnableCircuitBreaker` install the HTTP resilience pipeline **only via the DI registrations** (`AddVespaClient`). A directly constructed `VespaClient` applies feed-level retry only and logs a warning. The options-only constructor `new VespaClient(options)` builds its own handler, so mTLS/compression/pooling work without DI; passing your own `HttpClient` together with certificate options throws.
+- `CircuitBreakerMinimumThroughput` sets how many HTTP attempts the default DI circuit breaker must sample before it can open. It defaults to `5` and must be at least `2` when the breaker is enabled. Once the minimum is reached, a handled failure opens the circuit if at least half the sampled attempts have failed. Retries count as separate attempts. [Polly circuit breaker](https://www.pollydocs.org/strategies/circuit-breaker.html)
 - `UseProxy` defaults to `false` (requests bypass the system proxy); set it to `true` to honor `HTTPS_PROXY` and friends.
 - `RecordQueryTextInTraces` defaults to `false`: full YQL text and document ids are omitted from OpenTelemetry span tags unless you opt in.
 - `ConnectTimeout` controls connection establishment time, not pooled-connection cleanup.

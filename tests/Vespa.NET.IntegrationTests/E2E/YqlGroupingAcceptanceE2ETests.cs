@@ -104,6 +104,42 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             Hits = 0
         };
 
+    [Fact]
+    public async Task QuotedStrings_RoundTripInYqlAndGrouping()
+    {
+        if (!Enabled) return;
+        const string category = """a"b\c""";
+        const string pattern = """^a"b\\c$""";
+        var tag = $"escape-{Guid.NewGuid():N}-{category}";
+        var ids = new List<string> { NewId(), NewId() };
+        try
+        {
+            var match = new TestProduct { Tag = tag, Category = category };
+            var other = match with { Category = """a"bc""" };
+            Assert.True((await fixture.Client.Documents.PutAsync(ids[0], match)).IsSuccess);
+            Assert.True((await fixture.Client.Documents.PutAsync(ids[1], other)).IsSuccess);
+            // The YQL query matches the escaped tag on a string attribute and checks both IDs.
+            await WaitForSeedAsync(tag, ids);
+
+            var filtered = await fixture.Client.Search.GroupByAsync<TestProduct>(GroupingRequest(tag,
+                GroupingBuilder.All().Group("category").Filter(GroupingFilter.Regex(pattern, "category"))
+                    .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 1))));
+            Assert.Empty(filtered.Errors ?? []);
+            var group = Assert.Single(Assert.Single(filtered.GroupingResults).Groups);
+            Assert.Equal(1L, group.GetAggregation<long>("count()"));
+            Assert.Equal(ids[0], Assert.Single(group.GetHits<TestProduct>()).Id);
+
+            var bucketed = await fixture.Client.Search.GroupByAsync<TestProduct>(GroupingRequest(tag,
+                GroupingBuilder.All().GroupByBuckets("category", GroupingBucket.Text(category, category + "z"))
+                    .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 1))));
+            Assert.Empty(bucketed.Errors ?? []);
+            var bucket = Assert.Single(Assert.Single(bucketed.GroupingResults).Groups, g => !g.IsRestBucket);
+            Assert.Equal(1L, bucket.GetAggregation<long>("count()"));
+            Assert.Equal(ids[0], Assert.Single(bucket.GetHits<TestProduct>()).Id);
+        }
+        finally { await CleanupAsync(ids); }
+    }
+
     // ── Grouping filter / keep ───────────────────────────────────────────────
 
     [Fact]
@@ -629,19 +665,17 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         var (ids, tag) = await SeedAsync();
         try
         {
-            // Buckets must stay strictly monotonic after Vespa's normalization
-            // ([100,500] becomes [100,501>), so the open-from bucket starts at 600.
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(
                 GroupingRequest(tag, GroupingBuilder.All()
                     .GroupByBuckets("price",
-                        GroupingBucket.Numeric(null, 100),                     // bucket[-inf,100)
-                        GroupingBucket.Numeric(100, 500, toInclusive: true),   // bucket[100,500]
-                        GroupingBucket.Numeric(600, null, fromInclusive: false)) // bucket(600,inf)
+                        GroupingBucket.Numeric(null, 100),
+                        GroupingBucket.Numeric(100, 300, toInclusive: true),
+                        GroupingBucket.Numeric(300, null, fromInclusive: false))
                     .Each(e => e.Output(GroupingAgg.Count()))));
 
             var groups = Assert.Single(result.GroupingResults).Groups;
-            // Prices 50, 150, 300, 700 → every bucket collects at least one document
-            Assert.True(groups.Count >= 3, $"expected >= 3 buckets, got {groups.Count}");
+            Assert.DoesNotContain(groups, group => group.IsRestBucket);
+            Assert.Equal([1L, 1L, 2L], groups.Select(group => group.GetAggregation<long>("count()")).Order());
         }
         finally { await CleanupAsync(ids); }
     }

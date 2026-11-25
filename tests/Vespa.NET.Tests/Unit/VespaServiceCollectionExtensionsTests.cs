@@ -1,11 +1,13 @@
 using System.Net;
 using System.Reflection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Polly;
+using Polly.CircuitBreaker;
 using Vespa;
 using Vespa.Tests.Helpers;
 using Xunit;
@@ -509,6 +511,69 @@ public class VespaServiceCollectionExtensionsTests
         using var response = await httpClient.GetAsync("/state/v1/health");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, 4)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, 4)]
+    [InlineData(HttpStatusCode.InternalServerError, 2)]
+    [InlineData(HttpStatusCode.BadRequest, 1)]
+    public async Task AddVespaClient_BulkPut_RetriesAtTheHttpAndFeedLevels(HttpStatusCode status, int expectedRequests)
+    {
+        var handler = new MockHttpMessageHandler();
+        for (var i = 0; i < expectedRequests; i++)
+            handler.QueueResponse(new HttpResponseMessage(status));
+
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            MaxRetryAttempts = 1,
+            FeedRetryBaseDelay = TimeSpan.FromMilliseconds(1),
+            EnableCircuitBreaker = false
+        }).ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<IVespaClient>();
+
+        var result = await client.Feed.BulkPutAsync(
+            [TestDataFactory.CreateFeedDocument("doc-1", new { name = "Test" })], "testdoc");
+
+        Assert.Equal(0, result.SuccessCount);
+        Assert.Equal(1, result.FailureCount);
+        Assert.Equal((int)status, Assert.Single(result.Errors).StatusCode);
+        Assert.Equal(expectedRequests, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AddVespaClient_UsesConfiguredCircuitBreakerThroughput()
+    {
+        using var configuration = new ConfigurationManager
+        {
+            ["Endpoint"] = "http://localhost:8080",
+            ["EnableRetry"] = "false",
+            ["CircuitBreakerMinimumThroughput"] = "4"
+        };
+        var options = configuration.Get<VespaClientOptions>(binder => binder.ErrorOnUnknownConfiguration = true)!;
+        var handler = new MockHttpMessageHandler();
+        HttpStatusCode[] sampledStatuses =
+        [
+            HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable,
+            HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable
+        ];
+        handler.QueueResponses(sampledStatuses.Select(status => new HttpResponseMessage(status)).ToArray());
+        var services = new ServiceCollection();
+        var registration = services.AddVespaClient(options).ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        using var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient(registration.Name);
+
+        foreach (var status in sampledStatuses)
+        {
+            using var response = await client.GetAsync("/state/v1/health");
+            Assert.Equal(status, response.StatusCode);
+        }
+
+        await Assert.ThrowsAnyAsync<BrokenCircuitException>(() => client.GetAsync("/state/v1/health"));
+        Assert.Equal(4, handler.Requests.Count);
     }
 
     [Fact]

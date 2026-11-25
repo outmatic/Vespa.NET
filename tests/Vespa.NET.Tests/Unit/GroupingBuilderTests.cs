@@ -1370,8 +1370,9 @@ public class GroupingBuilderTests : IDisposable
     {
         Assert.Equal("bucket[0,100)", GroupingBucket.Numeric(0, 100).Build());
         Assert.Equal("bucket[0,100]", GroupingBucket.Numeric(0, 100, toInclusive: true).Build());
-        Assert.Equal("bucket(0,100)", GroupingBucket.Numeric(0, 100, fromInclusive: false).Build());
-        Assert.Equal("bucket(0,100]", GroupingBucket.Numeric(0, 100, fromInclusive: false, toInclusive: true).Build());
+        Assert.Equal("bucket<0,100)", GroupingBucket.Numeric(0, 100, fromInclusive: false).Build());
+        Assert.Equal("bucket<0,100]", GroupingBucket.Numeric(0, 100, fromInclusive: false, toInclusive: true).Build());
+        Assert.Equal("""bucket<"a","m")""", GroupingBucket.Text("a", "m", fromInclusive: false).Build());
     }
 
     [Fact]

@@ -5,7 +5,7 @@ namespace Vespa.Models.Attributes;
 /// <summary>
 /// Attribute to specify Vespa field metadata for schema generation
 /// </summary>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
 public class VespaFieldAttribute : Attribute
 {
     /// <summary>

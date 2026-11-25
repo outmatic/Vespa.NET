@@ -10,4 +10,5 @@ internal sealed record RankProfileDefinition(
     int SecondPhaseRerankCount,
     string? GlobalPhase,
     int GlobalPhaseRerankCount,
-    IReadOnlyList<RankFunctionModel> Functions);
+    IReadOnlyList<RankFunctionModel> Functions,
+    IReadOnlyList<KeyValuePair<string, double>> QueryInputs);

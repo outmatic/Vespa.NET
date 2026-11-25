@@ -35,7 +35,10 @@ public sealed class RankProfileBuilderE2ETests
                     if (attribute(popularity_score) > 0,
                         boost(2) + 20,
                         0)
-                    """), rerankCount: 10));
+                    """), rerankCount: 10))
+            .WithRankProfile<Article>("weighted", profile => profile.Inherits("default")
+                .QueryInput("weight", 0.5)
+                .FirstPhase(RankExpression.Query("weight") * profile.Attribute(article => article.Popularity)));
         await client.Admin.DeploySchemaAsync<Article>(options, cancellationToken: token);
 
         while (!await client.IsReadyAsync(token))
@@ -69,6 +72,9 @@ public sealed class RankProfileBuilderE2ETests
         Assert.Equal(lexicalHit.Relevance + vectorHit.Relevance, hybridHit.Relevance, precision: 5);
         Assert.Equal(52.0, (await SearchForHitAsync(VectorRequest(hybrid, "second"))).Relevance);
         Assert.Equal(62.0, (await SearchForHitAsync(VectorRequest(hybrid, "global"))).Relevance);
+        Assert.Equal(10.5, (await SearchForHitAsync(VectorRequest(vector, "weighted"))).Relevance);
+        var overrideWeight = VectorRequest(vector, "weighted").WithParameter("input.query(weight)", 2.0);
+        Assert.Equal(42.0, (await SearchForHitAsync(overrideWeight)).Relevance);
 
         VespaSearchRequest VectorRequest(YqlBuilder<Article> query, string profile) =>
             query.ToSearchRequest().WithRankProfile(profile).WithQueryTensor(queryTensor, embedding);

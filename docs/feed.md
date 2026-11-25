@@ -71,6 +71,15 @@ Typed predicates use the actual resolved document type. For example, `FeedOperat
 
 Captured values are read when the factory is called, before the update callback. The resulting `FeedOperation.Condition` is a native string that stays fixed while the operation waits in the queue and across retries. A lazy source may call the factory during enumeration; constructing that source does not construct its operations.
 
+When every operation uses the same condition and schema, render it once before the feed loop and reuse it through `rawCondition:`.
+
+```csharp
+var condition = DocumentCondition.For<Product>(p => p.Price > 0);
+var operations = products.Select(product =>
+    FeedOperation.Put(product.Id, product, rawCondition: condition));
+await client.Feed.FeedAsync(operations);
+```
+
 A typed condition is evaluated against the stored document and does not add a document-type guard. `p => true` renders native `true`. Individual HTTP 412 failures are recorded in `FeedResult.Errors`; later operations for the same document are still attempted. See [Conditional writes](document-operations.md#conditional-writes) for supported expressions and native evaluation rules.
 
 ### Ordering and Backpressure
@@ -98,11 +107,7 @@ mutations with the same local ID. `FeedProgress` provides the corresponding
 `LastOperationKind`, `LastDocumentType`, `LastNamespace`, and `OperationIndex`.
 The additional metadata is null for the existing bulk and generic feed APIs.
 
-`FeedResult.TotalOperations` counts each mutation, even when several target the
-same document. `TotalDocuments` remains available with the same value. Individual
-errors, partial results on source/callback failure, cancellation and retained-error
-limits follow the rules below. A null entry faults the source; accepted operations
-are drained before the resulting `VespaFeedException` is returned.
+Use `FeedResult.TotalOperations` when reporting a feed result. A null entry faults the source. The feed drains accepted operations before surfacing the resulting `VespaFeedException`. See [FeedResult](#feedresult) for count and error details.
 
 ---
 
@@ -115,7 +120,7 @@ using Vespa.Models;
 var docs = products.Select(p => new FeedDocument<Product> { Id = p.Id, Fields = p });
 
 var result = await client.Feed.BulkPutAsync(docs, documentType: "product", maxConcurrency: 20);
-Console.WriteLine($"{result.SuccessCount}/{result.TotalDocuments} in {result.Duration.TotalSeconds:F2}s");
+Console.WriteLine($"{result.SuccessCount}/{result.TotalOperations} in {result.Duration.TotalSeconds:F2}s");
 
 // Bulk update — each request carries explicit Vespa field operations, since
 // /document/v1 PUT rejects raw partial documents.
@@ -150,7 +155,7 @@ var result = await client.Feed.FeedAsync(
     boundedCapacity: 256,     // backpressure buffer
     onProgress: p => Console.Write($"\r{p.SuccessCount} docs fed..."));
 
-Console.WriteLine($"\n{result.SuccessCount}/{result.TotalDocuments} in {result.Duration.TotalSeconds:F2}s");
+Console.WriteLine($"\n{result.SuccessCount}/{result.TotalOperations} in {result.Duration.TotalSeconds:F2}s");
 ```
 
 ---
@@ -227,14 +232,18 @@ When `VespaClientOptions.EnableRetry` is set (the default), the feed pipeline re
 
 ## FeedResult
 
+`TotalOperations` counts entries accepted from the source. For example, a put and an update for the same document count as two operations. Any retries belong to their original operation.
+
+Use `TotalDocuments` when constructing a `FeedResult` with an object initializer. By default, System.Text.Json writes both properties and reads `TotalDocuments` to set the count returned by `TotalOperations`.
+
 | Property | Description |
 |---|---|
-| `TotalDocuments` | Total feed entries accepted from the source |
-| `TotalOperations` | Alias of `TotalDocuments`; mixed-feed mutations are counted separately |
+| `TotalOperations` | Number of operations accepted from the source |
+| `TotalDocuments` | Same count, with an initializer for callers that construct results |
 | `SuccessCount` | Successful operations |
 | `FailureCount` | Failed operations (always exact) |
 | `IsSuccess` | `true` if no failures |
-| `SuccessRate` | `SuccessCount / TotalDocuments` |
+| `SuccessRate` | `SuccessCount / TotalOperations`, or zero for an empty feed |
 | `Duration` | Total elapsed time |
 | `Errors` | `IReadOnlyList<FeedError>` with per-operation error details, capped at `VespaClientOptions.FeedMaxRetainedErrors` (default 1000, first errors win) |
 | `ErrorsTruncated` | `true` when more errors occurred than `Errors` retains — counts stay exact either way |

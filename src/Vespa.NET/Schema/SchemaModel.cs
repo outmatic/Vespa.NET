@@ -37,6 +37,7 @@ internal sealed class RankProfileModel
     public string? DiversityAttribute { get; init; }
     public int DiversityMinGroups { get; init; }
     public List<RankFunctionModel> Functions { get; } = [];
+    public IReadOnlyList<KeyValuePair<string, double>> QueryInputs { get; init; } = [];
     public bool EmitInputs { get; set; }
 }
 

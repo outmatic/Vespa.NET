@@ -24,11 +24,23 @@ internal sealed class FeedResultAccumulator(int maxRetainedErrors)
 
     public void IncrementSuccess() => Interlocked.Increment(ref _successCount);
 
-    public void IncrementFailure() => Interlocked.Increment(ref _failureCount);
-
-    /// <summary>Records an error, retaining at most <c>maxRetainedErrors</c> entries (first errors win).</summary>
-    public void AddError(FeedError error)
+    /// <summary>Counts a failed operation and retains its details up to the configured limit.</summary>
+    public void RecordFailure(string documentId, Exception exception, FeedOperationKind? operationKind = null,
+        string? documentType = null, string? documentNamespace = null, int? operationIndex = null)
     {
+        // Reading a custom exception's message can throw. Count the failed operation
+        // first so the partial result still reports it.
+        Interlocked.Increment(ref _failureCount);
+        var error = new FeedError
+        {
+            DocumentId = documentId,
+            Message = exception.Message,
+            StatusCode = (exception as VespaException)?.StatusCode,
+            OperationKind = operationKind,
+            DocumentType = documentType,
+            Namespace = documentNamespace,
+            OperationIndex = operationIndex
+        };
         if (Interlocked.Increment(ref _errorCount) <= maxRetainedErrors)
             _errors.Enqueue(error);
     }

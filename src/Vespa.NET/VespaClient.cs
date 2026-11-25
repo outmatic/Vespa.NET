@@ -197,8 +197,8 @@ public sealed partial class VespaClient : IVespaClient
         }
     }
 
-    public async Task<bool> HealthCheckAsync(CancellationToken cancellationToken = default)
-        => await TryProbeAsync(
+    public Task<bool> HealthCheckAsync(CancellationToken cancellationToken = default)
+        => TryProbeAsync(
             async ct =>
             {
                 using var response = await _httpClient.GetAsync(VespaPaths.Health, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -217,8 +217,8 @@ public sealed partial class VespaClient : IVespaClient
             },
             cancellationToken);
 
-    public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default)
-        => await TryProbeAsync(
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default)
+        => TryProbeAsync(
             async ct =>
             {
                 using var response = await _httpClient.GetAsync(VespaPaths.Health, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -234,9 +234,9 @@ public sealed partial class VespaClient : IVespaClient
             _ => false,
             cancellationToken);
 
-    public async Task<VespaMetrics?> GetMetricsAsync(CancellationToken cancellationToken = default)
-        => await TryProbeAsync(
-            ct => GetJsonOrDefaultAsync<VespaMetrics>(VespaPaths.Metrics, ct),
+    public Task<VespaMetrics?> GetMetricsAsync(CancellationToken cancellationToken = default)
+        => TryProbeAsync(
+            ReadMetricsAsync,
             ex =>
             {
                 if (_logger != null)
@@ -307,11 +307,11 @@ public sealed partial class VespaClient : IVespaClient
         }
     }
 
-    private async Task<T?> GetJsonOrDefaultAsync<T>(string path, CancellationToken cancellationToken)
+    private async Task<VespaMetrics?> ReadMetricsAsync(CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await _httpClient.GetAsync(VespaPaths.Metrics, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.IsSuccessStatusCode)
-            return await response.Content.ReadFromJsonAsync<T>(VespaJsonOptions.Default, cancellationToken);
+            return await response.Content.ReadFromJsonAsync<VespaMetrics>(VespaJsonOptions.Default, cancellationToken);
 
         if (_logger != null)
             LogMetricsFailed(_logger, response.StatusCode);

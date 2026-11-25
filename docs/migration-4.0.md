@@ -229,6 +229,41 @@ Existing attribute selections continue to work. To supply a cutoff when building
 
 Files declared with `SourcePath` on `[VespaOnnxModel]` or `[VespaConstant]` are now copied after the schema's ZIP entry has been closed. A bundled resource that shares a destination with a generated schema, `services.xml` or generated `hosts.xml` throws `InvalidOperationException`. Use a separate asset path, or `CustomServicesXml` for service configuration. Public package-generation signatures are unchanged; see [Bundled files](schema.md#bundled-files) for path resolution and duplicate-resource precedence.
 
+## Rank profile functions
+
+Replace `VespaRankProfileAttribute.Functions` with one `[VespaRankFunction]` attribute per function on the same model. Keep the original signature and expression and set `Profile` to the name of the old rank profile.
+
+```csharp
+[VespaRankProfile("semantic", FirstPhase = "boost(2)")]
+[VespaRankFunction("boost(factor)", "attribute(quality) * factor", Profile = "semantic")]
+```
+
+Recompile every assembly that declares `Functions = ...`, including model libraries and plugins. A model compiled with that named attribute argument can throw `CustomAttributeFormatException` when the 4.0 schema generator reads its rank profiles. [Ranking functions](ranking.md#code-first-rank-profiles)
+
+## Tensor distance metrics
+
+Replace `DistanceMetric.InnerProduct` in source code and `"InnerProduct"` in saved settings with `PrenormalizedAngular`. Its numeric value is `7`. The schema generator still accepts the old numeric value `6`, including in precompiled `[VespaTensor]` attributes, and emits `prenormalized-angular`. If your application validates saved values with `Enum.IsDefined`, convert `6` to `7` first.
+
+Use `PrenormalizedAngular` for query and document vectors normalized to the same nonzero L2 norm. `DotProduct` remains `3` and selects Vespa's maximum inner product search, where vector magnitudes affect the score. [Vespa distance metrics](https://docs.vespa.ai/en/reference/schemas/schemas.html#distance-metric)
+
+## Attributes on C# fields
+
+Move `[VespaField]`, `[VespaTensor]` and `[VespaId]` from fields to public properties. If you used a `field:` attribute target on an auto-property, apply the attribute to the property itself. Keep any field alias or tensor type. Use a writable `string` property with `[VespaId]` to receive the document ID from Vespa.
+
+When you move a field to a property, review the generated schema before deploying. The generator can now include that member. Rebuild callers that access a public field you converted to a property. If `[VespaField]` only supplied a JSON alias, keep the field with `[JsonInclude]` and use `[JsonPropertyName]` for the alias. This target change preserves the JSON behavior of already compiled models.
+
+## Tensor field declarations
+
+Declare the tensor type on a document property with `[VespaTensor("tensor<float>(x[384])")]`, using the actual cell type and dimensions. If the property already has both attributes, remove only `FieldType = VespaFieldType.Tensor` and keep `[VespaField]` to preserve its naming and indexing options. [Field configuration](schema.md#field-configuration)
+
+Precompiled models with both attributes still generate the same schema. The numeric value `11` is reserved, and all remaining `VespaFieldType` values retain their numbers.
+
+## Tensor JSON formats
+
+Remove `PreferredFormat = ...` from `[VespaTensor]` attributes and keep the tensor type declaration. The old setting had no effect on serialization. To choose how to write a `VespaTensor`, use the factory for your data, such as `FromDenseValues` for a dense vector or `FromMappedValues` for a single mapped dimension.
+
+Recompile every model assembly that specifies `PreferredFormat`. The 4.0 schema generator throws `CustomAttributeFormatException` when it reads a precompiled attribute with that named argument.
+
 ## Explicit targets and feeds
 
 The low-level methods on `IDocumentOperations` still accept a native string named `condition` when you provide `documentType` explicitly:
@@ -243,9 +278,19 @@ The non-generic feed factories and native selection APIs retain their string par
 
 Rebuild applications and libraries that use the model-aware document extensions or the four generic mixed-feed factories. Their method signatures have changed, including unconditional calls. The methods declared by `IDocumentOperations` and `IFeedOperations` keep their current signatures, so custom implementations of these interfaces need no changes for these features.
 
+## Open lower bounds in grouping buckets
+
+`GroupingBucket.Numeric` and `GroupingBucket.Text` now render an exclusive lower bound when you set `fromInclusive: false`. Check queries that depended on the earlier inclusive result and set `fromInclusive: true` to keep that result.
+
 ## Named client registration
 
 `Vespa.NET` is the HTTP client name reserved for the unnamed registration. Passing that exact name to the named `AddVespaClient` overload now throws `ArgumentException` during registration. If you used it as a keyed client name, choose a different name and update keyed lookups, health checks and any `IHttpClientFactory` calls intended for that client.
+
+## Circuit breaker minimum throughput
+
+Rename `CircuitBreakerFailureThreshold` to `CircuitBreakerMinimumThroughput` in object initializers, configuration keys, and environment variables used for configuration binding. Keep the same integer value and rebuild assemblies that access the property.
+
+The default is still five sampled HTTP attempts. The default DI circuit breaker opens on a handled failure once it has sampled the minimum number of attempts and at least half have failed. [Client options](configuration.md#vespaclientoptions)
 
 ## Search pagination with WithYql
 

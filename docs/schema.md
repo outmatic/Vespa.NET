@@ -8,12 +8,12 @@ Vespa.NET generates Vespa `.sd` schemas and `services.xml` from C# model attribu
 
 | Attribute | Target | Purpose |
 |---|---|---|
-| `[VespaDocument("type")]` | Class | Declares a Vespa document type; `Namespace`, `Inherits`, `Selection`, `Global`, `Mode` |
+| `[VespaDocument("type")]` | Class or struct | Declares a Vespa document type; `Namespace`, `Inherits`, `Selection`, `Global`, `Mode` |
 | `[VespaField(Name = "name")]` | Property | Maps to a Vespa field; drives schema and JSON serialization |
 | `[VespaTensor("tensor<float>(x[N])")]` | Property | Tensor field with optional HNSW index, distance metric |
 | `[VespaId]` | Property | Document ID property (excluded from JSON body) |
 | `[VespaExtraFields]` | Property | Catch-all for unmapped fields (`Dictionary<string, JsonElement>?`) |
-| `[VespaStruct]` | Class | Declares a Vespa struct type |
+| `[VespaStruct]` | Class or struct | Declares a Vespa struct type |
 | `[VespaFieldSet("name", "f1", "f2")]` | Class | Declares a fieldset |
 | `[VespaDocumentSummary("name")]` | Class | Declares a document summary |
 | `[VespaRankProfile("name")]` | Class | Rank profile (first/second/global phase, features, diversity) |
@@ -21,6 +21,8 @@ Vespa.NET generates Vespa `.sd` schemas and `services.xml` from C# model attribu
 | `[VespaImportField("ref", "field", "alias")]` | Class | Import field from a referenced document |
 | `[VespaOnnxModel("name", "file")]` | Class | ONNX model; `SourcePath` auto-bundles in ZIP |
 | `[VespaConstant("name", "file", "type")]` | Class | Constant tensor; `SourcePath` auto-bundles |
+
+For a document declared as a C# struct, pass `typeof(YourDocument)` to the `VespaSchemaBuilder` schema and package generation overloads that accept a `Type`.
 
 ---
 

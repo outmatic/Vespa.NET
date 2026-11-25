@@ -43,7 +43,7 @@ public static class StreamingSearchExtensions
                 throw new ArgumentException($"Streaming group at index {i} must not be blank.", nameof(groupNames));
             if (!seen.Add(groupNames[i]))
                 continue;
-            var clause = $"id.group == {QuoteGroupName(groupNames[i])}";
+            var clause = $"id.group == {QuoteStreamingGroupName(groupNames[i])}";
             if (groupNames[i].EndsWith('\\'))
             {
                 if (terminalBackslashClause is not null)
@@ -62,7 +62,7 @@ public static class StreamingSearchExtensions
         return request;
     }
 
-    private static string QuoteGroupName(string groupName)
+    private static string QuoteStreamingGroupName(string groupName)
     {
         // Both the Java bucket selector and C++ document selector read this literal.
         // Keep Unicode characters intact: Java does not interpret C++ byte escapes.

@@ -37,10 +37,7 @@ foreach (var group in groupList.Groups)
 
 ### Typed results and exact aggregation values
 
-Call `.AsTyped()` once to obtain a `TypedGroupingSearchResponse<T>`. Its
-`GroupingResults` and `GroupingRoots` contain `VespaGroupList<T>` and
-`VespaGroup<T>` at every level, so `group.Hits` is an
-`IReadOnlyList<SearchHit<T>>` and `group.SubGroups` retains the same document type:
+Call `.AsTyped()` once per response when you need typed summaries throughout the tree. `group.Hits` gives you an `IReadOnlyList<SearchHit<T>>`, and the same document type carries through `group.SubGroups` and `GroupingRoots`.
 
 ```csharp
 var result = (await client.Search.GroupByAsync<Product>(request)).AsTyped();
@@ -56,12 +53,9 @@ foreach (var group in list.Groups)
 }
 ```
 
-The projection runs in memory, makes no HTTP requests and leaves the original
-response available. It preserves ordinary hits, root outputs and summaries,
-rest buckets, nested groups, coverage, errors, timing, trace and continuation
-tokens. Existing `GroupByAsync<T>`, `GetHits<T>()` and response constructors remain
-available. Manually constructed responses must contain `SearchHit<T>` summaries
-matching their document type; mismatched summaries throw `InvalidCastException`.
+The projection creates typed groups and lists in memory and reuses the existing summary objects, aggregation values and continuation tokens. Reuse the typed result if you traverse the same response again. For aggregations alone, read the original groups directly. To read summaries from a single group, use `group.GetHits<Product>()`.
+
+Both views expose root outputs and summaries, rest buckets, nested groups, coverage, errors, timing and trace. If you construct a response yourself, supply `SearchHit<T>` summaries matching its document type. A mismatch throws `InvalidCastException` when you read the summaries through `GetHits<T>()` or `AsTyped()`.
 
 Both typed and original groups expose `GetAggregation<TValue>(name)` and
 `TryGetAggregation<TValue>(name, out value)`. They deserialize the original
@@ -132,9 +126,7 @@ GroupingBuilder.All().GroupByFixedWidth("price", 100);
 
 ### Predefined buckets
 
-Tuple buckets are inclusive of `From`, exclusive of `To`; values outside every
-bucket land in the rest group. Use `GroupingBucket` for `inf` endpoints or
-open/closed bounds:
+Numeric and string tuples include `From` and exclude `To`. Values outside every bucket land in the rest group. Use `GroupingBucket` for infinite endpoints or custom inclusion rules. Vespa's `<` delimiter excludes the lower endpoint. [Vespa bucket expressions](https://docs.vespa.ai/en/reference/querying/grouping-language.html#bucket-expressions)
 
 ```csharp
 GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500));
@@ -143,7 +135,7 @@ GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500));
 GroupingBuilder.All().GroupByBuckets("price",
     GroupingBucket.Numeric(null, 100),                      // bucket[-inf,100)
     GroupingBucket.Numeric(100, 500, toInclusive: true),    // bucket[100,500]
-    GroupingBucket.Numeric(500, null));                     // bucket[500,inf)
+    GroupingBucket.Numeric(500, null, fromInclusive: false)); // bucket<500,inf)
 ```
 
 Rest groups are retained in the results: `group.IsRestBucket` identifies them,
@@ -231,9 +223,11 @@ request.Select = grouping.Build();
 
 ```csharp
 await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
-    foreach (var list in page.AsTyped().GroupingResults)
+    foreach (var list in page.GroupingResults)
         Console.WriteLine(list.Label);
 ```
+
+Use `page.AsTyped()` for pages whose summary hits you need. The typed result carries the same continuation tokens.
 
 For manual paging with a YQL pipe, use `GroupingContinuations.Apply(yql, tokens)`. With `Select`, keep the expression and use `request.ShallowClone().WithParameter("continue", string.Join(' ', tokens))`. Pass the tokens in the order returned by `ContinuationTokens`.
 

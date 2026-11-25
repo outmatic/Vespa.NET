@@ -71,14 +71,14 @@ public abstract class GroupingFilter
 
     internal abstract string Build();
 
-    private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    private static string EscapeGroupingStringContent(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     private static string Parenthesize(GroupingFilter f) =>
         f is BinaryFilter ? $"({f.Build()})" : f.Build();
 
     private sealed class RegexFilter(string pattern, string expression) : GroupingFilter
     {
-        internal override string Build() => $"regex(\"{Escape(pattern)}\", {expression})";
+        internal override string Build() => $"regex(\"{EscapeGroupingStringContent(pattern)}\", {expression})";
     }
 
     private sealed class RangeFilter(double min, double max, string expression, bool minInclusive, bool maxInclusive) : GroupingFilter

@@ -14,8 +14,6 @@ namespace Vespa;
 /// </summary>
 public static partial class VespaServiceCollectionExtensions
 {
-    private static readonly HttpRetryStrategyOptions DefaultRetryOptions = new();
-
     /// <summary>Logical name of the default (unnamed) Vespa HttpClient registration.</summary>
     private const string DefaultHttpClientName = "Vespa.NET";
 
@@ -262,13 +260,6 @@ public static partial class VespaServiceCollectionExtensions
                 Delay = TimeSpan.FromMilliseconds(100),
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                ShouldHandle = args =>
-                {
-                    // Retry on transient failures + 429 Too Many Requests
-                    if (args.Outcome.Result?.StatusCode == (HttpStatusCode)429)
-                        return ValueTask.FromResult(true);
-                    return DefaultRetryOptions.ShouldHandle(args);
-                },
                 OnRetry = args =>
                 {
                     VespaClientMetrics.RetryAttempts.Add(1);
@@ -285,7 +276,7 @@ public static partial class VespaServiceCollectionExtensions
             resilienceBuilder.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
             {
                 FailureRatio = 0.5,
-                MinimumThroughput = options.CircuitBreakerFailureThreshold,
+                MinimumThroughput = options.CircuitBreakerMinimumThroughput,
                 BreakDuration = options.CircuitBreakerDuration,
                 OnOpened = args =>
                 {

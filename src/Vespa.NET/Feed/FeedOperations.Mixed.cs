@@ -116,17 +116,7 @@ public sealed partial class FeedOperations
                     }
                     catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
                     {
-                        accumulator.IncrementFailure();
-                        accumulator.AddError(new FeedError
-                        {
-                            DocumentId = operation.Id,
-                            Message = ex.Message,
-                            StatusCode = (ex as VespaException)?.StatusCode,
-                            OperationKind = operation.Kind,
-                            DocumentType = operation.DocumentType,
-                            Namespace = ns,
-                            OperationIndex = item.Index
-                        });
+                        accumulator.RecordFailure(operation.Id, ex, operation.Kind, operation.DocumentType, ns, item.Index);
                         if (_logger is not null)
                             LogMixedOperationFailed(_logger, operation.Kind, operation.Id, operation.DocumentType, ns, ex);
                     }

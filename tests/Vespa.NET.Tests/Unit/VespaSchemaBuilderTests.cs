@@ -81,6 +81,13 @@ public class VespaSchemaBuilderTests
 
     private class NoBadge { public string X { get; set; } = string.Empty; }
 
+    [VespaDocument("struct_document")]
+    private readonly struct StructDocument
+    {
+        [VespaField(Name = "sale_price")]
+        public int Price { get; init; }
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -96,12 +103,43 @@ public class VespaSchemaBuilderTests
     }
 
     [Fact]
+    public void TypeOverloads_GenerateSchemaAndPackageForStructDocument()
+    {
+        var type = typeof(StructDocument);
+        var schema = VespaSchemaBuilder.GenerateSchema(type);
+        Assert.Contains("field sale_price type int", schema);
+
+        using var package = new MemoryStream();
+        VespaSchemaBuilder.GenerateApplicationPackage(package, type);
+        using var zip = new ZipArchive(package, ZipArchiveMode.Read);
+        using var reader = new StreamReader(zip.GetEntry("schemas/struct_document.sd")!.Open());
+        Assert.Equal(schema, reader.ReadToEnd());
+    }
+
+    [Fact]
     public void GenerateSchema_IntField_WithExplicitFieldType()
     {
         var schema = VespaSchemaBuilder.GenerateSchema<MusicDoc>();
 
         Assert.Contains("field year type int", schema);
         Assert.Contains("indexing: attribute | summary", schema);
+    }
+
+    [Fact]
+    public void VespaFieldType_KeepsPublishedNumericValues()
+    {
+        var values = Enum.GetValues<VespaFieldType>();
+        Assert.Equal(new[]
+        {
+            VespaFieldType.None, VespaFieldType.Bool, VespaFieldType.Byte, VespaFieldType.Int,
+            VespaFieldType.Long, VespaFieldType.Float, VespaFieldType.Double, VespaFieldType.String,
+            VespaFieldType.Raw, VespaFieldType.Uri, VespaFieldType.Predicate,
+            VespaFieldType.ArrayBool, VespaFieldType.ArrayByte, VespaFieldType.ArrayInt,
+            VespaFieldType.ArrayLong, VespaFieldType.ArrayFloat, VespaFieldType.ArrayDouble, VespaFieldType.ArrayString,
+            VespaFieldType.WeightedSetString, VespaFieldType.WeightedSetInt,
+            VespaFieldType.MapStringString, VespaFieldType.MapStringInt, VespaFieldType.Reference
+        }, values);
+        Assert.Equal(Enumerable.Range(0, 24).Where(value => value != 11), values.Select(type => (int)type));
     }
 
     [Fact]
@@ -446,7 +484,6 @@ public class VespaSchemaBuilderTests
     [Fact]
     public void GenerateSchema_RankProfileFunctions_IncludesFunctionBlock()
     {
-        // Legacy string DSL — obsolete but still honored
         var schema = VespaSchemaBuilder.GenerateSchema<RankProfileFuncDoc>();
         Assert.Contains("function freshness() {", schema);
         Assert.Contains("expression: now - attribute(timestamp)", schema);
@@ -461,11 +498,16 @@ public class VespaSchemaBuilderTests
     }
 
     [Fact]
-    public void GenerateSchema_RankProfileFunctions_MissingColon_Throws()
+    public void GenerateSchema_RankFunctionTargetsGeneratedDefault()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => VespaSchemaBuilder.GenerateSchema<RankProfileBadFuncDoc>());
-        Assert.Contains("signature: expression", ex.Message);
+        var schema = VespaSchemaBuilder.GenerateSchema<GeneratedDefaultFunctionDoc>();
+        Assert.Contains("rank-profile default {", schema);
+        Assert.Contains("function fallback() {", schema);
+
+        var options = new ApplicationPackageOptions()
+            .WithRankProfile<GeneratedDefaultFunctionDoc>("default", profile => profile.FirstPhase(1));
+        Assert.Throws<InvalidOperationException>(() =>
+            VespaSchemaBuilder.GenerateSchema<GeneratedDefaultFunctionDoc>(options));
     }
 
     // --- [VespaRankFunction] attribute ---
@@ -476,7 +518,6 @@ public class VespaSchemaBuilderTests
         var schema = VespaSchemaBuilder.GenerateSchema<RankFunctionAttrDoc>();
         Assert.Contains("function freshness() {", schema);
         Assert.Contains("expression: now - attribute(timestamp)", schema);
-        // Expressions containing ':' (impossible in the string DSL) work
         Assert.Contains("function scaled(x) {", schema);
         Assert.Contains("expression: if (x > 0, x, 0)", schema);
     }
@@ -946,12 +987,27 @@ public class VespaSchemaBuilderTests
     // --- Distance metric renames ---
 
     [Fact]
-    public void GenerateSchema_InnerProductMetric_EmitsPrenormalizedAngular()
+    public void GenerateSchema_LegacyNumericMetric_EmitsPrenormalizedAngular()
     {
-        // Vespa removed the "innerproduct" name; its successor is prenormalized-angular
-        var schema = VespaSchemaBuilder.GenerateSchema<InnerProductMetricDoc>();
-        Assert.Contains("distance-metric: prenormalized-angular", schema);
-        Assert.DoesNotContain("distance-metric: innerproduct", schema);
+        var legacy = VespaSchemaBuilder.GenerateSchema<LegacyMetricDoc>();
+        var canonical = VespaSchemaBuilder.GenerateSchema<PrenormalizedMetricDoc>();
+        var dotProduct = VespaSchemaBuilder.GenerateSchema<DotProductMetricDoc>();
+
+        Assert.Equal(canonical, legacy);
+        Assert.Contains("distance-metric: prenormalized-angular", canonical);
+        Assert.Equal(canonical.Replace("distance-metric: prenormalized-angular", "distance-metric: dotproduct"), dotProduct);
+    }
+
+    [Fact]
+    public void DistanceMetric_KeepsPublishedNumericValues()
+    {
+        var values = Enum.GetValues<DistanceMetric>();
+        Assert.Equal(new[]
+        {
+            DistanceMetric.None, DistanceMetric.Euclidean, DistanceMetric.Angular, DistanceMetric.DotProduct,
+            DistanceMetric.Hamming, DistanceMetric.Geodesic, DistanceMetric.PrenormalizedAngular
+        }, values);
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 7 }, values.Select(metric => (int)metric));
     }
 
     // --- Stemming shortest / rank-type about, empty ---
@@ -1343,9 +1399,9 @@ file record RankProfileDiversityDoc
     public string Title { get; init; } = string.Empty;
 }
 
-#pragma warning disable CS0618 // Functions DSL is obsolete but must keep working
 [VespaDocument("func_doc")]
-[VespaRankProfile("myrank", FirstPhase = "freshness", Functions = "freshness: now - attribute(timestamp)")]
+[VespaRankProfile("myrank", FirstPhase = "freshness")]
+[VespaRankFunction("freshness", "now - attribute(timestamp)", Profile = "myrank")]
 file record RankProfileFuncDoc
 {
     [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
@@ -1353,21 +1409,22 @@ file record RankProfileFuncDoc
 }
 
 [VespaDocument("multifunc_doc")]
-[VespaRankProfile("myrank", FirstPhase = "myScore(1,2)", Functions = "freshness: now - attribute(timestamp); myScore(a,b): a * b")]
+[VespaRankProfile("myrank", FirstPhase = "myScore(1,2)")]
+[VespaRankFunction("freshness", "now - attribute(timestamp)", Profile = "myrank")]
+[VespaRankFunction("myScore(a,b)", "a * b", Profile = "myrank")]
 file record RankProfileMultiFuncDoc
 {
     [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
     public string Title { get; init; } = string.Empty;
 }
 
-[VespaDocument("badfunc_doc")]
-[VespaRankProfile("myrank", Functions = "freshness now - attribute(timestamp)")]
-file record RankProfileBadFuncDoc
+[VespaDocument("generated_default_function_doc")]
+[VespaRankFunction("fallback", "1")]
+file record GeneratedDefaultFunctionDoc
 {
-    [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
-    public string Title { get; init; } = string.Empty;
+    [VespaTensor("tensor<float>(x[2])")]
+    public float[]? Embedding { get; init; }
 }
-#pragma warning restore CS0618
 
 [VespaDocument("rankfunc_attr_doc")]
 [VespaRankProfile("myrank", FirstPhase = "freshness")]
@@ -1683,14 +1740,26 @@ file record ImplicitDoubleTensorDoc
     public Dictionary<string, double>? Sparse { get; init; }
 }
 
-#pragma warning disable CS0618 // InnerProduct is obsolete; verify its mapped emission
 [VespaDocument("ip_metric_doc")]
-file record InnerProductMetricDoc
+file record LegacyMetricDoc
 {
-    [VespaTensor("tensor<float>(x[8])", DistanceMetric = DistanceMetric.InnerProduct)]
+    [VespaTensor("tensor<float>(x[8])", DistanceMetric = (DistanceMetric)6)]
     public float[]? Vec { get; init; }
 }
-#pragma warning restore CS0618
+
+[VespaDocument("ip_metric_doc")]
+file record PrenormalizedMetricDoc
+{
+    [VespaTensor("tensor<float>(x[8])", DistanceMetric = DistanceMetric.PrenormalizedAngular)]
+    public float[]? Vec { get; init; }
+}
+
+[VespaDocument("ip_metric_doc")]
+file record DotProductMetricDoc
+{
+    [VespaTensor("tensor<float>(x[8])", DistanceMetric = DistanceMetric.DotProduct)]
+    public float[]? Vec { get; init; }
+}
 
 [VespaDocument("stemming_shortest_doc")]
 file record StemmingShortestDoc

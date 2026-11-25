@@ -13,6 +13,7 @@ public sealed class RankProfileBuilder<T> where T : class
     private string? _globalPhase;
     private int _globalPhaseRerankCount;
     private readonly Dictionary<string, RankFunctionModel> _functions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, double> _queryInputs = new(StringComparer.Ordinal);
 
     internal RankProfileBuilder() { }
 
@@ -55,6 +56,17 @@ public sealed class RankProfileBuilder<T> where T : class
         return this;
     }
 
+    /// <summary>Declares a scalar query input with a default that a search request can override.</summary>
+    public RankProfileBuilder<T> QueryInput(string name, double defaultValue)
+    {
+        RankExpression.ValidateIdentifier(name, nameof(name));
+        if (!double.IsFinite(defaultValue))
+            throw new ArgumentOutOfRangeException(nameof(defaultValue), defaultValue, "Query input defaults must be finite.");
+        if (!_queryInputs.TryAdd(name, defaultValue))
+            throw new ArgumentException($"Query input '{name}' is already defined.", nameof(name));
+        return this;
+    }
+
     /// <summary>Defines a named ranking function with an optional parameter list.</summary>
     public RankProfileBuilder<T> Function(string name, RankExpression expression, params string[] parameters)
     {
@@ -86,7 +98,7 @@ public sealed class RankProfileBuilder<T> where T : class
 
     internal RankProfileDefinition Build(string name) =>
         new(name, _inherits, _firstPhase, _secondPhase, _secondPhaseRerankCount,
-            _globalPhase, _globalPhaseRerankCount, _functions.Values.ToArray());
+            _globalPhase, _globalPhaseRerankCount, _functions.Values.ToArray(), _queryInputs.ToArray());
 
     internal static string ValidateProfileName(string name, string paramName)
     {

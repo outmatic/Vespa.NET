@@ -224,13 +224,7 @@ public sealed partial class FeedOperations(
                     }
                     catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
                     {
-                        accumulator.IncrementFailure();
-                        accumulator.AddError(new FeedError
-                        {
-                            DocumentId = doc.Id,
-                            Message = ex.Message,
-                            StatusCode = (ex as VespaException)?.StatusCode
-                        });
+                        accumulator.RecordFailure(doc.Id, ex);
                         onError(doc.Id, ex);
                     }
 

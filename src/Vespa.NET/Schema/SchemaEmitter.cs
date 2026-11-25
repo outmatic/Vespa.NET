@@ -144,11 +144,14 @@ internal static class SchemaEmitter
         var inherits = profile.Inherits is not null ? $" inherits {profile.Inherits}" : "";
         w.Open($"rank-profile {profile.Name}{inherits}");
 
-        if (profile.EmitInputs && tensorInputs.Count > 0)
+        if (profile.EmitInputs || profile.QueryInputs.Count > 0)
         {
             w.Open("inputs");
-            foreach (var (queryName, tensorType) in tensorInputs)
-                w.Line($"{queryName} {tensorType}");
+            if (profile.EmitInputs)
+                foreach (var (queryName, tensorType) in tensorInputs)
+                    w.Line($"{queryName} {tensorType}");
+            foreach (var (name, defaultValue) in profile.QueryInputs)
+                w.Line(FormattableString.Invariant($"query({name}) double: {defaultValue:R}"));
             w.Close();
         }
 

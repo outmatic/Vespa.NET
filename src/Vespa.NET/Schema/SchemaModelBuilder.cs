@@ -390,9 +390,6 @@ internal sealed class SchemaModelBuilder
                 DiversityAttribute = rp.DiversityAttribute,
                 DiversityMinGroups = rp.DiversityMinGroups
             };
-#pragma warning disable CS0618 // Functions is obsolete but still honored
-            profile.Functions.AddRange(ParseFunctionsDsl(rp.Functions, rp.Name));
-#pragma warning restore CS0618
             profiles.Add(profile);
         }
 
@@ -416,6 +413,14 @@ internal sealed class SchemaModelBuilder
                     throw new InvalidOperationException(
                         $"Rank profile '{definition.Name}' already has an attribute declaration on type '{type.Name}'.");
 
+                foreach (var (name, _) in definition.QueryInputs)
+                {
+                    var queryName = $"query({name})";
+                    if (tensorInputs.Exists(input => input.QueryName == queryName))
+                        throw new InvalidOperationException(
+                            $"Scalar input '{name}' in rank profile '{definition.Name}' conflicts with a generated tensor input.");
+                }
+
                 var profile = new RankProfileModel
                 {
                     Name = definition.Name,
@@ -424,7 +429,8 @@ internal sealed class SchemaModelBuilder
                     SecondPhase = definition.SecondPhase,
                     SecondPhaseRerankCount = definition.SecondPhaseRerankCount,
                     GlobalPhase = definition.GlobalPhase,
-                    GlobalPhaseRerankCount = definition.GlobalPhaseRerankCount
+                    GlobalPhaseRerankCount = definition.GlobalPhaseRerankCount,
+                    QueryInputs = definition.QueryInputs
                 };
                 profile.Functions.AddRange(definition.Functions);
                 if (existing >= 0)
@@ -467,24 +473,6 @@ internal sealed class SchemaModelBuilder
                 $"{profiles.Count} rank profiles exist ({string.Join(", ", profiles.Select(p => p.Name))}). " +
                 "Set Profile to pick one.")
         };
-    }
-
-    private static IEnumerable<RankFunctionModel> ParseFunctionsDsl(string? functions, string profileName)
-    {
-        if (functions is null)
-            yield break;
-
-        foreach (var entry in functions.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var colonIdx = entry.IndexOf(':');
-            if (colonIdx <= 0 || colonIdx == entry.Length - 1)
-                throw new InvalidOperationException(
-                    $"Invalid Functions entry '{entry}' in rank profile '{profileName}': " +
-                    "expected 'signature: expression'. Prefer [VespaRankFunction(signature, expression)], " +
-                    "which also supports expressions containing ':' or ';'.");
-
-            yield return new RankFunctionModel(entry[..colonIdx].Trim(), entry[(colonIdx + 1)..].Trim());
-        }
     }
 
     // ── Name tables ───────────────────────────────────────────────────────────
@@ -532,10 +520,8 @@ internal sealed class SchemaModelBuilder
         DistanceMetric.DotProduct => "dotproduct",
         DistanceMetric.Hamming => "hamming",
         DistanceMetric.Geodesic => "geodegrees",
-#pragma warning disable CS0618 // mapped to its successor for backward compatibility
-        DistanceMetric.InnerProduct => "prenormalized-angular",
-#pragma warning restore CS0618
-        DistanceMetric.PrenormalizedAngular => "prenormalized-angular",
+        // Compiled attributes and saved numeric settings can still contain the former InnerProduct value.
+        (DistanceMetric)6 or DistanceMetric.PrenormalizedAngular => "prenormalized-angular",
         _ => null
     };
 

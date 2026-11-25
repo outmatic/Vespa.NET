@@ -7,18 +7,13 @@ namespace Vespa.Models.Attributes;
 /// Specifies tensor metadata for schema generation and type-aware reading of
 /// value-only JSON formats such as <c>hex-value</c>.
 /// </summary>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
 public class VespaTensorAttribute : Attribute
 {
     /// <summary>
     /// Vespa tensor type specification
     /// </summary>
     public TensorTypeSpec TensorTypeSpec { get; }
-
-    /// <summary>
-    /// Preferred format for JSON serialization
-    /// </summary>
-    public TensorFormat PreferredFormat { get; set; } = TensorFormat.IndexedDense;
 
     /// <summary>
     /// Whether this tensor should be indexed for approximate nearest neighbor search.

@@ -54,16 +54,16 @@ public static class OutputFormatter
     public static void PrintBulkOperationResult(FeedResult result)
     {
         var successRate = result.SuccessRate * 100;
-        var throughput = result.TotalDocuments / Math.Max(result.Duration.TotalSeconds, 0.001);
+        var throughput = result.TotalOperations / Math.Max(result.Duration.TotalSeconds, 0.001);
         var color = result.IsSuccess ? "green" : (successRate > 50 ? "yellow" : "red");
         var icon = result.IsSuccess ? "✓" : "⚠";
 
         var grid = new Grid().AddColumn().AddColumn();
         grid.AddRow(
             new Markup($"[{color}]{icon}[/] Completed:"),
-            new Markup($"[bold]{result.SuccessCount:N0}[/] / {result.TotalDocuments:N0} ([{color}]{successRate:F1}%[/])"));
+            new Markup($"[bold]{result.SuccessCount:N0}[/] / {result.TotalOperations:N0} ([{color}]{successRate:F1}%[/])"));
         grid.AddRow(new Markup("⏱  Duration:"), new Markup($"[bold]{result.Duration.TotalSeconds:F2}s[/]"));
-        grid.AddRow(new Markup("🚀 Throughput:"), new Markup($"[bold]{throughput:F0}[/] docs/sec"));
+        grid.AddRow(new Markup("🚀 Throughput:"), new Markup($"[bold]{throughput:F0}[/] ops/sec"));
 
         var panel = new Panel(grid) { Border = BoxBorder.Rounded, Padding = new Padding(1, 0) };
         panel.BorderColor(result.IsSuccess ? Color.Green : Color.Yellow);
