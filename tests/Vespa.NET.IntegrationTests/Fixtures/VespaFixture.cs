@@ -202,6 +202,11 @@ public sealed record TestProduct
         IndexType = TensorIndexType.None, DistanceMetric = DistanceMetric.None)]
     public VespaTensor? DenseDouble { get; init; }
 
+    [VespaField(Name = "block_scores")]
+    [VespaTensor("tensor<float>(cat{},x[2])", IncludeInSummary = true,
+        IndexType = TensorIndexType.None, DistanceMetric = DistanceMetric.None)]
+    public VespaTensor? BlockScores { get; init; }
+
     /// <summary>Mixed tensor with two mapped dimensions — exercises the blocks form.</summary>
     [VespaField(Name = "block_weights")]
     [VespaTensor("tensor<float>(a{},b{},x[2])", IncludeInSummary = true,

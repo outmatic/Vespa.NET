@@ -242,3 +242,7 @@ Rebuild applications and libraries that use the model-aware document extensions 
 `RankingBuilder.MatchPhase` uses nullable `SortDirection`. Replace `ascending: true` with `direction: SortDirection.Ascending` and `ascending: false` with `direction: SortDirection.Descending`. Omit the direction to use Vespa's configured order. If you set `RankingConfig.MatchPhaseAscending` directly, it still accepts the nullable boolean used by the Query API.
 
 Rebuild callers of these builder methods, including calls that omit the direction.
+
+## Tensor modify operations
+
+`FieldOp.Modify`, `ModifyCells`, and `ModifyBlocks` take `TensorModifyOperation`. Replace `"replace"`, `"add"`, and `"multiply"` with `TensorModifyOperation.Replace`, `Add`, and `Multiply` respectively, then rebuild callers of those factories. Vespa receives the same lowercase operation names. [Field-level updates](document-operations.md#field-level-updates)

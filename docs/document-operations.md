@@ -154,7 +154,7 @@ await client.Documents.UpdateFieldsAsync(product.Id, new Dictionary<string, Fiel
     ["view_count"] = FieldOp.Increment(1),
     ["price"]      = FieldOp.Assign(99.99m),
     ["tags"]       = FieldOp.Add("sale"),
-    ["embedding"]  = FieldOp.Modify("replace", [new TensorCellUpdate(new() { ["x"] = "0" }, 5.0)]),
+    ["embedding"]  = FieldOp.Modify(TensorModifyOperation.Replace, [new TensorCellUpdate(new() { ["x"] = "0" }, 5.0)]),
     ["old_field"]  = FieldOp.ClearField()
 }, documentType: "product");
 ```
@@ -178,7 +178,7 @@ await client.Documents.UpdateFieldsAsync(product.Id, new Dictionary<string, Fiel
 | `FieldOp.TensorAdd(cells)` | Add cells to a mapped/mixed tensor (`{"add":{"cells":[…]}}`) |
 | `FieldOp.TensorRemove(addresses)` | Remove cells/blocks by address (`{"remove":{"addresses":[…]}}`) |
 
-For tensor `modify`, set `create: true` to create missing cells. Vespa supports this flag from 8.217.46 for an existing tensor and from 8.218.31 when the tensor field is unset. Newly created mapped cells start at zero for `replace` and `add`, and at one for `multiply`. [Document JSON](https://docs.vespa.ai/en/reference/schemas/document-json-format.html#modify-tensors) · [Vespa operation defaults](https://github.com/vespa-engine/vespa/blob/v8.217.46/document/src/main/java/com/yahoo/document/update/TensorModifyUpdate.java#L60)
+Pass `TensorModifyOperation.Replace`, `Add`, or `Multiply` to the tensor modify factories. Set `create: true` to create missing cells. Vespa supports this flag from 8.217.46 for an existing tensor and from 8.218.31 when the tensor field is unset. Newly created mapped cells start at zero for `replace` and `add`, and at one for `multiply`. [Document JSON](https://docs.vespa.ai/en/reference/schemas/document-json-format.html#modify-tensors) · [Vespa operation defaults](https://github.com/vespa-engine/vespa/blob/v8.217.46/document/src/main/java/com/yahoo/document/update/TensorModifyUpdate.java#L60)
 
 ### Typed Lambda Builder
 
