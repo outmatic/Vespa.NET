@@ -16,6 +16,18 @@ public static class VespaSchemaBuilder
     public static string GenerateSchema(Type type) =>
         SchemaEmitter.Emit(SchemaModelBuilder.Build(type));
 
+    /// <summary>Generates the schema for <typeparamref name="T"/> with its configured runtime rank profiles.</summary>
+    public static string GenerateSchema<T>(ApplicationPackageOptions options) where T : class =>
+        GenerateSchema(typeof(T), options);
+
+    /// <summary>Generates the schema for a type with its configured runtime rank profiles.</summary>
+    public static string GenerateSchema(Type type, ApplicationPackageOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(options);
+        return SchemaEmitter.Emit(SchemaModelBuilder.Build(type, options.RankProfiles?.GetValueOrDefault(type)));
+    }
+
     /// <summary>Generates a ZIP application package for <typeparamref name="T"/> and writes it to the output stream.</summary>
     public static void GenerateApplicationPackage<T>(Stream output, ApplicationPackageOptions? options = null)
         where T : class => GenerateApplicationPackage(output, typeof(T), options);

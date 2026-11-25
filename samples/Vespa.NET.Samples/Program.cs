@@ -165,12 +165,12 @@ internal static class Program
         AnsiConsole.MarkupLine($"[green]Query returned[/] {result.Root.Children.Count} hits " +
                                $"[dim](totalCount={result.Root.Fields?.TotalCount})[/]");
 
-        // M7: NearestNeighbor with annotations (label, approximate, distanceThreshold)
+        // NearestNeighbor with an explicit search mode, label and distance threshold.
         var nnYql = YqlBuilder
             .Select()
             .From<Transaction>()
             .Where(w => w.NearestNeighbor("embedding", "q",
-                targetHits: 5, label: "txEmb", approximate: true, distanceThreshold: 100.0))
+                targetHits: 5, label: "txEmb", mode: NearestNeighborMode.Approximate, distanceThreshold: 100.0))
             .Build();
         AnsiConsole.MarkupLine($"[dim]NN+annotations:[/] [yellow]{Markup.Escape(nnYql)}[/]");
 

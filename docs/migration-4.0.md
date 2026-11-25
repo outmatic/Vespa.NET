@@ -246,3 +246,17 @@ Rebuild callers of these builder methods, including calls that omit the directio
 ## Tensor modify operations
 
 `FieldOp.Modify`, `ModifyCells`, and `ModifyBlocks` take `TensorModifyOperation`. Replace `"replace"`, `"add"`, and `"multiply"` with `TensorModifyOperation.Replace`, `Add`, and `Multiply` respectively, then rebuild callers of those factories. Vespa receives the same lowercase operation names. [Field-level updates](document-operations.md#field-level-updates)
+
+## Nearest-neighbor search mode
+
+`NearestNeighbor` and `HybridSearch` in the YQL builder accept `NearestNeighborMode?` in place of `bool? approximate`. Replace `approximate: false` with `mode: NearestNeighborMode.Exact`, and `approximate: true` with `mode: NearestNeighborMode.Approximate`. Omit `mode` to keep the server default. Rebuild callers of these methods. [Nearest-neighbor search](search.md#nearest-neighbor-search)
+
+## Term annotations
+
+`ContainsAnnotated` takes a `YqlTermAnnotations` object. Move options such as `filter: true, stem: false` to `new() { Filter = true, Stem = false }`. Use `Contains(value)` for an unannotated term. Pass a nonblank term and a non-null options object to `ContainsAnnotated`. Rebuild callers of the former signature.
+
+- Replace `termId: 4` by itself with `new() { TermId = 4 }`.
+- Replace `termId: 4, connectivityWeight: 0.8` with `new() { Connectivity = new(4, 0.8) }`. In this call, `4` identifies the other term.
+- A standalone `connectivityWeight` was ignored. Drop it or supply a target ID and weight in `Connectivity` to create a link.
+
+Set both `TermId` and `Connectivity` to identify a term that also links to another term. [Annotated terms](yql-builder.md#field-predicates)

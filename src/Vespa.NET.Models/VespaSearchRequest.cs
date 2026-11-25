@@ -147,7 +147,7 @@ public sealed class VespaSearchRequest
     [JsonPropertyName("model.defaultIndex")]
     public string? ModelDefaultIndex { get; set; }
 
-    /// <summary>Additional filter combined with the query.</summary>
+    /// <summary>Native Simple Query Language filter combined with <see cref="ModelQueryString"/>.</summary>
     [JsonPropertyName("model.filter")]
     public string? ModelFilter { get; set; }
 
@@ -166,7 +166,7 @@ public sealed class VespaSearchRequest
     [JsonPropertyName("model.encoding")]
     public string? ModelEncoding { get; set; }
 
-    /// <summary>Simple query language query text.</summary>
+    /// <summary>The query string read by <c>userQuery()</c> and parsed according to <see cref="ModelType"/>.</summary>
     [JsonPropertyName("model.queryString")]
     public string? ModelQueryString { get; set; }
 
@@ -249,7 +249,7 @@ public sealed class VespaSearchRequest
     [JsonPropertyName("searchChain")]
     public string? SearchChain { get; set; }
 
-    /// <summary>Non-ranked filter constraints.</summary>
+    /// <summary>Non-ranked Simple Query Language constraints. Prefix every term with <c>+</c> or <c>-</c>.</summary>
     [JsonPropertyName("recall")]
     public string? Recall { get; set; }
 

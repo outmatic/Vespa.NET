@@ -15,7 +15,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The feed pipeline (Vespa.NET) populates FeedResult via internal mutators. -->
+    <!-- The schema builder shares runtime rank profile definitions with package options. -->
+    <InternalsVisibleTo Include="Vespa.NET" />
     <InternalsVisibleTo Include="Vespa.NET.Tests" />
   </ItemGroup>
 

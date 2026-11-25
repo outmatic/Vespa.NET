@@ -22,6 +22,14 @@ internal static class ApplicationPackageWriter
         ValidatePackageOptions(opts);
         if (opts.DocumentSelections is { Count: > 0 })
             documentTypes = ValidateDocumentSelections(documentTypes, opts);
+        if (opts.RankProfiles is { Count: > 0 } rankProfiles)
+        {
+            var types = documentTypes.ToArray();
+            foreach (var target in rankProfiles.Keys)
+                if (!types.Contains(target))
+                    throw new ArgumentException($"Rank profile target '{target.Name}' is not included in the package.", nameof(options));
+            documentTypes = types;
+        }
 
         using var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
 
@@ -38,7 +46,7 @@ internal static class ApplicationPackageWriter
 
         foreach (var type in documentTypes)
         {
-            var model = SchemaModelBuilder.Build(type);
+            var model = SchemaModelBuilder.Build(type, opts.RankProfiles?.GetValueOrDefault(type));
             var schema = SchemaEmitter.Emit(model);
             var docAttr = type.GetCustomAttribute<VespaDocumentAttribute>()!;
             // ZipArchive happily writes duplicate entries, producing an ambiguous package

@@ -49,7 +49,7 @@ var yql = YqlBuilder
 | Method | YQL Output |
 |---|---|
 | `.Contains("text")` | `field contains "text"` |
-| `.ContainsAnnotated("text", filter: true)` | `field contains ({filter: true}"text")` |
+| `.ContainsAnnotated("text", new() { Filter = true })` | `field contains ({filter: true}"text")` |
 | `.Text("value")` | `field contains text("value")` |
 | `.Matches("regex.*")` | `field matches "regex.*"` |
 | `.EqualTo(val)` | `field = val` |
@@ -67,10 +67,16 @@ var yql = YqlBuilder
 | `.SameElement(...)` | `field contains sameElement(...)` — `elementFilter: [0, 2]` adds `{elementFilter:[0, 2]}` |
 | `.Uri("vespa.ai")` | `field contains uri("vespa.ai")` (deprecated upstream) |
 
-`ContainsAnnotated` supports the full set of term annotations: `filter`, `weight`,
-`prefix`/`suffix`/`substring`, `significance`, `ranked`, `language`, `nfkc`,
-`implicitTransforms`, `stem`, `normalizeCase`, `accentDrop`, `usePositionData`
-and connectivity (`termId` + `connectivityWeight`).
+Pass a `YqlTermAnnotations` object to set term weight, ranking, matching, or linguistic options. Omitted properties use Vespa's defaults. Set `TermId` to identify the current term and `Connectivity` to give the target term's ID and a proximity weight. [Vespa term annotations](https://docs.vespa.ai/en/reference/querying/yql.html#annotations)
+
+```csharp
+var query = YqlBuilder<Product>.Select().Where(w =>
+{
+    var name = w.Field(p => p.Name);
+    name.ContainsAnnotated("wireless", new() { TermId = 1, Connectivity = new(2, 0.8) });
+    name.ContainsAnnotated("headphones", new() { TermId = 2 });
+}).Build();
+```
 
 ## Clause-Level Predicates
 
@@ -86,7 +92,8 @@ Vespa added `totalTargetHits` in different releases for each operator: 8.639.59 
 | `w.WeightedSet("f", tokens)` | `weightedSet(f, {...})` |
 | `w.GeoLocation("pos", lat, lon, 10.0)` | `geoLocation(pos, lat, lon, "10km")` |
 | `w.GeoBoundingBox("pos", s, w, n, e)` | `geoBoundingBox(pos, s, w, n, e)` |
-| `w.UserQuery("free text")` | `userQuery()` — the text travels in `model.queryString`, set by `ToSearchRequest()`/`WithYql()` |
+| `w.UserQuery("query expression")` | `userQuery()` reads `model.queryString`, set by `ToSearchRequest()` or `WithYql()` |
+| `w.UserQuery()` | `userQuery()` reads the [model query set on the request](search.md#user-text-and-model-filters) |
 | `w.UserInput("param")` | `userInput(@param)` |
 | `w.Rank(...)` | `rank(...)` |
 | `w.Not(n => ...)` | `!( ... )` |

@@ -249,9 +249,9 @@ public class SearchRequestSerializationTests
     [Fact]
     public void Recall_Serializes()
     {
-        var req = new VespaSearchRequest { Yql = "select * from music;", Recall = "title:rock" };
-        var json = JsonSerializer.Serialize(req, JsonOpts);
-        Assert.Contains("\"recall\":\"title:rock\"", json);
+        var req = new VespaSearchRequest { Yql = "select * from music;", Recall = "+title:rock" };
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(req, JsonOpts));
+        Assert.Equal("+title:rock", json.RootElement.GetProperty("recall").GetString());
     }
 
     [Fact]

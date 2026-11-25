@@ -60,6 +60,25 @@ function. `Profile` may be omitted when the type declares a single rank profile.
 (The legacy semicolon-separated `Functions` string property still works but is
 obsolete — it cannot express expressions containing `:` or `;`.)
 
+### Build a rank profile at runtime
+
+Use `WithRankProfile<T>` when the formula depends on application configuration or when you want field references checked by C#. For BM25, set `EnableBm25 = true` on the indexed string field's `[VespaField]` attribute. In this example, `Popularity` is an attribute field.
+
+```csharp
+using Vespa.Models.Schema;
+
+var options = new ApplicationPackageOptions()
+    .WithRankProfile<Product>("hybrid", profile => profile
+        .Inherits("default")
+        .FirstPhase(0.7 * profile.Bm25(p => p.Title) + 0.3 * profile.Closeness(p => p.Embedding))
+        .Function("weighted_popularity", profile.Attribute(p => p.Popularity) * RankExpression.Reference("weight"), "weight")
+        .SecondPhase(RankExpression.Call("weighted_popularity", 2), rerankCount: 100));
+
+await client.Admin.DeploySchemaAsync<Product>(options);
+```
+
+Select the deployed profile with `WithRankProfile("hybrid")` on the search request. Use `GlobalPhase` for reranking after Vespa merges the hits from the content nodes. Pass native ranking syntax to `RankExpression.Raw` for formulas such as tensor reductions or cross-hit normalization. Use `VespaSchemaBuilder.GenerateSchema<Product>(options)` to inspect the schema before deployment. [Ranking expressions](https://docs.vespa.ai/en/reference/ranking/ranking-expressions.html) · [Phased ranking](https://docs.vespa.ai/en/ranking/phased-ranking.html)
+
 ### Rank Profile Options
 
 | Property | Description |

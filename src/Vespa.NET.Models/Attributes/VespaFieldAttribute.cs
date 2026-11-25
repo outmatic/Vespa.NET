@@ -61,6 +61,9 @@ public class VespaFieldAttribute : Attribute
     /// </summary>
     public bool FastSearch { get; set; }
 
+    /// <summary>Enables BM25 scoring on an indexed string field or collection of strings.</summary>
+    public bool EnableBm25 { get; set; }
+
     /// <summary>
     /// Normalizing mode for this field.
     /// </summary>

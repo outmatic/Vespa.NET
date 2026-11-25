@@ -24,11 +24,11 @@ public interface ISearchOperations
     /// <param name="queryEmbedding">Dense query vector.</param>
     /// <param name="embeddingField">Tensor field to search.</param>
     /// <param name="documentType">Document type to search.</param>
-    /// <param name="topK">Number of neighbors to retrieve and return.</param>
+    /// <param name="topK">Candidate target for ranking and maximum number of hits returned.</param>
     /// <param name="filter">
     /// Optional raw YQL predicate AND'ed with the nearest-neighbor operator.
-    /// <b>Warning:</b> embedded verbatim without validation or escaping — do not pass
-    /// unvalidated end-user input; build it with <c>YqlBuilder</c> where possible.
+    /// The predicate is embedded verbatim. To compose a query with typed filters, use
+    /// <c>YqlBuilder</c> to build the complete request and pass it to <c>SearchAsync</c>.
     /// </param>
     /// <param name="rankProfile">Optional rank profile name.</param>
     /// <param name="cancellationToken">Cancellation token.</param>

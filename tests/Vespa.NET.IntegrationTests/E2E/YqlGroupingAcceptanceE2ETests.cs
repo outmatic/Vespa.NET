@@ -395,11 +395,53 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
 
             var yql = YqlBuilder<TestProduct>.Select()
                 .Where(w => w.Field(p => p.Description)
-                    .ContainsAnnotated(term, weight: 200, ranked: true, stem: false))
+                    .ContainsAnnotated(term, new() { Weight = 200, Ranked = true, Stem = false }))
                 .Build();
 
             var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql);
             Assert.Single(result.Root.Children);
+        }
+        finally
+        {
+            await fixture.Client.Documents.DeleteAsync<TestProduct>(id);
+        }
+    }
+
+    [Fact]
+    public async Task TermAnnotations_ConnectedTermsCanCarryTheirOwnIds()
+    {
+        if (!Enabled) return;
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        var id = NewId();
+        var term = $"annot{Guid.NewGuid():N}";
+        try
+        {
+            var put = await fixture.Client.Documents.PutAsync(id,
+                new TestProduct { Name = "annotated", Description = $"{term} wireless headphones" },
+                cancellationToken: token);
+            Assert.True(put.IsSuccess);
+
+            var request = YqlBuilder<TestProduct>.Select().Where(w =>
+            {
+                var description = w.Field(p => p.Description);
+                description.ContainsAnnotated(term, new() { TermId = 1, Connectivity = new(2, 0.8) });
+                description.ContainsAnnotated("wireless", new() { TermId = 2, Connectivity = new(3, 0.6) });
+                description.ContainsAnnotated("headphones", new() { TermId = 3 });
+            }).ToSearchRequest();
+
+            while (true)
+            {
+                var result = await fixture.Client.Search.SearchAsync<TestProduct>(request, token);
+                Assert.Empty(result.Root.Errors ?? []);
+                if (result.Root.Children.Count > 0)
+                {
+                    Assert.Equal(id, Assert.Single(result.Root.Children).Id);
+                    break;
+                }
+                await Task.Delay(200, token);
+            }
         }
         finally
         {
@@ -426,7 +468,7 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
 
             // tag is a (non-indexed) string attribute — prefix matching is supported there
             var yql = YqlBuilder<TestProduct>.Select()
-                .Where(w => w.Field(p => p.Tag).ContainsAnnotated(tag[..12], prefix: true))
+                .Where(w => w.Field(p => p.Tag).ContainsAnnotated(tag[..12], new() { Prefix = true }))
                 .Build();
 
             var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql);
@@ -461,7 +503,7 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
 
             // Cold streaming visits routinely exceed Vespa's 500 ms default query timeout
             var suffixRequest = YqlBuilder.Select().From("event")
-                .Where(w => w.Field("event_name").ContainsAnnotated("suffixdoc", suffix: true))
+                .Where(w => w.Field("event_name").ContainsAnnotated("suffixdoc", new() { Suffix = true }))
                 .ToSearchRequest()
                 .WithTimeout(TimeSpan.FromSeconds(10));
             suffixRequest.StreamingGroupName = group;
@@ -469,7 +511,7 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             Assert.NotNull(suffixResult.Root);
 
             var substringRequest = YqlBuilder.Select().From("event")
-                .Where(w => w.Field("event_name").ContainsAnnotated("ingsuffix", substring: true))
+                .Where(w => w.Field("event_name").ContainsAnnotated("ingsuffix", new() { Substring = true }))
                 .ToSearchRequest()
                 .WithTimeout(TimeSpan.FromSeconds(10));
             substringRequest.StreamingGroupName = group;

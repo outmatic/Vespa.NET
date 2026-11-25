@@ -20,7 +20,7 @@ internal sealed class SchemaModelBuilder
         string? MapValueType = null,
         Type? MapValueStructType = null);
 
-    public static SchemaModel Build(Type type)
+    public static SchemaModel Build(Type type, IReadOnlyList<RankProfileDefinition>? rankProfiles = null)
     {
         ArgumentNullException.ThrowIfNull(type);
 
@@ -28,10 +28,11 @@ internal sealed class SchemaModelBuilder
             ?? throw new InvalidOperationException(
                 $"Type '{type.Name}' must be decorated with [VespaDocument].");
 
-        return new SchemaModelBuilder().BuildCore(type, docAttr);
+        return new SchemaModelBuilder().BuildCore(type, docAttr, rankProfiles);
     }
 
-    private SchemaModel BuildCore(Type type, VespaDocumentAttribute docAttr)
+    private SchemaModel BuildCore(
+        Type type, VespaDocumentAttribute docAttr, IReadOnlyList<RankProfileDefinition>? rankProfiles)
     {
         var fields = new List<SchemaFieldModel>();
         var tensorInputs = new List<(string QueryName, string TensorType)>();
@@ -63,7 +64,7 @@ internal sealed class SchemaModelBuilder
             OnnxModels = [.. type.GetCustomAttributes<VespaOnnxModelAttribute>()],
             FieldSets = [.. type.GetCustomAttributes<VespaFieldSetAttribute>()],
             DocumentSummaries = [.. type.GetCustomAttributes<VespaDocumentSummaryAttribute>()],
-            RankProfiles = BuildRankProfiles(type, tensorInputs)
+            RankProfiles = BuildRankProfiles(type, tensorInputs, rankProfiles)
         };
     }
 
@@ -86,6 +87,9 @@ internal sealed class SchemaModelBuilder
         var context = $"property '{prop.Name}' on type '{prop.DeclaringType?.Name}'";
         var resolved = ResolveDeclaredType(prop, fieldAttr, context);
         var mode = fieldAttr.IndexingMode;
+        if (fieldAttr.EnableBm25 && ((mode & IndexingMode.Index) == 0 ||
+            resolved.VespaType is not ("string" or "array<string>" or "weightedset<string>")))
+            throw new InvalidOperationException($"EnableBm25 requires an indexed string field ({context}).");
 
         string? indexing = null;
         IReadOnlyList<(string, string)> structFields = [];
@@ -174,6 +178,7 @@ internal sealed class SchemaModelBuilder
             Stemming = ToVespaStemmingName(fieldAttr.Stemming),
             Bolding = fieldAttr.Bolding,
             FastSearch = fieldAttr.FastSearch,
+            EnableBm25 = fieldAttr.EnableBm25,
             Normalizing = fieldAttr.Normalizing,
             Rank = rank,
             RankTypeName = rankTypeName,
@@ -192,6 +197,8 @@ internal sealed class SchemaModelBuilder
     {
         var name = ResolveFieldName(prop, fieldAttr);
         var context = $"property '{prop.Name}' on type '{prop.DeclaringType?.Name}'";
+        if (fieldAttr?.EnableBm25 == true)
+            throw new InvalidOperationException($"EnableBm25 requires an indexed string field ({context}).");
         var typeStr = tensorAttr.GetTensorTypeString();
         var mode = fieldAttr?.IndexingMode ?? IndexingMode.None;
 
@@ -362,7 +369,8 @@ internal sealed class SchemaModelBuilder
 
     private static List<RankProfileModel> BuildRankProfiles(
         Type type,
-        List<(string QueryName, string TensorType)> tensorInputs)
+        List<(string QueryName, string TensorType)> tensorInputs,
+        IReadOnlyList<RankProfileDefinition>? runtimeProfiles)
     {
         var profiles = new List<RankProfileModel>();
 
@@ -388,10 +396,43 @@ internal sealed class SchemaModelBuilder
             profiles.Add(profile);
         }
 
-        // Auto-generate a "default" profile carrying the tensor query inputs, unless
-        // the user declared their own "default" (two same-name profiles fail deployment).
+        RankProfileModel? generatedDefault = null;
         if (tensorInputs.Count > 0 && !profiles.Any(p => p.Name == "default"))
-            profiles.Insert(0, new RankProfileModel { Name = "default" });
+        {
+            generatedDefault = new RankProfileModel { Name = "default" };
+            profiles.Insert(0, generatedDefault);
+        }
+
+        // Bind attribute functions before adding runtime profiles so implicit targets stay stable.
+        foreach (var fn in type.GetCustomAttributes<VespaRankFunctionAttribute>())
+            ResolveFunctionTarget(fn, profiles, type).Functions.Add(new RankFunctionModel(fn.Signature, fn.Expression));
+
+        if (runtimeProfiles is not null)
+        {
+            foreach (var definition in runtimeProfiles)
+            {
+                var existing = profiles.FindIndex(profile => profile.Name == definition.Name);
+                if (existing >= 0 && (profiles[existing] != generatedDefault || profiles[existing].Functions.Count > 0))
+                    throw new InvalidOperationException(
+                        $"Rank profile '{definition.Name}' already has an attribute declaration on type '{type.Name}'.");
+
+                var profile = new RankProfileModel
+                {
+                    Name = definition.Name,
+                    Inherits = definition.Inherits,
+                    FirstPhase = definition.FirstPhase,
+                    SecondPhase = definition.SecondPhase,
+                    SecondPhaseRerankCount = definition.SecondPhaseRerankCount,
+                    GlobalPhase = definition.GlobalPhase,
+                    GlobalPhaseRerankCount = definition.GlobalPhaseRerankCount
+                };
+                profile.Functions.AddRange(definition.Functions);
+                if (existing >= 0)
+                    profiles[existing] = profile;
+                else
+                    profiles.Add(profile);
+            }
+        }
 
         // Emit the tensor inputs into every profile that does not (transitively)
         // inherit them from another generated profile — a profile inheriting only
@@ -400,9 +441,6 @@ internal sealed class SchemaModelBuilder
         foreach (var profile in profiles)
             profile.EmitInputs = tensorInputs.Count > 0
                 && (profile.Inherits is null || !names.Contains(profile.Inherits));
-
-        foreach (var fn in type.GetCustomAttributes<VespaRankFunctionAttribute>())
-            ResolveFunctionTarget(fn, profiles, type).Functions.Add(new RankFunctionModel(fn.Signature, fn.Expression));
 
         return profiles;
     }

@@ -3,35 +3,6 @@ using System.Globalization;
 namespace Vespa.Query;
 
 /// <summary>
-/// Optional per-term annotations for <c>contains</c> predicates
-/// (docs.vespa.ai/en/reference/query-language-reference.html, "Annotations").
-/// </summary>
-internal sealed record TermAnnotations(
-    bool? Filter = null,
-    int? TermId = null,
-    double? ConnectivityWeight = null,
-    bool? Stem = null,
-    bool? NormalizeCase = null,
-    bool? AccentDrop = null,
-    bool? UsePositionData = null,
-    int? Weight = null,
-    bool? Prefix = null,
-    bool? Suffix = null,
-    bool? Substring = null,
-    double? Significance = null,
-    bool? Ranked = null,
-    string? Language = null,
-    bool? Nfkc = null,
-    bool? ImplicitTransforms = null)
-{
-    public bool IsEmpty =>
-        Filter is null && TermId is null && ConnectivityWeight is null && Stem is null &&
-        NormalizeCase is null && AccentDrop is null && UsePositionData is null && Weight is null &&
-        Prefix is null && Suffix is null && Substring is null && Significance is null &&
-        Ranked is null && Language is null && Nfkc is null && ImplicitTransforms is null;
-}
-
-/// <summary>
 /// Represents an atomic YQL predicate or a composite (AND/OR) expression
 /// </summary>
 internal abstract class YqlPredicate
@@ -40,7 +11,7 @@ internal abstract class YqlPredicate
 
     // --- Atomic predicates ---
 
-    internal sealed class Contains(string field, string value, TermAnnotations? annotations = null) : YqlPredicate
+    internal sealed class Contains(string field, string value, YqlTermAnnotations? annotations = null) : YqlPredicate
     {
         public override string Build()
         {
@@ -160,9 +131,7 @@ internal abstract class YqlPredicate
     }
 
     /// <summary>
-    /// <c>userQuery()</c> — parses free-text user input using Vespa's simple query language.
-    /// The function takes no arguments: the text travels in the <c>model.queryString</c>
-    /// request parameter (set automatically by <c>ToSearchRequest()</c>/<c>WithYql()</c>).
+    /// <c>userQuery()</c> — parses <c>model.queryString</c> and combines it with <c>model.filter</c>.
     /// </summary>
     internal sealed class UserQuery : YqlPredicate
     {
@@ -455,14 +424,14 @@ internal abstract class YqlPredicate
 
     private static string Parenthesize(YqlPredicate p) => p is And or Or ? $"({p.Build()})" : p.Build();
 
-    private static List<string> BuildTermAnnotations(TermAnnotations a)
+    private static List<string> BuildTermAnnotations(YqlTermAnnotations a)
     {
         var annotations = new List<string>();
         if (a.Filter.HasValue) annotations.Add($"filter: {Bool(a.Filter.Value)}");
-        if (a.TermId.HasValue && a.ConnectivityWeight.HasValue)
-            annotations.Add($"connectivity: {{id: {a.TermId.Value}, weight: {a.ConnectivityWeight.Value.ToString(CultureInfo.InvariantCulture)}}}");
-        else if (a.TermId.HasValue)
-            annotations.Add($"id: {a.TermId.Value}");
+        if (a.TermId is { } termId)
+            annotations.Add($"id: {termId.ToString(CultureInfo.InvariantCulture)}");
+        if (a.Connectivity is { } connectivity)
+            annotations.Add(FormattableString.Invariant($"connectivity: {{id: {connectivity.TargetTermId}, weight: {connectivity.Weight}}}"));
         if (a.Weight.HasValue) annotations.Add($"weight: {a.Weight.Value}");
         if (a.Stem.HasValue) annotations.Add($"stem: {Bool(a.Stem.Value)}");
         if (a.NormalizeCase.HasValue) annotations.Add($"normalizeCase: {Bool(a.NormalizeCase.Value)}");

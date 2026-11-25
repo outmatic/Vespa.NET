@@ -23,8 +23,6 @@ internal enum FieldShape
 
 internal sealed record SchemaStructModel(string Name, IReadOnlyList<(string Name, string VespaType)> Fields);
 
-internal sealed record RankFunctionModel(string Signature, string Expression);
-
 internal sealed class RankProfileModel
 {
     public required string Name { get; init; }
@@ -51,6 +49,7 @@ internal sealed class SchemaFieldModel
     public string? Stemming { get; init; }
     public bool Bolding { get; init; }
     public bool FastSearch { get; init; }
+    public bool EnableBm25 { get; init; }
     public string? Normalizing { get; init; }
     public string? Rank { get; init; }
     public string? RankTypeName { get; init; }

@@ -9,6 +9,8 @@ public sealed record ApplicationPackageOptions
 {
     private readonly IReadOnlyDictionary<string, string>? _documentSelections;
 
+    internal IReadOnlyDictionary<Type, IReadOnlyList<RankProfileDefinition>>? RankProfiles { get; init; }
+
     /// <summary>
     /// Native keep selections keyed by document type. Values are copied when assigned.
     /// Selections control feed routing and enable garbage collection of non-matching documents.

@@ -22,6 +22,31 @@ foreach (var hit in response.Root.Children)
 
 HTTP failures preserve the primary server error from `root.errors` in `VespaException.Error`. Successful responses can still contain backend errors or degraded coverage: inspect `response.Root.Errors` and `response.Root.Coverage`.
 
+## User text and model filters
+
+Add `UserQuery()` to YQL and set the request's query text with `WithModelQueryText`. This selects Vespa's `tokenize` parser, so characters such as `+` and `-` in the user's text carry no query syntax. Set `ModelDefaultIndex` if the application uses a specific field or fieldset for unqualified words.
+
+```csharp
+using Vespa.Query;
+
+var filter = new SimpleQueryBuilder()
+    .Word("books", SimpleQueryOccurrence.Required, field: "category")
+    .Word("outdated", SimpleQueryOccurrence.Excluded, field: "description");
+
+var request = YqlBuilder<Product>.Select()
+    .Where(w => w.UserQuery())
+    .ToSearchRequest()
+    .WithModelQueryText(userText)
+    .WithModelFilter(filter);
+request.ModelDefaultIndex = "product_name";
+```
+
+The example sends `+category:books -description:outdated` in `model.filter`. A term with no sign in that parameter contributes to ranking. `Word` accepts letters, combining marks and digits. Use `Phrase` for a sequence of those words or set `ModelFilter` directly for native syntax such as ranges and grouped terms. [Vespa query parameters](https://docs.vespa.ai/en/reference/api/query.html#model.filter)
+
+Use `WithSimpleQuery(builder)` to compose the query itself. It sets `model.type` to `any`, where `+` requires a term and `-` excludes it. To pass a query expression as a string and choose the parser yourself, use `UserQuery(query)` or set `ModelQueryString` and `ModelType` on the request. [Simple Query Language](https://docs.vespa.ai/en/reference/querying/simple-query-language.html)
+
+Use `WithRecall(builder)` to apply required and excluded terms without contributing to the rank score. Give every word or phrase an explicit `Required` or `Excluded` occurrence. For other native recall syntax, set `Recall` on the request. [Recall parameter](https://docs.vespa.ai/en/reference/api/query.html#recall)
+
 ## Tensor Response Formats
 
 `PresentationFormatTensors = "hex-value"` omits tensor type information from the response. Declare `[VespaTensor("tensor<float>(x[384])")]` (using the actual schema type) on a `VespaTensor` property so the client can decode the correct cell width. The same metadata disambiguates mapped labels named `type`, `cells`, `blocks`, or `values` in value-only forms.
@@ -42,10 +67,10 @@ Hex data without a type is rejected with `JsonException` rather than decoded by 
 
 ## Nearest-Neighbor Search
 
-`NearestNeighborSearchAsync` generates `{totalTargetHits: topK}nearestNeighbor(...)`. Vespa added this annotation to `nearestNeighbor` in 8.639.59. The annotation sets a candidate target across the content group serving the query. The `filter` string is embedded verbatim in the YQL. Build it with `YqlBuilder` where possible and validate any user input. [Nearest-neighbor support](https://github.com/vespa-engine/vespa/pull/35803) · [YQL annotations](https://docs.vespa.ai/en/reference/querying/yql.html#totaltargethits)
+`NearestNeighborSearchAsync` uses `topK` for both `totalTargetHits` and the maximum number of returned hits. Vespa added the annotation in 8.639.59. The `filter` argument accepts a native YQL predicate. Use `YqlBuilder` and `SearchAsync` when composing typed filters or setting the candidate target and result limit independently. [Nearest-neighbor support](https://github.com/vespa-engine/vespa/pull/35803) · [YQL annotations](https://docs.vespa.ai/en/reference/querying/yql.html#totaltargethits)
 
 ```csharp
-// Lambda — resolves field name via [VespaTensor]
+// Infer the schema and embedding field from the model.
 var results = await client.Search.NearestNeighborSearchAsync<Product>(
     queryEmbedding, p => p.Embedding, topK: 10);
 
@@ -57,17 +82,23 @@ var results2 = await client.Search.NearestNeighborSearchAsync<Product>(
     filter: "price < 500",
     rankProfile: "semantic");
 
-// Via YQL builder with annotations (totalTargetHits preferred over per-node targetHits)
-var yql = YqlBuilder<Product>
+var request = YqlBuilder<Product>
     .Select()
-    .Where(w => w.NearestNeighbor(
-        p => p.Embedding, "query_embedding",
-        totalTargetHits: 100,
-        approximate: true,
-        distanceThreshold: 0.5,
-        hnswExploreAdditionalHits: 200))
-    .Build();
+    .Where(w =>
+    {
+        w.Field(p => p.Price).LessThan(500);
+        w.NearestNeighbor(p => p.Embedding, "query_embedding",
+            totalTargetHits: 100, mode: NearestNeighborMode.Approximate);
+    })
+    .Limit(10)
+    .ToSearchRequest()
+    .WithQueryTensor("query_embedding", queryEmbedding)
+    .WithRankProfile("semantic");
+
+var filtered = await client.Search.SearchAsync<Product>(request);
 ```
+
+Use `NearestNeighborMode.Exact` to request exact search. `NearestNeighborMode.Approximate` allows Vespa to use HNSW when an index is available. Omit `mode` to use Vespa's default for the field. The same option applies to the vector branch of `HybridSearch`. [Nearest-neighbor annotations](https://docs.vespa.ai/en/reference/querying/yql.html#nearestneighbor)
 
 ---
 

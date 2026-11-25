@@ -106,16 +106,17 @@ public sealed class YqlWhereClause
     /// Nearest-neighbor predicate with optional annotations.
     /// Prefer <paramref name="totalTargetHits"/> (hits over all content nodes) over the
     /// per-node <paramref name="targetHits"/>; when set, it replaces the targetHits annotation.
+    /// Omit <paramref name="mode"/> to use Vespa's default for the field.
     /// </summary>
     public YqlWhereClause NearestNeighbor(
         string field, string queryTensor, int targetHits = 10,
-        string? label = null, bool? approximate = null,
+        string? label = null, NearestNeighborMode? mode = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
         int? totalTargetHits = null, int? minTargetHits = null)
     {
         YqlIdentifier.Validate(field, nameof(field));
         YqlIdentifier.Validate(queryTensor, nameof(queryTensor));
-        return AddPredicate(new YqlPredicate.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits));
+        return AddPredicate(new YqlPredicate.NearestNeighbor(field, queryTensor, targetHits, label, ToApproximateAnnotation(mode), distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits));
     }
 
     /// <summary>
@@ -126,10 +127,10 @@ public sealed class YqlWhereClause
         Expression<Func<T, object?>> fieldSelector,
         string queryTensor,
         int targetHits = 10,
-        string? label = null, bool? approximate = null,
+        string? label = null, NearestNeighborMode? mode = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
         int? totalTargetHits = null, int? minTargetHits = null) where T : class
-        => NearestNeighbor(VespaDocumentMeta.FieldName(fieldSelector), queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
+        => NearestNeighbor(VespaDocumentMeta.FieldName(fieldSelector), queryTensor, targetHits, label, mode, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
 
     /// <summary>
     /// <c>[{targetHits:N}]weakAnd(pred1, pred2, ...)</c> — scores documents by weakly combining
@@ -181,20 +182,19 @@ public sealed class YqlWhereClause
     }
 
     /// <summary>
-    /// <c>userQuery()</c> — interprets free-text user input using Vespa's simple query
-    /// language. Safe to use directly with end-user input: the text is not embedded in
-    /// the YQL but sent via the <c>model.queryString</c> request parameter, set
-    /// automatically when the builder is converted with <c>ToSearchRequest()</c> or
-    /// <c>WithYql()</c>. When building the YQL string manually, set
-    /// <c>VespaSearchRequest.ModelQueryString</c> yourself.
+    /// Adds <c>userQuery()</c> and supplies its <c>model.queryString</c> when the builder
+    /// is converted to a search request. Vespa parses the string according to <c>model.type</c>.
     /// </summary>
     public YqlWhereClause UserQuery(string query)
     {
         UserQueryText = query;
-        return AddPredicate(new YqlPredicate.UserQuery());
+        return UserQuery();
     }
 
-    /// <summary>Free text captured by <see cref="UserQuery"/>, sent as <c>model.queryString</c>.</summary>
+    /// <summary>Adds <c>userQuery()</c>, which reads the model query set on the search request.</summary>
+    public YqlWhereClause UserQuery() => AddPredicate(new YqlPredicate.UserQuery());
+
+    /// <summary>Text captured by <see cref="UserQuery(string)"/>, sent as <c>model.queryString</c>.</summary>
     internal string? UserQueryText { get; private set; }
 
     /// <summary>
@@ -217,24 +217,32 @@ public sealed class YqlWhereClause
     /// <param name="userInputParam">The userInput parameter name (without @).</param>
     /// <param name="targetHits">Target number of nearest-neighbor hits per node; prefer <paramref name="totalTargetHits"/>.</param>
     /// <param name="label">Optional label for the nearest-neighbor operator.</param>
-    /// <param name="approximate">Whether to use approximate nearest-neighbor search.</param>
+    /// <param name="mode">Nearest-neighbor search mode. Omit it to use Vespa's default for the field.</param>
     /// <param name="distanceThreshold">Maximum distance threshold.</param>
     /// <param name="hnswExploreAdditionalHits">Extra HNSW exploration hits.</param>
     /// <param name="totalTargetHits">Wanted hits over all content nodes (preferred); replaces <paramref name="targetHits"/> when set.</param>
     public YqlWhereClause HybridSearch(
         string vectorField, string queryTensor, string userInputParam,
         int targetHits = 100,
-        string? label = null, bool? approximate = null,
+        string? label = null, NearestNeighborMode? mode = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
         int? totalTargetHits = null)
     {
         YqlIdentifier.Validate(vectorField, nameof(vectorField));
         YqlIdentifier.Validate(queryTensor, nameof(queryTensor));
         YqlIdentifier.Validate(userInputParam, nameof(userInputParam));
-        var nn = new YqlPredicate.NearestNeighbor(vectorField, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
+        var nn = new YqlPredicate.NearestNeighbor(vectorField, queryTensor, targetHits, label, ToApproximateAnnotation(mode), distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
         var ui = new YqlPredicate.UserInput(userInputParam);
         return AddPredicate(new YqlPredicate.HybridSearch(nn, ui));
     }
+
+    private static bool? ToApproximateAnnotation(NearestNeighborMode? mode) => mode switch
+    {
+        null => null,
+        NearestNeighborMode.Exact => false,
+        NearestNeighborMode.Approximate => true,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Expected a valid nearest-neighbor search mode.")
+    };
 
     /// <summary>Match no documents</summary>
     public YqlWhereClause False()
