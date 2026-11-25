@@ -166,7 +166,7 @@ public class YqlBuilderTests
     {
         // YQL order by accepts annotated fields; the raw overload is the documented escape hatch
         var yql = YqlBuilder.Select().From("music")
-            .OrderByRaw("""{"function":"uca","locale":"en_US"}name""", descending: true)
+            .OrderByRaw("""{"function":"uca","locale":"en_US"}name""", SortDirection.Descending)
             .Build();
 
         Assert.Contains("""order by {"function":"uca","locale":"en_US"}name desc""", yql);
@@ -359,7 +359,7 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder.Select().From("music")
             .Where(w => w.True())
-            .OrderBy("relevance", descending: true)
+            .OrderBy("relevance", SortDirection.Descending)
             .Build();
 
         Assert.Contains("order by relevance desc", yql);
@@ -379,8 +379,8 @@ public class YqlBuilderTests
     public void Build_MultipleOrderBy_ProducesCommaSeparatedClauses()
     {
         var yql = YqlBuilder.Select().From("music")
-            .OrderBy("relevance", descending: true)
-            .OrderBy("year", descending: false)
+            .OrderBy("relevance", SortDirection.Descending)
+            .OrderBy("year", SortDirection.Ascending)
             .Build();
 
         Assert.Contains("order by relevance desc, year asc", yql);
@@ -390,9 +390,9 @@ public class YqlBuilderTests
     public void Build_ThreeOrderByClauses_AllIncluded()
     {
         var yql = YqlBuilder.Select().From("music")
-            .OrderBy("relevance", descending: true)
-            .OrderBy("year", descending: false)
-            .OrderBy("title", descending: true)
+            .OrderBy("relevance", SortDirection.Descending)
+            .OrderBy("year", SortDirection.Ascending)
+            .OrderBy("title", SortDirection.Descending)
             .Build();
 
         Assert.Contains("order by relevance desc, year asc, title desc", yql);
@@ -402,11 +402,22 @@ public class YqlBuilderTests
     public void Build_TypedOrderBy_ResolvesFieldFromAttribute()
     {
         var yql = YqlBuilder<MusicModel>.Select()
-            .OrderBy(m => m.ArtistName, descending: true)
+            .OrderBy(m => m.ArtistName, SortDirection.Descending)
             .OrderBy(m => m.Year)
             .Build();
 
         Assert.Contains("order by artist_name desc, year asc", yql);
+    }
+
+    [Fact]
+    public void OrderBy_RejectsUnknownDirectionBeforeAddingTheKey()
+    {
+        var builder = YqlBuilder.Select().From("music").OrderBy("year");
+        var invalidDirection = (SortDirection)42;
+
+        Assert.Throws<ArgumentOutOfRangeException>("direction", () => builder.OrderBy("title", invalidDirection));
+        Assert.Throws<ArgumentOutOfRangeException>("direction", () => builder.OrderByRaw("title", invalidDirection));
+        Assert.Equal("select * from music where true order by year asc", builder.Build());
     }
 
     // --- Limit / Offset ---
@@ -471,7 +482,7 @@ public class YqlBuilderTests
                 .And(w2 => w2
                     .Field("genre").Contains("rock")
                     .Or(w3 => w3.Field("genre").Contains("jazz"))))
-            .OrderBy("relevance", descending: true)
+            .OrderBy("relevance", SortDirection.Descending)
             .Limit(10)
             .Offset(0)
             .Build();
@@ -505,16 +516,60 @@ public class YqlBuilderTests
         Assert.Equal("select * from music where true", request.Yql);
     }
 
-    [Fact]
-    public void WithYql_UpdatesExistingRequest()
+    [Theory]
+    [InlineData(null, null, 20, 5)]
+    [InlineData(0, null, 0, 5)]
+    [InlineData(null, 0, 20, 0)]
+    [InlineData(4, 7, 4, 7)]
+    public void WithYql_AppliesOnlyExplicitBuilderPagination(int? limit, int? offset, int expectedHits, int expectedOffset)
     {
-        var request = new VespaSearchRequest { Hits = 20 };
-        var builder = YqlBuilder.Select().From("music");
+        var untyped = YqlBuilder.Select().From("music");
+        var typed = YqlBuilder<MusicModel>.Select();
+        if (limit is { } hits)
+        {
+            untyped.Limit(hits);
+            typed.Limit(hits);
+        }
+        if (offset is { } start)
+        {
+            untyped.Offset(start);
+            typed.Offset(start);
+        }
+
+        var request = new VespaSearchRequest { Hits = 20, Offset = 5, ModelQueryString = "existing text" };
+        var typedRequest = new VespaSearchRequest { Hits = 20, Offset = 5, ModelQueryString = "existing text" };
+        Assert.Same(request, request.WithYql(untyped));
+        Assert.Same(typedRequest, typedRequest.WithYql(typed));
+
+        foreach (var result in new[] { request, typedRequest })
+        {
+            Assert.Equal("select * from music where true", result.Yql);
+            Assert.Equal(expectedHits, result.Hits);
+            Assert.Equal(expectedOffset, result.Offset);
+            Assert.Equal("existing text", result.ModelQueryString);
+        }
+    }
+
+    [Fact]
+    public void WithYql_PreservesRequestSettingsAndCopiesUserQueryAndGrouping()
+    {
+        var request = new VespaSearchRequest { ModelQueryString = "previous text" }
+            .WithRankProfile("music_rank")
+            .WithQueryTensor("q", new float[] { 1, 2 })
+            .WithUserInput("filter", "jazz");
+        var builder = YqlBuilder<MusicModel>.Select()
+            .Where(w => w.UserQuery("jazz classics"))
+            .Limit(0)
+            .GroupBy(GroupingBuilder.All().Group("genre").Each(e => e.Output(GroupingAgg.Count())));
 
         request.WithYql(builder);
 
-        Assert.Equal("select * from music where true", request.Yql);
-        Assert.Equal(20, request.Hits); // other properties preserved
+        Assert.Equal("select * from music where userQuery() | all(group(genre) each(output(count())))", request.Yql);
+        Assert.Equal("jazz classics", request.ModelQueryString);
+        Assert.Equal(0, request.Hits);
+        Assert.Equal("music_rank", request.Ranking?.Profile);
+        Assert.Equal("jazz", request.CustomParameters?["filter"]);
+        Assert.Equal(new float[] { 1, 2 }, Assert.IsType<float[]>(request.Input?["query(q)"]));
     }
 
     // --- Double / float formatting ---

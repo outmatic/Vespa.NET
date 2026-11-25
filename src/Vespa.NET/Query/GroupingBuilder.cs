@@ -4,7 +4,8 @@ using System.Text;
 namespace Vespa.Query;
 
 /// <summary>
-/// Fluent builder for a Vespa grouping expression appended to YQL with the pipe operator.
+/// Fluent builder for a Vespa grouping expression. Use it in a YQL pipe
+/// or assign the built expression to <c>VespaSearchRequest.Select</c>.
 /// <para>
 /// Example:
 /// <code>

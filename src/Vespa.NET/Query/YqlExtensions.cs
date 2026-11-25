@@ -11,50 +11,33 @@ public static class YqlExtensions
     /// Create a <see cref="VespaSearchRequest"/> from a <see cref="YqlBuilder"/>,
     /// capturing YQL, Hits (from Limit), and Offset.
     /// </summary>
-    public static VespaSearchRequest ToSearchRequest(this YqlBuilder builder)
-    {
-        var request = new VespaSearchRequest { Yql = builder.Build(includeLimitOffset: false) };
-        if (builder.GetLimit() is { } limit)
-            request.Hits = limit;
-        if (builder.GetOffset() is { } offset)
-            request.Offset = offset;
-        if (builder.GetUserQueryText() is { } userQuery)
-            request.ModelQueryString = userQuery;
-        return request;
-    }
+    public static VespaSearchRequest ToSearchRequest(this YqlBuilder builder) =>
+        new VespaSearchRequest().WithYql(builder);
 
     /// <inheritdoc cref="ToSearchRequest(YqlBuilder)"/>
-    public static VespaSearchRequest ToSearchRequest<T>(this YqlBuilder<T> builder) where T : class
-    {
-        var request = new VespaSearchRequest { Yql = builder.Build(includeLimitOffset: false) };
-        if (builder.GetLimit() is { } limit)
-            request.Hits = limit;
-        if (builder.GetOffset() is { } offset)
-            request.Offset = offset;
-        if (builder.GetUserQueryText() is { } userQuery)
-            request.ModelQueryString = userQuery;
-        return request;
-    }
+    public static VespaSearchRequest ToSearchRequest<T>(this YqlBuilder<T> builder) where T : class =>
+        builder.Inner.ToSearchRequest();
 
     /// <summary>
-    /// Set the YQL query on an existing request from a <see cref="YqlBuilder"/>
+    /// Set the YQL query on an existing request. Apply the builder's limit and offset
+    /// to <see cref="VespaSearchRequest.Hits"/> and <see cref="VespaSearchRequest.Offset"/>
+    /// when the builder sets them.
     /// </summary>
     public static VespaSearchRequest WithYql(this VespaSearchRequest request, YqlBuilder builder)
     {
-        request.Yql = builder.Build();
+        request.Yql = builder.Build(includeLimitOffset: false);
+        if (builder.GetLimit() is { } limit)
+            request.Hits = limit;
+        if (builder.GetOffset() is { } offset)
+            request.Offset = offset;
         if (builder.GetUserQueryText() is { } userQuery)
             request.ModelQueryString = userQuery;
         return request;
     }
 
     /// <inheritdoc cref="WithYql(VespaSearchRequest, YqlBuilder)"/>
-    public static VespaSearchRequest WithYql<T>(this VespaSearchRequest request, YqlBuilder<T> builder) where T : class
-    {
-        request.Yql = builder.Build();
-        if (builder.GetUserQueryText() is { } userQuery)
-            request.ModelQueryString = userQuery;
-        return request;
-    }
+    public static VespaSearchRequest WithYql<T>(this VespaSearchRequest request, YqlBuilder<T> builder) where T : class =>
+        request.WithYql(builder.Inner);
 
     /// <summary>
     /// Apply a <see cref="RankingBuilder"/> configuration to the request

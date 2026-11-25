@@ -215,16 +215,27 @@ GroupingBuilder.All().Group("category").Each(e => e
 
 ### Paginated streaming
 
-`GroupByStreamAsync` follows `GroupingSearchResponse.ContinuationTokens`
-automatically, passing them back through the YQL `continuations` annotation
-(Vespa has no `grouping.continuation` query parameter). For manual paging use
-`GroupingContinuations.Apply(yql, tokens)`.
+`GroupByStreamAsync` follows group-list continuations for a single grouping expression. Use either a YQL pipe built with `YqlBuilder.GroupBy(grouping)` or a separate `select` parameter. Both forms use the same grouping expression.
+
+```csharp
+var grouping = GroupingBuilder.All()
+    .Group("category")
+    .Max(5)
+    .Each(e => e.Output(GroupingAgg.Count()));
+
+var request = YqlBuilder<Product>.Select().Limit(0).ToSearchRequest();
+request.Select = grouping.Build();
+```
+
+`Select` carries a grouping expression string. Vespa also has a separate JSON query language with its own request shape. [Query API](https://docs.vespa.ai/en/reference/api/query.html#grouping-and-aggregation) · [JSON query language](https://docs.vespa.ai/en/reference/querying/json-query-language.html)
 
 ```csharp
 await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
     foreach (var list in page.AsTyped().GroupingResults)
         Console.WriteLine(list.Label);
 ```
+
+For manual paging with a YQL pipe, use `GroupingContinuations.Apply(yql, tokens)`. With `Select`, keep the expression and use `request.ShallowClone().WithParameter("continue", string.Join(' ', tokens))`. Pass the tokens in the order returned by `ContinuationTokens`.
 
 ---
 

@@ -1,6 +1,6 @@
 # Migrating to Vespa.NET 4.0
 
-This guide covers the planned 4.0 document API changes. The release date and the rest of the major's scope are still being decided. Model-aware calls require a `[VespaDocument]` attribute; calls with an explicit document type can use an undecorated model.
+This guide covers the planned 4.0 API changes. The release date and the rest of the major's scope are still being decided. Model-aware calls require a `[VespaDocument]` attribute; calls with an explicit document type can use an undecorated model.
 
 ## Vespa server compatibility
 
@@ -230,3 +230,15 @@ Rebuild applications and libraries that use the model-aware document extensions 
 ## Named client registration
 
 `Vespa.NET` is the HTTP client name reserved for the unnamed registration. Passing that exact name to the named `AddVespaClient` overload now throws `ArgumentException` during registration. If you used it as a keyed client name, choose a different name and update keyed lookups, health checks and any `IHttpClientFactory` calls intended for that client.
+
+## Search pagination with WithYql
+
+`WithYql(builder)` now copies the builder's explicit limit and offset to `Hits` and `Offset`. If the request already has `Offset=20` and the builder sets only `.Limit(10)`, the single search returns up to ten hits starting at offset 20. Set `.Offset(0)` to start at the beginning. Assign either request property after `WithYql` to override the builder value. [Search pagination](search.md#paged-search)
+
+## Sort direction
+
+`OrderBy` and `OrderByRaw` use `SortDirection`. Replace `descending: true` with `SortDirection.Descending` and `descending: false` with `SortDirection.Ascending`. Omitting the direction selects ascending order.
+
+`RankingBuilder.MatchPhase` uses nullable `SortDirection`. Replace `ascending: true` with `direction: SortDirection.Ascending` and `ascending: false` with `direction: SortDirection.Descending`. Omit the direction to use Vespa's configured order. If you set `RankingConfig.MatchPhaseAscending` directly, it still accepts the nullable boolean used by the Query API.
+
+Rebuild callers of these builder methods, including calls that omit the direction.

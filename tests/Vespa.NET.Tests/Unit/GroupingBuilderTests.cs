@@ -879,8 +879,10 @@ public class GroupingBuilderTests : IDisposable
         Assert.Equal("select * from music | all(group(genre) each(output(count())))", request.Yql);
     }
 
-    [Fact]
-    public async Task GroupByStreamAsync_TwoPages_YieldsBothAndSendsCorrectTokens()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GroupByStreamAsync_TwoPages_YieldsBothAndSendsCorrectTokens(bool useSelect)
     {
         var page1 = """
         {
@@ -924,7 +926,16 @@ public class GroupingBuilderTests : IDisposable
         _mockHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(page1) });
         _mockHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(page2) });
 
-        var request = new VespaSearchRequest { Yql = "select * from music | all(group(genre) each(output(count())))" };
+        const string baseYql = """select * from music where title contains "a|b" """;
+        const string grouping = "all(group(genre) each(output(count())))";
+        var request = new VespaSearchRequest
+        {
+            Yql = useSelect ? baseYql : baseYql + "| " + grouping,
+            Select = useSelect ? grouping : null,
+        }.WithParameter("clientTag", "original");
+        if (useSelect)
+            request.WithParameter("continue", "saved-token");
+        var originalYql = request.Yql;
         var pages = new List<GroupingSearchResponse<MusicDoc>>();
         await foreach (var page in _searchOps.GroupByStreamAsync<MusicDoc>(request))
             pages.Add(page);
@@ -934,11 +945,26 @@ public class GroupingBuilderTests : IDisposable
         Assert.Equal("rock", pages[0].GroupingResults[0].Groups[0].Value);
         Assert.Equal("jazz", pages[1].GroupingResults[0].Groups[0].Value);
 
-        // Page 2 must carry the tokens via the YQL continuations annotation
-        // (grouping.continuation is not a Vespa query parameter)
-        var secondBody = await _mockHandler.Requests[1].Content!.ReadAsStringAsync();
-        Assert.Contains("""{ 'continuations':['token-this', 'token-page2'] }all(""", secondBody.Replace("\\u0027", "'"));
-        Assert.DoesNotContain("grouping.continuation", secondBody);
+        using var firstBody = JsonDocument.Parse(await _mockHandler.Requests[0].Content!.ReadAsStringAsync());
+        using var secondBody = JsonDocument.Parse(await _mockHandler.Requests[1].Content!.ReadAsStringAsync());
+        Assert.Equal(originalYql, firstBody.RootElement.GetProperty("yql").GetString());
+        Assert.Equal(originalYql, request.Yql);
+        var secondRequest = secondBody.RootElement;
+        Assert.Equal("original", secondRequest.GetProperty("clientTag").GetString());
+        if (useSelect)
+        {
+            Assert.Equal(originalYql, secondRequest.GetProperty("yql").GetString());
+            Assert.Equal(grouping, secondRequest.GetProperty("select").GetString());
+            Assert.Equal("token-this token-page2", secondRequest.GetProperty("continue").GetString());
+            Assert.Equal("saved-token", firstBody.RootElement.GetProperty("continue").GetString());
+            Assert.Equal("saved-token", request.CustomParameters?["continue"]);
+        }
+        else
+        {
+            Assert.Equal(baseYql + "| { 'continuations':['token-this', 'token-page2'] }" + grouping,
+                secondRequest.GetProperty("yql").GetString());
+            Assert.False(secondRequest.TryGetProperty("continue", out _));
+        }
     }
 
     [Fact]

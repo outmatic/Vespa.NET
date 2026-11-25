@@ -12,7 +12,7 @@ public sealed class YqlBuilder
     private string _select = "*";
     private string? _from;
     private YqlWhereClause? _where;
-    private readonly List<(string Field, bool Descending)> _orderByClauses = [];
+    private readonly List<(string Field, bool Ascending)> _orderByClauses = [];
     private int? _limit;
     private int? _offset;
     private GroupingBuilder? _grouping;
@@ -66,9 +66,9 @@ public sealed class YqlBuilder
         return this;
     }
 
-    public YqlBuilder OrderBy(string field, bool descending = false)
+    public YqlBuilder OrderBy(string field, SortDirection direction = SortDirection.Ascending)
     {
-        _orderByClauses.Add((YqlIdentifier.Validate(field, nameof(field)), descending));
+        _orderByClauses.Add((YqlIdentifier.Validate(field, nameof(field)), direction.IsAscending()));
         return this;
     }
 
@@ -77,10 +77,10 @@ public sealed class YqlBuilder
     /// <c>{"function":"uca","locale":"en_US"}name</c>. The expression is embedded
     /// verbatim — do not pass unvalidated end-user input.
     /// </summary>
-    public YqlBuilder OrderByRaw(string expression, bool descending = false)
+    public YqlBuilder OrderByRaw(string expression, SortDirection direction = SortDirection.Ascending)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expression);
-        _orderByClauses.Add((expression, descending));
+        _orderByClauses.Add((expression, direction.IsAscending()));
         return this;
     }
 
@@ -131,9 +131,9 @@ public sealed class YqlBuilder
             for (var i = 0; i < _orderByClauses.Count; i++)
             {
                 if (i > 0) sb.Append(", ");
-                var (field, desc) = _orderByClauses[i];
+                var (field, ascending) = _orderByClauses[i];
                 sb.Append(field);
-                sb.Append(desc ? " desc" : " asc");
+                sb.Append(ascending ? " asc" : " desc");
             }
         }
 
@@ -223,15 +223,15 @@ public sealed class YqlBuilder<T> where T : class
         return this;
     }
 
-    public YqlBuilder<T> OrderBy(string field, bool descending = false)
+    public YqlBuilder<T> OrderBy(string field, SortDirection direction = SortDirection.Ascending)
     {
-        _inner.OrderBy(field, descending);
+        _inner.OrderBy(field, direction);
         return this;
     }
 
-    public YqlBuilder<T> OrderBy(Expression<Func<T, object?>> selector, bool descending = false)
+    public YqlBuilder<T> OrderBy(Expression<Func<T, object?>> selector, SortDirection direction = SortDirection.Ascending)
     {
-        _inner.OrderBy(VespaDocumentMeta.FieldName(selector), descending);
+        _inner.OrderBy(VespaDocumentMeta.FieldName(selector), direction);
         return this;
     }
 
@@ -239,10 +239,7 @@ public sealed class YqlBuilder<T> where T : class
     public YqlBuilder<T> Offset(int offset) { _inner.Offset(offset); return this; }
     public YqlBuilder<T> GroupBy(GroupingBuilder grouping) { _inner.GroupBy(grouping); return this; }
 
-    internal int? GetLimit() => _inner.GetLimit();
-    internal int? GetOffset() => _inner.GetOffset();
-    internal string? GetUserQueryText() => _inner.GetUserQueryText();
-    internal string Build(bool includeLimitOffset) => _inner.Build(includeLimitOffset);
+    internal YqlBuilder Inner => _inner;
 
     public string Build() => _inner.Build();
     public override string ToString() => _inner.ToString();

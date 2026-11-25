@@ -219,6 +219,54 @@ public class SearchRequestE2ETests(VespaFixture fixture)
         finally { await CleanupAsync(ids); }
     }
 
+    [Fact]
+    public async Task SortingBuilder_SortsAttributesAndRelevanceAndYqlOrderTakesPrecedence()
+    {
+        if (!Enabled) return;
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var cancellationToken = deadline.Token;
+        var tag = $"sorting-{Guid.NewGuid():N}";
+        var ids = Enumerable.Range(0, 4).Select(i => $"{tag}-{i}").ToList();
+        var search = fixture.Client.Search;
+        try
+        {
+            for (var i = 0; i < ids.Count; i++)
+                await fixture.Client.Documents.PutAsync(ids[i], new TestProduct
+                {
+                    Name = ids[i], Tag = tag, Price = i == 2 ? 20 : 10, Quantity = i
+                }, cancellationToken: cancellationToken);
+
+            var query = YqlBuilder<TestProduct>.Select()
+                .Where(w => w.Field(p => p.Tag).Contains(tag));
+            var request = query.ToSearchRequest();
+            while ((await search.SearchAsync<TestProduct>(request, cancellationToken)).Root.Children.Count != ids.Count)
+                await Task.Delay(100, cancellationToken);
+
+            var attributes = new SortingBuilder().OrderBy<TestProduct>(p => p.Price)
+                .OrderBy<TestProduct>(p => p.Quantity, SortDirection.Descending);
+            var rank = RankingBuilder.WithProfile("unranked").Sorting(attributes.Build());
+            request.WithRanking(rank);
+            var sorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([3, 1, 0, 2], Quantities(sorted));
+
+            request.WithYql(query.OrderBy(p => p.Quantity));
+            var yqlSorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([0, 1, 2, 3], Quantities(yqlSorted));
+            Assert.Equal("+price -quantity", request.Ranking?.Sorting);
+
+            request.WithYql(YqlBuilder<TestProduct>.Select().Where(w => w.Field(p => p.Tag).Contains(tag)));
+            var byRelevance = new SortingBuilder().OrderByRelevance().OrderBy<TestProduct>(p => p.Quantity);
+            request.WithRanking(RankingBuilder.WithProfile("features_profile").Sorting(byRelevance.Build()));
+            var relevanceSorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([2, 0, 1, 3], Quantities(relevanceSorted));
+        }
+        finally { await CleanupAsync(ids); }
+
+        static int[] Quantities(VespaSearchResponse<TestProduct> response) =>
+            response.Root.Children.Select(hit => Assert.IsType<TestProduct>(hit.Fields).Quantity).ToArray();
+    }
+
     // ── GroupByStreamAsync ───────────────────────────────────────────────────
 
     [Fact]

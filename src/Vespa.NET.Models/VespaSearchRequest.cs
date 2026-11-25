@@ -237,8 +237,7 @@ public sealed class VespaSearchRequest
     public string? Timezone { get; set; }
 
     /// <summary>
-    /// JSON grouping request (alternative to the YQL pipe syntax): multi-level
-    /// result-set statistics / hit groups to return, e.g.
+    /// Grouping expression sent as a separate search parameter. For example,
     /// <c>all(group(category) each(output(count())))</c>.
     /// </summary>
     [JsonPropertyName("select")]
@@ -389,7 +388,7 @@ public sealed class RankingConfig
     [JsonPropertyName("listFeatures")]
     public bool? ListFeatures { get; set; }
 
-    /// <summary>Sort specification string (e.g. "+year -relevance").</summary>
+    /// <summary>Vespa sort specification, for example <c>+year -[relevance]</c>.</summary>
     [JsonPropertyName("sorting")]
     public string? Sorting { get; set; }
 

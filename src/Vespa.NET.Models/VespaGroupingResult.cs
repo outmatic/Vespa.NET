@@ -72,11 +72,11 @@ public sealed record VespaGroup(
 
 /// <summary>
 /// Combined response from a grouping search: regular hits + grouping aggregations.
-/// When <see cref="ContinuationTokens"/> is non-null there are more pages: pass the
-/// tokens back via the YQL <c>continuations</c> annotation
-/// (<c>| {{ 'continuations':[…] }}all(…)</c>) — <c>GroupByStreamAsync</c> does this
-/// automatically. The list contains the root <c>this</c> token followed by the
-/// group lists' <c>next</c> tokens.
+/// <see cref="ContinuationTokens"/> contains the non-empty root <c>this</c> token,
+/// if present, followed by the group lists' <c>next</c> tokens. To fetch the next
+/// page, use the YQL <c>continuations</c> annotation or send the space-separated
+/// tokens in <c>continue</c> when the grouping expression is in <c>select</c>.
+/// <c>GroupByStreamAsync</c> handles both forms.
 /// </summary>
 public sealed record GroupingSearchResponse<T>(
     IReadOnlyList<SearchHit<T>> Hits,

@@ -25,7 +25,7 @@ var yql2 = YqlBuilder<Product>
     .Select(p => p.Name, p => p.Price)
     .Where(w => w.Field(p => p.Price).GreaterThan(10)
                  .And(sub => sub.Field(p => p.Name).Contains("laptop")))
-    .OrderBy(p => p.Price, descending: true)
+    .OrderBy(p => p.Price, SortDirection.Descending)
     .Build();
 ```
 
@@ -38,7 +38,7 @@ var yql = YqlBuilder
     .Where(w => w
         .Field("price").GreaterThan(10)
         .And(sub => sub.Field("category").Contains("electronics")))
-    .OrderBy("price", descending: true)
+    .OrderBy("price", SortDirection.Descending)
     .Build();
 ```
 
@@ -162,7 +162,7 @@ Each callback builds one predicate, all are OR'd:
 
 ## Fluent Request Builder
 
-`ToSearchRequest()` captures YQL, Hits, and Offset. Chain helpers for ranking and tensors:
+`ToSearchRequest()` creates a request from the builder. Use `request.WithYql(builder)` to apply the builder to an existing request. Chain helpers for ranking and tensors:
 
 ```csharp
 var request = YqlBuilder<Product>
@@ -202,8 +202,8 @@ The builder validates at build time:
 
 ### Limit / Offset
 
-YQL's `limit` keyword caps the total result-set index (not the page size), so
-`Build()` translates: `.Limit(10).Offset(20)` emits `limit 30 offset 20` — the
-same page (rows 20–29) that `ToSearchRequest()` selects via `hits=10&offset=20`.
+`ToSearchRequest()` and `WithYql()` put each explicit builder value in the request. `.Limit(10).Offset(20)` sets `Hits=10` and `Offset=20`. An omitted value on `WithYql()` leaves that property at its existing value. You can set either property after applying the builder to choose a different page.
+
+`Build()` produces standalone YQL. It renders the same window as `limit 30 offset 20`, because YQL's `limit` is the exclusive end of the slice. When you send raw YQL, inline pagination takes precedence over the request values. [Vespa YQL limit and offset](https://docs.vespa.ai/en/reference/querying/yql.html#limit-offset)
 
 The query tensor name is derived automatically: for a field named `embedding`, the query input is `query(query_embedding)`.

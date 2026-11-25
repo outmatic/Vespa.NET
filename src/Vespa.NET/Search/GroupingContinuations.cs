@@ -1,11 +1,10 @@
+using Vespa.Models;
+
 namespace Vespa.Search;
 
 /// <summary>
-/// Helpers for grouping pagination. Vespa has no <c>grouping.continuation</c> query
-/// parameter: continuation tokens are passed back inside the YQL via the
-/// <c>continuations</c> annotation on the grouping step —
-/// <c>… | {{ 'continuations':['this-token', 'next-token', …] }}all(…)</c>
-/// (docs.vespa.ai/en/grouping.html, "Pagination").
+/// Helpers for grouping pagination with the YQL <c>continuations</c> annotation
+/// or the <c>continue</c> parameter for a separate <c>select</c> expression.
 /// </summary>
 public static class GroupingContinuations
 {
@@ -27,9 +26,7 @@ public static class GroupingContinuations
                 "The YQL contains no grouping expression ('|' pipe) to attach continuation tokens to.",
                 nameof(yql));
 
-        foreach (var token in tokens)
-            if (string.IsNullOrEmpty(token) || !token.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '='))
-                throw new ArgumentException($"'{token}' is not a valid continuation token.", nameof(tokens));
+        ValidateTokenValues(tokens);
 
         var insertAt = pipeIdx + 1;
         while (insertAt < yql.Length && yql[insertAt] == ' ')
@@ -37,6 +34,26 @@ public static class GroupingContinuations
 
         var annotation = $"{{ 'continuations':[{string.Join(", ", tokens.Select(t => $"'{t}'"))}] }}";
         return yql.Insert(insertAt, annotation);
+    }
+
+    internal static void ApplyToRequest(VespaSearchRequest request, IReadOnlyList<string> tokens)
+    {
+        if (!string.IsNullOrWhiteSpace(request.Select) && !string.IsNullOrWhiteSpace(request.Yql)
+            && FindPipeOutsideStringLiterals(request.Yql) < 0)
+        {
+            ArgumentOutOfRangeException.ThrowIfZero(tokens.Count, nameof(tokens));
+            ValidateTokenValues(tokens);
+            request.WithParameter("continue", string.Join(' ', tokens));
+        }
+        else
+            request.Yql = Apply(request.Yql, tokens);
+    }
+
+    private static void ValidateTokenValues(IReadOnlyList<string> tokens)
+    {
+        foreach (var token in tokens)
+            if (string.IsNullOrEmpty(token) || !token.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '='))
+                throw new ArgumentException($"'{token}' is not a valid continuation token.", nameof(tokens));
     }
 
     /// <summary>

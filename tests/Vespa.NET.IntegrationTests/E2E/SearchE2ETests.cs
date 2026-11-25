@@ -335,7 +335,7 @@ public class SearchE2ETests(VespaFixture fixture)
             var yql = YqlBuilder<TestProduct>
                 .Select()
                 .Where(w => w.True())
-                .OrderBy(p => p.Price, descending: true)
+                .OrderBy(p => p.Price, SortDirection.Descending)
                 .Limit(Products.Length)
                 .Build();
 
@@ -453,6 +453,68 @@ public class SearchE2ETests(VespaFixture fixture)
         finally { await CleanupAsync(ids); }
     }
 
+    [Fact]
+    public async Task WithYql_PaginatesFromTheRequestAndPreservesRawYqlPrecedence()
+    {
+        if (!Enabled) return;
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var cancellationToken = deadline.Token;
+        var tag = $"pagination-{Guid.NewGuid():N}";
+        var ids = Enumerable.Range(0, 7).Select(index => $"{tag}-{index}").ToList();
+        var search = fixture.Client.Search;
+        try
+        {
+            for (var i = 0; i < ids.Count; i++)
+                await fixture.Client.Documents.PutAsync(ids[i],
+                    new TestProduct { Name = ids[i], Tag = tag, Quantity = i }, cancellationToken: cancellationToken);
+
+            var builder = YqlBuilder<TestProduct>.Select()
+                .Where(w => w.Field(p => p.Tag).Contains(tag))
+                .OrderBy(p => p.Quantity);
+            var ready = builder.ToSearchRequest();
+            while ((await search.SearchAsync<TestProduct>(ready, cancellationToken)).Root.Children.Count != ids.Count)
+                await Task.Delay(100, cancellationToken);
+
+            builder.Limit(2).Offset(2);
+            var request = new VespaSearchRequest { Hits = 3, Offset = 4 }.WithYql(builder);
+            var single = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([2, 3], Quantities(single));
+
+            var next = 2;
+            await foreach (var page in search.SearchPagedAsync<TestProduct>(request, pageSize: 2, cancellationToken))
+            {
+                Assert.InRange(next, 2, 6);
+                var expected = Enumerable.Range(next, Math.Min(2, ids.Count - next));
+                var quantities = Quantities(page);
+                Assert.Equal(expected, quantities);
+                next += quantities.Length;
+            }
+            Assert.Equal(ids.Count, next);
+            Assert.Equal((2, 2), (request.Hits, request.Offset));
+
+            request.Hits = 1;
+            request.Offset = 3;
+            var changed = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([3], Quantities(changed));
+
+            var streamed = new List<int>();
+            await foreach (var hit in search.SearchStreamAsync<TestProduct>(request, pageSize: 3, cancellationToken))
+                streamed.Add(Assert.IsType<TestProduct>(hit.Fields).Quantity);
+            Assert.Equal([3, 4, 5, 6], streamed);
+            Assert.Equal((1, 3), (request.Hits, request.Offset));
+
+            const string rawYql = "select * from product where tag contains @scope order by quantity asc limit 4 offset 2";
+            var raw = await search.QueryAsync<TestProduct>(rawYql, hits: 3, offset: 4,
+                parameters: new() { ["scope"] = tag }, cancellationToken: cancellationToken);
+            Assert.Equal([2, 3], Quantities(raw));
+        }
+        finally { await CleanupAsync(ids); }
+
+        static int[] Quantities(VespaSearchResponse<TestProduct> response) =>
+            response.Root.Children.Select(hit => Assert.IsType<TestProduct>(hit.Fields).Quantity).ToArray();
+    }
+
     // ── Grouping ────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -463,18 +525,13 @@ public class SearchE2ETests(VespaFixture fixture)
         var ids = await SeedAsync();
         try
         {
-            var request = new VespaSearchRequest
-            {
-                Yql = YqlBuilder<TestProduct>
-                    .Select()
-                    .GroupBy(
-                        GroupingBuilder.All()
-                            .Group("category")
-                            .Max(10)
-                            .Each(e => e.Output(GroupingAgg.Count())))
-                    .Build(),
-                Hits = 0
-            };
+            var builder = YqlBuilder<TestProduct>.Select()
+                .Limit(0)
+                .GroupBy(GroupingBuilder.All()
+                    .Group("category")
+                    .Max(10)
+                    .Each(e => e.Output(GroupingAgg.Count())));
+            var request = new VespaSearchRequest { Hits = 5 }.WithYql(builder);
 
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
 

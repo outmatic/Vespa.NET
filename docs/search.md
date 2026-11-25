@@ -101,7 +101,7 @@ var yql2 = YqlBuilder<Product>
 `SearchStreamAsync<T>` returns an `IAsyncEnumerable<SearchHit<T>>` that auto-paginates:
 
 ```csharp
-var request = new VespaSearchRequest { Yql = "select * from product where true;" };
+var request = new VespaSearchRequest { Yql = "select * from product where true order by product_id asc" };
 
 await foreach (var hit in client.Search.SearchStreamAsync<Product>(request, pageSize: 100))
     Console.WriteLine($"{hit.Fields?.Name}: {hit.Relevance:F3}");
@@ -115,6 +115,8 @@ await foreach (var hit in client.Search.SearchStreamAsync<Product>(request, page
 await foreach (var page in client.Search.SearchPagedAsync<Product>(request, pageSize: 50))
     Console.WriteLine($"Page with {page.Root.Children.Count} hits");
 ```
+
+Both methods start at `request.Offset` and use `pageSize` for each page. Use a stable order with a unique tie-breaker. Build the request with `ToSearchRequest()` or `WithYql(builder)`. For raw YQL, omit inline `limit` and `offset` so Vespa uses the page parameters sent by the client.
 
 > **Server limits:** Vespa caps `hits` at `maxHits` (default 400) and `offset` at `maxOffset` (default 1000). Deep pagination fails unless those query-profile limits are raised. To export a full corpus, use document visiting (`Documents.VisitAsync` / `VisitJsonlAsync`) instead of search pagination.
 

@@ -13,10 +13,9 @@ namespace Vespa.Search;
 public static class SearchOperationsExtensions
 {
     /// <summary>
-    /// Streams all pages of a grouping search, automatically passing
-    /// <see cref="GroupingSearchResponse{T}.ContinuationTokens"/> back through the YQL
-    /// <c>continuations</c> annotation until no more pages remain.
-    /// Each yielded value is one page of grouped results.
+    /// Streams group-list pages for a single grouping expression. Pass the expression
+    /// in the YQL pipe or in <see cref="VespaSearchRequest.Select"/>.
+    /// Each yielded response contains one page of grouped results.
     /// </summary>
     /// <example>
     /// <code>
@@ -36,11 +35,10 @@ public static class SearchOperationsExtensions
         IReadOnlyList<string>? tokens = null;
         while (true)
         {
-            // Clone per page — mutating the caller's request (or its YQL) would leave
-            // a stale continuation annotation behind after enumeration.
+            // Attach each page's continuation to a fresh copy of the caller's request.
             var pageRequest = request.ShallowClone();
             if (tokens is not null)
-                pageRequest.Yql = GroupingContinuations.Apply(request.Yql!, tokens);
+                GroupingContinuations.ApplyToRequest(pageRequest, tokens);
 
             var page = await ops.GroupByAsync<T>(pageRequest, cancellationToken);
             yield return page;
@@ -55,7 +53,9 @@ public static class SearchOperationsExtensions
 
     /// <summary>
     /// Iterates search results page by page, yielding each full <see cref="VespaSearchResponse{T}"/>.
+    /// Starts at the request offset and uses <paramref name="pageSize"/> for each request.
     /// Stops automatically when a page returns fewer hits than <paramref name="pageSize"/>.
+    /// Use a stable order and omit inline YQL pagination so Vespa uses the request values.
     /// <para>
     /// <b>Server limits:</b> Vespa caps <c>hits</c> at <c>maxHits</c> (default 400) and
     /// <c>offset</c> at <c>maxOffset</c> (default 1000) — deep pagination fails unless those

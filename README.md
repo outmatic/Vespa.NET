@@ -218,7 +218,7 @@ var yql = YqlBuilder<Product>
         w.Field(p => p.Price).GreaterThan(10);
         w.Field(p => p.Name).Contains("laptop");
     })
-    .OrderBy(p => p.Price, descending: true)
+    .OrderBy(p => p.Price, SortDirection.Descending)
     .Limit(20)
     .Build();
 ```

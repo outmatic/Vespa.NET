@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Vespa.Models;
+using Vespa.Models.Attributes;
 using Vespa.Query;
 using Xunit;
 
@@ -328,6 +329,67 @@ public class RankingBuilderTests
     }
 
     [Fact]
+    public void SortingBuilder_PreservesKeyOrderAndMappedNamesInTheRequest()
+    {
+        var sorting = new SortingBuilder()
+            .OrderBy<SortProduct>(product => product.Price)
+            .OrderByRelevance()
+            .OrderBy("labels.key", SortDirection.Descending);
+        var request = YqlBuilder.Select().From("product").ToSearchRequest()
+            .WithRanking(RankingBuilder.WithProfile("semantic")
+                .Sorting(sorting.Build())
+                .Feature("query(weight)", 0.8));
+
+        sorting.OrderBy("quantity");
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(request, JsonOpts));
+        var ranking = json.RootElement.GetProperty("ranking");
+        Assert.Equal("+unit_price -[relevance] -labels.key", ranking.GetProperty("sorting").GetString());
+        Assert.Equal("semantic", ranking.GetProperty("profile").GetString());
+        Assert.Equal(0.8, ranking.GetProperty("features").GetProperty("query(weight)").GetDouble());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("price -quantity")]
+    [InlineData("lowercase(title)")]
+    [InlineData("labels{\"some key\"}")]
+    public void SortingBuilder_RejectsValuesOtherThanAttributeNames(string attribute)
+    {
+        var exception = Assert.Throws<ArgumentException>(() => new SortingBuilder().OrderBy(attribute));
+        Assert.Equal("attribute", exception.ParamName);
+    }
+
+    [Fact]
+    public void SortingBuilder_RequiresAKey()
+    {
+        Assert.Throws<InvalidOperationException>(() => new SortingBuilder().Build());
+    }
+
+    [Fact]
+    public void SortingBuilder_AllowsExplicitAscendingRelevance()
+    {
+        var sorting = new SortingBuilder().OrderByRelevance(SortDirection.Ascending);
+
+        Assert.Equal("+[relevance]", sorting.Build());
+    }
+
+    [Fact]
+    public void SortingBuilder_RejectsUndefinedDirectionBeforeAddingTheKey()
+    {
+        var sorting = new SortingBuilder().OrderBy("price");
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => sorting.OrderBy("quantity", (SortDirection)42));
+        Assert.Equal("direction", exception.ParamName);
+        Assert.Equal("+price", sorting.Build());
+    }
+
+    private sealed record SortProduct
+    {
+        [VespaField(Name = "unit_price")]
+        public double Price { get; init; }
+    }
+
+    [Fact]
     public void SoftTimeout_SetsEnableAndFactor()
     {
         var config = RankingBuilder.WithProfile("p").SoftTimeout(true, 0.6).Build();
@@ -382,11 +444,37 @@ public class RankingBuilderTests
     public void MatchPhase_SetsAllFields()
     {
         var config = RankingBuilder.Create()
-            .MatchPhase("timestamp", maxHits: 10000, ascending: true)
+            .MatchPhase("timestamp", maxHits: 10000, direction: SortDirection.Ascending)
             .Build();
         Assert.Equal("timestamp", config.MatchPhaseAttribute);
         Assert.Equal(10000, config.MatchPhaseMaxHits);
         Assert.True(config.MatchPhaseAscending);
+    }
+
+    [Theory]
+    [InlineData(SortDirection.Ascending, JsonValueKind.True)]
+    [InlineData(SortDirection.Descending, JsonValueKind.False)]
+    [InlineData(null, JsonValueKind.Undefined)]
+    public void MatchPhase_SerializesDirectionAsTheNativeBoolean(SortDirection? direction, JsonValueKind expected)
+    {
+        var ranking = RankingBuilder.Create()
+            .MatchPhase("timestamp", direction: direction, totalMaxHits: 100)
+            .Build();
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(ranking, JsonOpts));
+        json.RootElement.TryGetProperty("matchPhase.ascending", out var ascending);
+        Assert.Equal(expected, ascending.ValueKind);
+    }
+
+    [Fact]
+    public void MatchPhase_RejectsUnknownDirectionBeforeUpdatingTheBuilder()
+    {
+        var builder = RankingBuilder.Create().MatchPhase("price", direction: SortDirection.Descending);
+
+        Assert.Throws<ArgumentOutOfRangeException>("direction", () => builder.MatchPhase("quantity", direction: (SortDirection)42));
+        var ranking = builder.Build();
+        Assert.Equal("price", ranking.MatchPhaseAttribute);
+        Assert.False(ranking.MatchPhaseAscending);
     }
 
     [Fact]
@@ -412,7 +500,7 @@ public class RankingBuilderTests
             .KeepRankCount(300)
             .RankScoreDropLimit(0.01)
             .GlobalPhaseRerankCount(500)
-            .MatchPhase("timestamp", maxHits: 5000, ascending: false)
+            .MatchPhase("timestamp", maxHits: 5000, direction: SortDirection.Descending)
             .MatchPhaseDiversity("genre", minGroups: 3)
             .Build();
 

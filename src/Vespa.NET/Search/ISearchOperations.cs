@@ -57,8 +57,8 @@ public interface ISearchOperations
 
     /// <summary>
     /// Execute a search with grouping/aggregation and return both hits and grouped results.
-    /// The <paramref name="request"/> YQL must include a pipe grouping expression
-    /// (e.g., built with <c>YqlBuilder.GroupBy(GroupingBuilder.All()...)</c>).
+    /// Supply the grouping expression in the <paramref name="request"/> YQL
+    /// pipe or in <see cref="VespaSearchRequest.Select"/>.
     /// </summary>
     Task<GroupingSearchResponse<T>> GroupByAsync<T>(
         VespaSearchRequest request,
@@ -79,6 +79,7 @@ public interface ISearchOperations
     /// <param name="request">
     /// Template request. <c>Hits</c> is overridden by <paramref name="pageSize"/>;
     /// <c>Offset</c> is used as the starting position.
+    /// Use a stable order and omit inline YQL pagination so Vespa uses the request values.
     /// </param>
     /// <param name="pageSize">Number of hits to fetch per HTTP request (default 100).</param>
     /// <param name="cancellationToken">Cancellation token.</param>

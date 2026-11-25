@@ -18,11 +18,25 @@ var ranking = RankingBuilder
     .MatchPhase("popularity", maxHits: 10000)
     .MatchPhaseDiversity("category", minGroups: 5)
     .GlobalPhaseRerankCount(100)
-    .Matching(numThreadsPerSearch: 4)
-    .Build();  // RankingConfig
+    .Matching(numThreadsPerSearch: 4);
 
 var request = new VespaSearchRequest { Yql = yql }.WithRanking(ranking);
 ```
+
+## Sort specification
+
+Use `SortingBuilder` to set `ranking.sorting` independently of the YQL. Put the primary key first and append tie-breakers in order. The model selectors resolve the attribute names from the same mappings as `YqlBuilder`.
+
+```csharp
+var sorting = new SortingBuilder()
+    .OrderBy<Product>(p => p.Price)
+    .OrderBy<Product>(p => p.ProductId, SortDirection.Descending);
+
+var request = new VespaSearchRequest { Yql = yql }
+    .WithRanking(RankingBuilder.WithProfile("unranked").Sorting(sorting.Build()));
+```
+
+Sort keys use ascending order by default. Use `OrderByRelevance()` to sort by rank score, highest first by default. Pass functions such as `uca(...)` as a native expression to `RankingBuilder.Sorting(string)`. Vespa applies the YQL `order by` when both forms are present. [Sort grammar](https://docs.vespa.ai/en/reference/querying/sorting-language.html) · [YQL order by](https://docs.vespa.ai/en/reference/querying/yql.html#order-by)
 
 ---
 
@@ -75,7 +89,7 @@ obsolete — it cannot express expressions containing `:` or `;`.)
 | `.SecondPhaseRankScoreDropLimit(x)` | Second-phase score drop limit |
 | `.KeepRankCount(n)` / `.TotalKeepRankCount(n)` | Hits keeping their rank score after first phase |
 | `.SoftTimeout(enable, factor)` | Soft timeout with coverage factor |
-| `.MatchPhase(field, maxHits, ascending, totalMaxHits)` | Match-phase early termination (prefer `totalMaxHits`) |
+| `.MatchPhase(field, maxHits, direction, totalMaxHits)` | Match-phase early termination. Prefer `totalMaxHits` and omit `direction` to use Vespa's configured order. |
 | `.MatchPhaseDiversity(field, minGroups)` | Diversity on match-phase |
 | `.GlobalPhaseRerankCount(n)` | Global-phase rerank count |
 | `.GlobalPhaseRankScoreDropLimit(x)` | Global-phase score drop limit |
