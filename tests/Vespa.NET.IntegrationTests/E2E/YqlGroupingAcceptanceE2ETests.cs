@@ -41,14 +41,51 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         };
 
         var ids = new List<string>();
-        foreach (var doc in docs)
+        try
         {
-            var id = NewId();
-            ids.Add(id);
-            await fixture.Client.Documents.PutAsync(id, doc);
+            foreach (var doc in docs)
+            {
+                var id = NewId();
+                ids.Add(id);
+                var put = await fixture.Client.Documents.PutAsync(id, doc);
+                Assert.True(put.IsSuccess, $"Could not seed product '{id}': {put.StatusCode} {put.Message}");
+            }
+            await WaitForSeedAsync(tag, ids);
+            return (ids, tag);
         }
-        await Task.Delay(2000);
-        return (ids, tag);
+        catch
+        {
+            await CleanupAsync(ids);
+            throw;
+        }
+    }
+
+    private async Task WaitForSeedAsync(string tag, IReadOnlyCollection<string> ids)
+    {
+        var yql = QueryByTag(tag).Build();
+        var expectedIds = ids.ToHashSet(StringComparer.Ordinal);
+        string[] visibleIds = [];
+        Coverage? coverage = null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            while (true)
+            {
+                var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql, hits: ids.Count, cancellationToken: timeout.Token);
+                Assert.Empty(result.Root.Errors ?? []);
+                coverage = result.Root.Coverage;
+                visibleIds = result.Root.Children.Select(hit => hit.Id).ToArray();
+                if (coverage is not { Full: false } && visibleIds.Length == ids.Count && expectedIds.SetEquals(visibleIds))
+                    return;
+
+                await Task.Delay(100, timeout.Token);
+            }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            Assert.Fail($"Products for '{tag}' were not searchable within 30 seconds. " +
+                $"Expected IDs: [{string.Join(", ", ids)}]. Visible IDs: [{string.Join(", ", visibleIds)}]. Coverage: {coverage}");
+        }
     }
 
     private async Task CleanupAsync(List<string> ids)
@@ -57,13 +94,13 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             await fixture.Client.Documents.DeleteAsync<TestProduct>(id);
     }
 
-    private VespaSearchRequest GroupingRequest(string tag, GroupingBuilder grouping) =>
+    private static YqlBuilder<TestProduct> QueryByTag(string tag) =>
+        YqlBuilder<TestProduct>.Select().Where(w => w.Field(p => p.Tag).Contains(tag));
+
+    private static VespaSearchRequest GroupingRequest(string tag, GroupingBuilder grouping) =>
         new()
         {
-            Yql = YqlBuilder<TestProduct>.Select()
-                .Where(w => w.Field(p => p.Tag).Contains(tag))
-                .GroupBy(grouping)
-                .Build(),
+            Yql = QueryByTag(tag).GroupBy(grouping).Build(),
             Hits = 0
         };
 
@@ -148,8 +185,13 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                     .Keep(GroupingFilter.Regex(".*-beta", "category"))
                     .Each(e => e.Output(GroupingAgg.Count()))));
 
-            var groups = Assert.Single(result.GroupingResults).Groups;
-            Assert.All(groups, g => Assert.EndsWith("-beta", g.Value));
+            Assert.Empty(result.Errors ?? []);
+            Assert.True(result.Coverage is not { Full: false }, $"Grouping coverage: {result.Coverage}");
+            Assert.True(result.GroupingResults.Count == 1,
+                $"Expected one group list for '{tag}', got {result.GroupingResults.Count} with {result.TotalCount} matching documents.");
+            var group = Assert.Single(result.GroupingResults[0].Groups);
+            Assert.Equal($"{tag}-beta", group.Value);
+            Assert.Equal(2, group.GetAggregation<long>("count()"));
         }
         finally { await CleanupAsync(ids); }
     }
