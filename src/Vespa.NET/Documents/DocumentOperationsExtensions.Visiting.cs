@@ -17,7 +17,8 @@ public static partial class DocumentOperationsExtensions
         CancellationToken cancellationToken = default) where T : class
     {
         var (documentType, ns) = VespaDocumentMeta.For<T>();
-        return ops.VisitAsync<T>(documentType, ResolveSelection(selection, rawSelection), cluster, ns, options, cancellationToken);
+        var selector = ResolveSelection(documentType, selection, rawSelection);
+        return ops.VisitAsync<T>(documentType, selector, cluster, ns, options, cancellationToken);
     }
 
     /// <summary>Visits one page of a model's document type and namespace with an optional typed or native selection.</summary>
@@ -32,7 +33,8 @@ public static partial class DocumentOperationsExtensions
         CancellationToken cancellationToken = default) where T : class
     {
         var (documentType, ns) = VespaDocumentMeta.For<T>();
-        return ops.VisitPageAsync<T>(documentType, ResolveSelection(selection, rawSelection), cluster, ns, continuation, options, cancellationToken);
+        var selector = ResolveSelection(documentType, selection, rawSelection);
+        return ops.VisitPageAsync<T>(documentType, selector, cluster, ns, continuation, options, cancellationToken);
     }
 
     /// <summary>Streams a model's documents as JSONL with an optional typed or native selection.</summary>
@@ -46,7 +48,8 @@ public static partial class DocumentOperationsExtensions
         CancellationToken cancellationToken = default) where T : class
     {
         var (documentType, ns) = VespaDocumentMeta.For<T>();
-        return ops.VisitJsonlAsync<T>(documentType, ResolveSelection(selection, rawSelection), cluster, ns, options, cancellationToken);
+        var selector = ResolveSelection(documentType, selection, rawSelection);
+        return ops.VisitJsonlAsync<T>(documentType, selector, cluster, ns, options, cancellationToken);
     }
 
     /// <summary>Visits a filter model's exact document type across namespaces, deserializing a separate result model.</summary>
@@ -70,10 +73,11 @@ public static partial class DocumentOperationsExtensions
         CancellationToken cancellationToken = default) where TResult : class where TFilter : class =>
         ops.VisitAllPageAsync<TResult>(cluster, DocumentSelection.For(selection), continuation, options, cancellationToken);
 
-    private static string? ResolveSelection<T>(Expression<Func<T, bool>>? selection, string? rawSelection) where T : class
+    private static string? ResolveSelection<T>(
+        string documentType, Expression<Func<T, bool>>? selection, string? rawSelection) where T : class
     {
         if (selection is not null && rawSelection is not null)
             throw new ArgumentException("Specify either selection or rawSelection, not both.", nameof(rawSelection));
-        return selection is null ? rawSelection : DocumentSelection.For(selection);
+        return selection is null ? rawSelection : DocumentSelection.For(documentType, selection);
     }
 }

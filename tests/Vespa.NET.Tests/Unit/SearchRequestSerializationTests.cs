@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Vespa.Models;
+using Vespa.Query;
 using Xunit;
 
 namespace Vespa.Tests.Unit;
@@ -462,6 +463,24 @@ public class SearchRequestSerializationTests
         var json = JsonSerializer.Serialize(config, JsonOpts);
         Assert.DoesNotContain("matching.", json);
         Assert.DoesNotContain("significance.", json);
+    }
+
+    [Fact]
+    public void WithUserInput_OverwritesParameterAtTheTopLevel()
+    {
+        const string text = """caffè "filtro" """;
+        var request = new VespaSearchRequest { Yql = "select * from music where userInput(@text)" }
+            .WithParameter("text", 42)
+            .WithParameter("clientTag", "original");
+        var parameters = request.CustomParameters;
+
+        Assert.Same(request, request.WithUserInput(paramName: "text", value: text));
+        Assert.Same(parameters, request.CustomParameters);
+
+        var json = JsonSerializer.SerializeToElement(request, JsonOpts);
+        Assert.Equal(text, json.GetProperty("text").GetString());
+        Assert.Equal("original", json.GetProperty("clientTag").GetString());
+        Assert.False(json.TryGetProperty("input", out _));
     }
 
     [Fact]

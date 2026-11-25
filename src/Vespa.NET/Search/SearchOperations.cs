@@ -70,7 +70,8 @@ public sealed partial class SearchOperations(
         if (queryEmbedding.Format != TensorFormat.IndexedDense)
             throw new ArgumentException($"Unsupported tensor format for nearest neighbor search: {queryEmbedding.Format}. Use IndexedDense format.", nameof(queryEmbedding));
 
-        var values = ExtractDenseValues(queryEmbedding);
+        var values = queryEmbedding.GetDenseValues<double>()
+            ?? throw new ArgumentException("Unable to extract dense values from tensor", nameof(queryEmbedding));
 
         if (values.Length == 0)
             throw new ArgumentException("Query embedding values cannot be empty", nameof(queryEmbedding));
@@ -188,20 +189,6 @@ public sealed partial class SearchOperations(
         var exception = await VespaErrorResponse.CreateAsync(response, cancellationToken, context: "Search failed");
         activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
         throw exception;
-    }
-
-    private static double[] ExtractDenseValues(VespaTensor queryEmbedding)
-    {
-        if (queryEmbedding.GetDenseValues<double>() is { } doubleValues)
-            return doubleValues;
-        if (queryEmbedding.GetDenseValues<float>() is { } floatValues)
-            return Array.ConvertAll(floatValues, x => (double)x);
-        if (queryEmbedding.GetDenseValues<sbyte>() is { } sbyteValues)
-            return Array.ConvertAll(sbyteValues, x => (double)x);
-        if (queryEmbedding.GetDenseValues<Half>() is { } halfValues)
-            return Array.ConvertAll(halfValues, x => (double)x);
-
-        throw new ArgumentException("Unable to extract dense values from tensor", nameof(queryEmbedding));
     }
 
     private static VespaSearchRequest BuildNearestNeighborRequest(

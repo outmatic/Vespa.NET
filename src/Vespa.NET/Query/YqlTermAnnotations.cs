@@ -50,12 +50,6 @@ public sealed record YqlTermAnnotations
 
     /// <summary>Controls schema-driven term transformations such as stemming and normalization.</summary>
     public bool? ImplicitTransforms { get; init; }
-
-    internal bool IsEmpty =>
-        Filter is null && TermId is null && Connectivity is null && Stem is null &&
-        NormalizeCase is null && AccentDrop is null && UsePositionData is null && Weight is null &&
-        Prefix is null && Suffix is null && Substring is null && Significance is null &&
-        Ranked is null && Language is null && Nfkc is null && ImplicitTransforms is null;
 }
 
 /// <summary>A weighted connection to another term in a Vespa query.</summary>

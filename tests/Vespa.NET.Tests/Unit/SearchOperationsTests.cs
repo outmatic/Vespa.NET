@@ -4,6 +4,7 @@ using Moq;
 using Moq.Protected;
 using Vespa;
 using Vespa.Models;
+using Vespa.Models.Attributes;
 using Vespa.Models.Tensors;
 using Vespa.Search;
 using Vespa.Tests.Helpers;
@@ -53,7 +54,10 @@ public class SearchOperationsTests : IDisposable
             Hits = 10
         };
         var expectedResponse = TestDataFactory.CreateSearchResponse(
-            [TestDataFactory.CreateSearchHit("doc-1", new TestDocument { Title = "Test" })]
+            [
+                TestDataFactory.CreateSearchHit("id:test:testdoc::doc-1", new TestDocument { Title = "Test" }),
+                TestDataFactory.CreateSearchHit("id:test:testdoc:g=tenant:part:two", new TestDocument { Title = "Second" })
+            ]
         );
         SetupSearchSuccessResponse(expectedResponse);
 
@@ -63,7 +67,9 @@ public class SearchOperationsTests : IDisposable
         // Assert
         Assert.NotNull(result);
         Assert.NotNull(result.Root);
-        Assert.Single(result.Root.Children);
+        Assert.Collection(result.Root.Children,
+            hit => Assert.Equal("doc-1", hit.Fields?.Id),
+            hit => Assert.Equal("part:two", hit.Fields?.Id));
         VerifyHttpCall(HttpMethod.Post, "/search/");
     }
 
@@ -217,7 +223,7 @@ public class SearchOperationsTests : IDisposable
 
     #endregion
 
-    #region NearestNeighborSearchAsync Tests (10 tests)
+    #region NearestNeighborSearchAsync Tests
 
     [Theory]
     [InlineData(TensorFormat.MappedSingle)]
@@ -240,10 +246,10 @@ public class SearchOperationsTests : IDisposable
     }
 
     [Fact]
-    public async Task NearestNeighborSearchAsync_WithDoubleArray_ZeroCopy()
+    public async Task NearestNeighborSearchAsync_WithDoubleArray_PreservesValues()
     {
         // Arrange
-        var doubleArray = new[] { 1.0, 2.0, 3.0 };
+        var doubleArray = new[] { 16777217.0, -2.5, 3.75 };
         var tensor = VespaTensor.FromDenseValues(doubleArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -256,14 +262,14 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert - Verify request contains the embedding
-        VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding(doubleArray);
     }
 
     [Fact]
     public async Task NearestNeighborSearchAsync_WithFloatArray_ConvertsToDouble()
     {
         // Arrange
-        var floatArray = new[] { 1.0f, 2.0f, 3.0f };
+        var floatArray = new[] { 0.1f, -2.5f, 3.75f };
         var tensor = VespaTensor.FromDenseValues(floatArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -276,14 +282,14 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert
-        VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding([(double)0.1f, -2.5, 3.75]);
     }
 
     [Fact]
     public async Task NearestNeighborSearchAsync_WithSByteArray_ConvertsToDouble()
     {
         // Arrange
-        var sbyteArray = new sbyte[] { 1, 2, 3 };
+        var sbyteArray = new sbyte[] { sbyte.MinValue, 0, sbyte.MaxValue };
         var tensor = VespaTensor.FromDenseValues(sbyteArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -296,14 +302,14 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert
-        VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding([-128.0, 0.0, 127.0]);
     }
 
     [Fact]
     public async Task NearestNeighborSearchAsync_WithHalfArray_ConvertsToDouble()
     {
         // Arrange
-        var halfArray = new[] { (Half)1.0, (Half)2.0, (Half)3.0 };
+        var halfArray = new[] { (Half)0.125, (Half)(-2.5), (Half)3.75 };
         var tensor = VespaTensor.FromDenseValues(halfArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -315,8 +321,21 @@ public class SearchOperationsTests : IDisposable
             tensor, "embedding", "testdoc"
         );
 
-        // Assert - Values should be approximately equal (Half has lower precision)
-        VerifyHttpCall(HttpMethod.Post, "/search/");
+        // Assert
+        VerifySearchRequestContainsEmbedding([0.125, -2.5, 3.75]);
+    }
+
+    [Fact]
+    public async Task NearestNeighborSearchAsync_WithMissingDenseValues_ThrowsBeforeSending()
+    {
+        var tensor = new VespaTensor { Format = TensorFormat.IndexedDense };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _searchOps.NearestNeighborSearchAsync<TestDocument>(tensor, "embedding", "testdoc"));
+
+        Assert.Equal("queryEmbedding", ex.ParamName);
+        Assert.StartsWith("Unable to extract dense values from tensor", ex.Message);
+        _mockHandler.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -571,6 +590,8 @@ public class SearchOperationsTests : IDisposable
 
     private class TestDocument
     {
+        [VespaId]
+        public string? Id { get; init; }
         public string Title { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;
     }

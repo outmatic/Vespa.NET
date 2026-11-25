@@ -58,10 +58,15 @@ internal static class ApplicationPackageXml
                 _ => "index"
             };
             var globalAttr = global ? " global=\"true\"" : "";
-            var selectionAttr = selection is not null
-                ? $" selection=\"{(opts.DocumentSelections?.ContainsKey(docType) == true ? SelectionEscape(selection) : XmlEscape(selection))}\""
-                : "";
-            sb.Append(CultureInfo.InvariantCulture, $"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}{selectionAttr}/>\n");
+            sb.Append(CultureInfo.InvariantCulture, $"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}");
+            if (selection is not null)
+            {
+                var escapedSelection = opts.DocumentSelections?.ContainsKey(docType) == true
+                    ? SelectionEscape(selection)
+                    : XmlEscape(selection);
+                sb.Append(" selection=\"").Append(escapedSelection).Append('"');
+            }
+            sb.Append("/>\n");
         }
 
         sb.Append("    </documents>\n");

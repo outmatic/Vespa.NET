@@ -75,14 +75,10 @@ public static class YqlExtensions
     }
 
     /// <summary>
-    /// Set a <c>userInput(@param)</c> value: <c>CustomParameters[param] = value</c>.
+    /// Set the top-level request parameter referenced by <c>userInput(@param)</c>.
     /// </summary>
-    public static VespaSearchRequest WithUserInput(this VespaSearchRequest request, string paramName, object value)
-    {
-        request.CustomParameters ??= [];
-        request.CustomParameters[paramName] = value;
-        return request;
-    }
+    public static VespaSearchRequest WithUserInput(this VespaSearchRequest request, string paramName, object value) =>
+        request.WithParameter(paramName, value);
 
     /// <summary>
     /// Set a rank feature: <c>Ranking.Features["query({name})"] = value</c>.

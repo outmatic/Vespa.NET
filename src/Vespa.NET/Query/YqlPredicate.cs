@@ -15,9 +15,9 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            if (annotations is { IsEmpty: false })
+            if (annotations is not null && BuildTermAnnotations(annotations) is { Count: > 0 } termAnnotations)
             {
-                var prefix = $"{{{string.Join(", ", BuildTermAnnotations(annotations))}}}";
+                var prefix = $"{{{string.Join(", ", termAnnotations)}}}";
                 return $"{field} contains ({prefix}\"{Escape(value)}\")";
             }
             return $"""{field} contains "{Escape(value)}" """.TrimEnd();

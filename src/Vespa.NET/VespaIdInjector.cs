@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Reflection;
-using System.Text.Json;
 using Vespa.Models;
 using Vespa.Models.Attributes;
 
@@ -25,18 +24,6 @@ internal static class VespaIdInjector
         HttpContent content, CancellationToken cancellationToken) where T : class
     {
         var doc = await content.ReadFromJsonAsync<VespaDocument<T>>(VespaJsonOptions.Default, cancellationToken);
-        if (doc is not null)
-            Inject(doc);
-        return doc;
-    }
-
-    /// <summary>
-    /// Deserializes a <see cref="VespaDocument{T}"/> from a JSON string and
-    /// injects the wrapper-level ID into the <see cref="VespaIdAttribute"/>-marked property.
-    /// </summary>
-    internal static VespaDocument<T>? DeserializeAndInject<T>(string json) where T : class
-    {
-        var doc = JsonSerializer.Deserialize<VespaDocument<T>>(json, VespaJsonOptions.Default);
         if (doc is not null)
             Inject(doc);
         return doc;

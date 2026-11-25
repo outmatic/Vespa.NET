@@ -76,14 +76,14 @@ public static class DocumentCondition
 
         private string Comparison(BinaryExpression binary)
         {
-            var operatorMethod = binary.NodeType switch
+            var (operatorMethod, token) = binary.NodeType switch
             {
-                ExpressionType.Equal => "op_Equality",
-                ExpressionType.NotEqual => "op_Inequality",
-                ExpressionType.GreaterThan => "op_GreaterThan",
-                ExpressionType.GreaterThanOrEqual => "op_GreaterThanOrEqual",
-                ExpressionType.LessThan => "op_LessThan",
-                ExpressionType.LessThanOrEqual => "op_LessThanOrEqual",
+                ExpressionType.Equal => ("op_Equality", "=="),
+                ExpressionType.NotEqual => ("op_Inequality", "!="),
+                ExpressionType.GreaterThan => ("op_GreaterThan", ">"),
+                ExpressionType.GreaterThanOrEqual => ("op_GreaterThanOrEqual", ">="),
+                ExpressionType.LessThan => ("op_LessThan", "<"),
+                ExpressionType.LessThanOrEqual => ("op_LessThanOrEqual", "<="),
                 _ => throw Unsupported(binary)
             };
             if (binary.Method is { } method &&
@@ -115,17 +115,7 @@ public static class DocumentCondition
             if (context == RenderContext.Package && (left.IsNull || right.IsNull))
                 return NullComparison(left.IsNull ? right : left, binary.NodeType == ExpressionType.Equal);
 
-            var op = binary.NodeType switch
-            {
-                ExpressionType.Equal => "==",
-                ExpressionType.NotEqual => "!=",
-                ExpressionType.GreaterThan => ">",
-                ExpressionType.GreaterThanOrEqual => ">=",
-                ExpressionType.LessThan => "<",
-                ExpressionType.LessThanOrEqual => "<=",
-                _ => throw Unsupported(binary)
-            };
-            var comparison = $"({left.Text} {op} {right.Text})";
+            var comparison = $"({left.Text} {token} {right.Text})";
 
             // Lifted C# ordering comparisons return false for nullable operands that
             // are absent. Guard them so a surrounding NOT preserves that behavior.
