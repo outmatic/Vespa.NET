@@ -68,11 +68,15 @@ internal static class VespaIdInjector
 
     internal static void Inject<T>(SearchHit<T> hit) where T : class
     {
-        if (hit.Fields is null || string.IsNullOrEmpty(hit.Id))
+        if (hit.Fields is null)
+            return;
+
+        var id = hit.Id;
+        if (string.IsNullOrEmpty(id))
             return;
 
         var setter = GetOrCreateSetter(typeof(T));
-        setter?.Invoke(hit.Fields, hit.Id);
+        setter?.Invoke(hit.Fields, id);
     }
 
     private static Action<object, string>? GetOrCreateSetter(Type type) =>

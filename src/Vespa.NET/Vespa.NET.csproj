@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Vespa.NET.Tests" />
+    <InternalsVisibleTo Include="Vespa.NET.Benchmarks" />
   </ItemGroup>
 
 </Project>

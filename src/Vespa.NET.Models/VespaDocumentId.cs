@@ -22,8 +22,16 @@ public static class VespaDocumentId
         if (string.IsNullOrEmpty(id) || !id.StartsWith("id:", StringComparison.Ordinal))
             return id;
 
-        var parts = id.Split(':', 5);
-        return parts.Length == 5 ? parts[4] : id;
+        var userPart = id.AsSpan(3);
+        for (var remainingSeparators = 3; remainingSeparators > 0; remainingSeparators--)
+        {
+            var separator = userPart.IndexOf(':');
+            if (separator < 0)
+                return id;
+            userPart = userPart[(separator + 1)..];
+        }
+
+        return userPart.ToString();
     }
 
     /// <summary>

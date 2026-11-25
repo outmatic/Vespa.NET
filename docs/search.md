@@ -22,6 +22,37 @@ foreach (var hit in response.Root.Children)
 
 HTTP failures preserve the primary server error from `root.errors` in `VespaException.Error`. Successful responses can still contain backend errors or degraded coverage: inspect `response.Root.Errors` and `response.Root.Coverage`.
 
+### Read a subset of fields
+
+When a caller needs only a few fields, select them in YQL and read the hits into a smaller model. The builder resolves the field names from the schema model, while `QueryAsync<T>` uses the result type to read the response.
+
+```csharp
+var yql = YqlBuilder<Product>.Select(p => p.Name, p => p.Price).Build();
+var response = await client.Search.QueryAsync<ProductCard>(yql);
+
+public sealed record ProductCard(
+    [property: VespaField(Name = "product_name")] string Name,
+    double Price);
+```
+
+The selected fields must be available in the document summary used by the query.
+
+### Read a response with generated JSON metadata
+
+To deserialize a response body directly with `System.Text.Json` source generation, include both the response type and the fields model in the context. The search hit converter reads the fields using the context's metadata.
+
+```csharp
+var response = JsonSerializer.Deserialize(json, ProductJsonContext.Default.ProductResponse);
+
+public sealed record ProductFields([property: JsonPropertyName("product_name")] string Name);
+
+[JsonSerializable(typeof(VespaSearchResponse<ProductFields>), TypeInfoPropertyName = "ProductResponse")]
+[JsonSerializable(typeof(ProductFields))]
+internal sealed partial class ProductJsonContext : JsonSerializerContext;
+```
+
+The search hit converter creates a closed generic converter at runtime. Native AOT publication can report trimming and dynamic-code warnings.
+
 ## User text and model filters
 
 Add `UserQuery()` to YQL and set the request's query text with `WithModelQueryText`. This selects Vespa's `tokenize` parser, so characters such as `+` and `-` in the user's text carry no query syntax. Set `ModelDefaultIndex` if the application uses a specific field or fieldset for unqualified words.

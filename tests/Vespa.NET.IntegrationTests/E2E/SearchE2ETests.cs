@@ -1,6 +1,7 @@
 using Vespa.Documents;
 using Vespa.IntegrationTests.Fixtures;
 using Vespa.Models;
+using Vespa.Models.Attributes;
 using Vespa.Query;
 using Vespa.Search;
 using Xunit;
@@ -621,9 +622,13 @@ public class SearchE2ETests(VespaFixture fixture)
                 .Limit(1)
                 .Build();
 
-            var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql, hits: 1);
-            Assert.NotEmpty(result.Root.Children);
+            var result = await fixture.Client.Search.QueryAsync<ProductCard>(yql, hits: 1);
+            Assert.Empty(result.Root.Errors ?? []);
+            var card = Assert.IsType<ProductCard>(Assert.Single(result.Root.Children).Fields);
+            Assert.Contains(Products, product => product.Name == card.Name && product.Price == card.Price);
         }
         finally { await CleanupAsync(ids); }
     }
+
+    private sealed record ProductCard([property: VespaField(Name = "product_name")] string Name, double Price);
 }

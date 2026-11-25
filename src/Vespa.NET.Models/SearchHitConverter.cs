@@ -6,7 +6,7 @@ namespace Vespa.Models;
 /// <summary>
 /// Creates <see cref="SearchHitConverter{T}"/> instances for <see cref="SearchHit{T}"/>.
 /// </summary>
-internal sealed class SearchHitConverterFactory : JsonConverterFactory
+public sealed class SearchHitConverterFactory : JsonConverterFactory
 {
     public override bool CanConvert(Type typeToConvert) =>
         typeToConvert.IsGenericType && typeToConvert.GetGenericTypeDefinition() == typeof(SearchHit<>);
