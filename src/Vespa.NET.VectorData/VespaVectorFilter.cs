@@ -22,8 +22,6 @@ internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord
             ? mapper.Property(name) : throw new NotSupportedException("Select one mapped property directly.");
     }
 
-    internal bool IsVectorSelector(LambdaExpression selector) => ResolvePropertySelector(selector).IsVector;
-
     private string Visit(Expression expression, ParameterExpression parameter)
     {
         expression = Unwrap(expression, parameter);

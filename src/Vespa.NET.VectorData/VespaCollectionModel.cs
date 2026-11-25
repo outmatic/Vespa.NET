@@ -121,7 +121,6 @@ internal sealed class VespaCollectionModel
             Dimensions = vector?.Dimensions ?? 0,
             DistanceFunction = vector?.DistanceFunction ?? DistanceFunction.CosineSimilarity,
             IndexKind = vector?.IndexKind,
-            EmbeddingType = vector?.EmbeddingType,
             EmbeddingGenerator = vector is null ? null : vector.EmbeddingGenerator ?? defaultGenerator
         };
     }
@@ -248,7 +247,6 @@ internal sealed class VespaCollectionModel
         internal int Dimensions { get; init; }
         internal string DistanceFunction { get; init; } = Microsoft.Extensions.VectorData.DistanceFunction.CosineSimilarity;
         internal string? IndexKind { get; init; }
-        internal Type? EmbeddingType { get; init; }
         internal IEmbeddingGenerator? EmbeddingGenerator { get; init; }
         internal bool GeneratesVectors => IsVector && Type == typeof(string);
     }

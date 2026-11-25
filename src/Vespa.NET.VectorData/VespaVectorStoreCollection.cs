@@ -38,16 +38,16 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     public override Task<bool> CollectionExistsAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return VespaCollectionProbe.ExistsAsync(Name, _options.CollectionCatalog, cancellationToken);
+        return VespaCollectionProbe.ExistsAsync(Name, _options.CollectionCatalog, nameof(CollectionExistsAsync), cancellationToken);
     }
 
     public override async Task EnsureCollectionExistsAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
-        if (_options.CollectionCatalog is not null)
+        if (_options.CollectionCatalog is { } catalog)
         {
-            if (!await CollectionExistsAsync(cancellationToken))
+            if (!await VespaCollectionProbe.ExistsAsync(Name, catalog, nameof(EnsureCollectionExistsAsync), cancellationToken))
                 throw Failure(nameof(EnsureCollectionExistsAsync),
                     $"Schema '{Name}' is not deployed. Deploy the Vespa application separately before using this collection; automatic schema deployment is not enabled by this provider.");
         }
@@ -495,22 +495,14 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         {
             return await action();
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is VespaException or HttpRequestException or JsonException or OperationCanceledException)
+        catch (Exception exception) when (VespaVectorErrors.IsOperational(exception, cancellationToken))
         {
             throw Failure(operation, exception.Message, exception);
         }
     }
 
-    private VectorStoreException Failure(string operation, string message, Exception? innerException = null) => new(message, innerException)
-    {
-        VectorStoreSystemName = "vespa",
-        CollectionName = Name,
-        OperationName = operation
-    };
+    private VectorStoreException Failure(string operation, string message, Exception? innerException = null) =>
+        VespaVectorErrors.Create(Name, operation, message, innerException);
 
     private void ValidateWindow(int top, int skip)
     {

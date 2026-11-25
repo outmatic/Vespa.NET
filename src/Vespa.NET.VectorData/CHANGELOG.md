@@ -2,6 +2,12 @@
 
 This package is versioned independently of the base Vespa.NET SDK.
 
+## Unreleased
+
+### Breaking changes
+
+- `ListCollectionNamesAsync` now reports catalog HTTP, Vespa and JSON failures, and cancellation exceptions from catalog timeouts, as `VectorStoreException`. Catch that type and inspect `InnerException` for the underlying cause. Catalog failures from `EnsureCollectionExistsAsync` now identify that operation in `OperationName`.
+
 ## 2.0.0
 
 ### Breaking changes

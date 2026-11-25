@@ -18,18 +18,12 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
     internal IReadOnlyList<MappedProperty> Properties => Model.Properties;
     internal IReadOnlyList<MappedProperty> VectorProperties => Model.VectorProperties;
 
-    internal MappedProperty ResolveVector(string? name = null)
+    internal MappedProperty ResolveVector() => VectorProperties.Count switch
     {
-        if (name is not null)
-            return VectorProperties.SingleOrDefault(p => p.Name == name)
-                ?? throw new NotSupportedException($"Vector property '{name}' is not mapped.");
-        return VectorProperties.Count switch
-        {
-            0 => throw new NotSupportedException("This collection has no vector properties; only document operations are available."),
-            1 => VectorProperties[0],
-            _ => throw new NotSupportedException("Select a VectorProperty when the collection has multiple vector fields.")
-        };
-    }
+        0 => throw new NotSupportedException("This collection has no vector properties; only document operations are available."),
+        1 => VectorProperties[0],
+        _ => throw new NotSupportedException("Select a VectorProperty when the collection has multiple vector fields.")
+    };
 
     internal string Projection(bool includeVectors) => string.Join(", ",
         ReadProperties(includeVectors).Select(p => p.StorageName).Prepend("documentid"));

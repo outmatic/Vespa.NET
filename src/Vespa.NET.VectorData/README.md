@@ -85,6 +85,8 @@ absence from operational errors. A successful search request is not proof of
 schema existence: Vespa sources can resolve through aliases or routing. The
 connector therefore does not infer existence or enumerate schemas from searches.
 
+Catalog HTTP, Vespa and JSON failures surface as `VectorStoreException`, as do timeouts reported as cancellation without a caller cancellation request. The original exception is available in `InnerException`. Listing streams names as the catalog returns them, so a later failure leaves any names already received available to the caller. Caller cancellation propagates as cancellation. As with `await foreach`, a failure while disposing the enumerator can take precedence over a failure during iteration.
+
 `EnsureCollectionExistsAsync` never implements upstream create-if-missing semantics.
 With a catalog it first checks existence, failing with deployment instructions
 when absent, then validates searchability. Without a catalog, it requires
