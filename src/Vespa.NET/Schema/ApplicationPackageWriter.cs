@@ -13,7 +13,8 @@ internal static class ApplicationPackageWriter
     internal static void Write(
         Stream output,
         IEnumerable<Type> documentTypes,
-        ApplicationPackageOptions? options)
+        ApplicationPackageOptions? options,
+        Func<Type, PropertyInfo[]> getProperties)
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(documentTypes);
@@ -46,7 +47,7 @@ internal static class ApplicationPackageWriter
 
         foreach (var type in documentTypes)
         {
-            var model = SchemaModelBuilder.Build(type, opts.RankProfiles?.GetValueOrDefault(type));
+            var model = SchemaModelBuilder.Build(type, getProperties, opts.RankProfiles?.GetValueOrDefault(type));
             var schema = SchemaEmitter.Emit(model);
             var docAttr = type.GetCustomAttribute<VespaDocumentAttribute>()!;
             // ZipArchive happily writes duplicate entries, producing an ambiguous package

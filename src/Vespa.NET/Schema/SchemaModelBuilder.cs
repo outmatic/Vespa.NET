@@ -7,7 +7,7 @@ namespace Vespa.Models.Schema;
 /// Builds a <see cref="SchemaModel"/> from an attributed CLR type in a single
 /// reflection pass, performing all schema validation up front.
 /// </summary>
-internal sealed class SchemaModelBuilder
+internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getProperties)
 {
     private readonly List<SchemaStructModel> _structs = [];
     private readonly Dictionary<Type, SchemaStructModel> _structIndex = [];
@@ -20,7 +20,8 @@ internal sealed class SchemaModelBuilder
         string? MapValueType = null,
         Type? MapValueStructType = null);
 
-    public static SchemaModel Build(Type type, IReadOnlyList<RankProfileDefinition>? rankProfiles = null)
+    public static SchemaModel Build(
+        Type type, Func<Type, PropertyInfo[]> getProperties, IReadOnlyList<RankProfileDefinition>? rankProfiles = null)
     {
         ArgumentNullException.ThrowIfNull(type);
 
@@ -28,7 +29,7 @@ internal sealed class SchemaModelBuilder
             ?? throw new InvalidOperationException(
                 $"Type '{type.Name}' must be decorated with [VespaDocument].");
 
-        return new SchemaModelBuilder().BuildCore(type, docAttr, rankProfiles);
+        return new SchemaModelBuilder(getProperties).BuildCore(type, docAttr, rankProfiles);
     }
 
     private SchemaModel BuildCore(
@@ -37,7 +38,7 @@ internal sealed class SchemaModelBuilder
         var fields = new List<SchemaFieldModel>();
         var tensorInputs = new List<(string QueryName, string TensorType)>();
 
-        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var prop in getProperties(type))
         {
             // [VespaExtraFields] is a catch-all bag for unmapped fields — skip in schema generation
             if (prop.GetCustomAttribute<VespaExtraFieldsAttribute>() is not null)
@@ -344,7 +345,7 @@ internal sealed class SchemaModelBuilder
         var structName = structAttr.Name ?? VespaNaming.ToSnakeCase(structType.Name);
 
         var members = new List<(string Name, string VespaType)>();
-        foreach (var prop in structType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var prop in getProperties(structType))
         {
             var fieldAttr = prop.GetCustomAttribute<VespaFieldAttribute>();
             var memberName = fieldAttr?.Name ?? VespaNaming.ToSnakeCase(prop.Name);

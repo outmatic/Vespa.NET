@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json.Serialization;
@@ -9,7 +10,11 @@ namespace Vespa.Documents;
 /// <summary>Resolves a directly selected property that has its own document JSON binding.</summary>
 internal static class DocumentFieldSelector
 {
-    internal static string FieldName<T>(Expression<Func<T, object?>> selector)
+    // Both linkers keep inherited interface members with All. Interfaces alone
+    // keeps the interface types but can drop properties that hide a selected member.
+    internal const DynamicallyAccessedMemberTypes ModelMembers = DynamicallyAccessedMemberTypes.All;
+
+    internal static string FieldName<[DynamicallyAccessedMembers(ModelMembers)] T>(Expression<Func<T, object?>> selector)
     {
         // Shared metadata validates shape and preserves the existing field-name policy.
         var name = VespaDocumentMeta.FieldName(selector);
@@ -45,7 +50,9 @@ internal static class DocumentFieldSelector
         return name;
     }
 
-    internal static PropertyInfo EffectiveProperty<T>(PropertyInfo selected)
+    [UnconditionalSuppressMessage("Trimming", "IL2075",
+        Justification = "ModelMembers preserves members of inherited interfaces. Analysis does not carry that guarantee through the Type array returned by GetInterfaces.")]
+    internal static PropertyInfo EffectiveProperty<[DynamicallyAccessedMembers(ModelMembers)] T>(PropertyInfo selected)
     {
         if (selected.DeclaringType == typeof(T))
             return selected;

@@ -149,7 +149,7 @@ internal sealed class ClearFieldSentinel
 /// <summary>
 /// Serializes FieldOperation as { "type": value } for the Vespa Document API
 /// </summary>
-file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
+internal sealed class FieldOperationConverter : JsonConverter<FieldOperation>
 {
     public override FieldOperation Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
         throw new NotSupportedException("FieldOperation deserialization is not supported.");
@@ -169,7 +169,7 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
             writer.WritePropertyName(value.Type);
             writer.WriteStartObject();
             writer.WritePropertyName("element");
-            JsonSerializer.Serialize(writer, match.Key, options);
+            JsonSerializer.Serialize(writer, match.Key, options.GetTypeInfo(typeof(object)));
             WriteOperation(writer, match.InnerOp, options);
             writer.WriteEndObject();
         }
@@ -236,7 +236,7 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
         else
         {
             writer.WritePropertyName(value.Type);
-            JsonSerializer.Serialize(writer, value.Value, options);
+            JsonSerializer.Serialize(writer, value.Value, options.GetTypeInfo(typeof(object)));
         }
     }
 

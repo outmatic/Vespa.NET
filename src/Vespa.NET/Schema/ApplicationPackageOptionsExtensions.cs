@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Documents;
 using Vespa.Models.Attributes;
@@ -40,7 +41,8 @@ public static class ApplicationPackageOptionsExtensions
     /// Native expressions, including moving cutoffs using now(), belong in DocumentSelections.
     /// Duplicate targets and CustomServicesXml throw; attribute conflicts are checked during generation.
     /// </remarks>
-    public static ApplicationPackageOptions WithDocumentSelection<T>(
+    public static ApplicationPackageOptions WithDocumentSelection<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this ApplicationPackageOptions options,
         Expression<Func<T, bool>> selection) where T : class
     {

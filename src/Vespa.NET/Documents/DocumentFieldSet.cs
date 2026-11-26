@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Models.Attributes;
 
@@ -8,7 +9,8 @@ public static class DocumentFieldSet
 {
     /// <summary>Renders a field list using the model's document type and mapped property names.</summary>
     /// <remarks>Requires at least one direct document property. Names are compared ordinally; duplicate names are removed and first-appearance order is preserved.</remarks>
-    public static string For<T>(params Expression<Func<T, object?>>[] fields) where T : class
+    public static string For<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(params Expression<Func<T, object?>>[] fields) where T : class
     {
         ValidateFields(fields);
         var (documentType, _) = VespaDocumentMeta.For<T>();
@@ -17,14 +19,16 @@ public static class DocumentFieldSet
 
     /// <summary>Renders mapped properties for an explicit document type without requiring a document attribute.</summary>
     /// <remarks>The qualifier does not change the request's target or document selection. Pass the result as the named fieldSet argument or VisitOptions.FieldSet.</remarks>
-    public static string ForDocumentType<T>(string documentType, params Expression<Func<T, object?>>[] fields) where T : class
+    public static string ForDocumentType<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, params Expression<Func<T, object?>>[] fields) where T : class
     {
         ValidateFields(fields);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
         return Render(documentType, fields);
     }
 
-    private static string Render<T>(string documentType, Expression<Func<T, object?>>[] fields)
+    private static string Render<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, object?>>[] fields)
     {
         if (!IsIdentifier(documentType))
             throw new ArgumentException($"'{documentType}' is not a valid document type name for a field set.", nameof(documentType));

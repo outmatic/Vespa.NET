@@ -1,0 +1,9 @@
+<linker>
+  <assembly fullname="Vespa.NET.Models">
+    <type fullname="Vespa.Models.VespaJsonReflection">
+      <!-- The .NET 8 linker cannot fold the switch from newer System.Text.Json packages. -->
+      <method signature="System.Boolean get_IsEnabled()" body="stub" value="false"
+              feature="System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault" featurevalue="false" />
+    </type>
+  </assembly>
+</linker>

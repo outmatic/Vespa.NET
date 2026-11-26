@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.VectorData;
 
@@ -20,15 +21,24 @@ public sealed class VespaVectorStore : VectorStore
         _options = ValidateAndSnapshotOptions(options);
     }
 
+    [RequiresUnreferencedCode("The VectorStore API does not preserve record members. Call BindCollection on VespaVectorStore or use GetDynamicCollection.")]
+    [RequiresDynamicCode("The VectorStore API does not support Native AOT. Call BindCollection on VespaVectorStore or use GetDynamicCollection.")]
     public override VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(
+        string name, VectorStoreCollectionDefinition? definition = null) => BindCollection<TKey, TRecord>(name, definition);
+
+    /// <summary>Binds a record type while preserving the constructor and properties used by the mapper.</summary>
+    public VespaVectorStoreCollection<TKey, TRecord> BindCollection<TKey,
+        [DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord>(
         string name, VectorStoreCollectionDefinition? definition = null)
+        where TKey : notnull where TRecord : class
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return new VespaVectorStoreCollection<TKey, TRecord>(_client, name, _options, definition);
     }
 
     /// <summary>Binds a collection with its own complete options, replacing the store defaults.</summary>
-    public VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(
+    public VectorStoreCollection<TKey, TRecord> GetCollection<TKey,
+        [DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord>(
         string name, VectorStoreCollectionDefinition? definition, VespaVectorStoreOptions options)
         where TKey : notnull where TRecord : class
     {

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Models;
 using Vespa.Models.Attributes;
@@ -8,7 +9,7 @@ public static partial class DocumentOperationsExtensions
 {
     /// <summary>Insert or replace, optionally checking the stored document with a typed or native condition.</summary>
     /// <remarks>With <paramref name="create"/>, an absent document is created without evaluating the condition (Vespa ≥ 8.178).</remarks>
-    public static Task<VespaResponse> PutAsync<T>(
+    public static Task<VespaResponse> PutAsync<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string documentId,
         T document,
@@ -23,7 +24,7 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Delete, optionally checking the stored document with a typed or native condition.</summary>
-    public static Task<VespaResponse> DeleteAsync<T>(
+    public static Task<VespaResponse> DeleteAsync<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string documentId,
         Expression<Func<T, bool>>? condition = null,
@@ -36,7 +37,7 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Update fields, optionally checking the stored document with a typed or native condition.</summary>
-    public static Task<VespaResponse> UpdateFieldsAsync<T>(
+    public static Task<VespaResponse> UpdateFieldsAsync<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string documentId,
         Dictionary<string, FieldOperation> fieldOperations,
@@ -51,7 +52,7 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Configure a typed field update with an optional typed or native condition on the stored document.</summary>
-    public static Task<VespaResponse> UpdateFieldsAsync<T>(
+    public static Task<VespaResponse> UpdateFieldsAsync<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string documentId,
         Action<TypedFieldUpdateBuilder<T>> configure,
@@ -69,7 +70,7 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Put by group with an optional typed or native condition on the stored document.</summary>
-    public static Task<VespaResponse> PutByGroupAsync<T>(
+    public static Task<VespaResponse> PutByGroupAsync<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string group,
         string localId,
@@ -85,7 +86,7 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Put by number bucket with an optional typed or native condition on the stored document.</summary>
-    public static Task<VespaResponse> PutByNumberAsync<T>(
+    public static Task<VespaResponse> PutByNumberAsync<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         long number,
         string localId,
@@ -101,7 +102,7 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Delete by group with an optional typed or native condition on the stored document.</summary>
-    public static Task<VespaResponse> DeleteByGroupAsync<T>(
+    public static Task<VespaResponse> DeleteByGroupAsync<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string group,
         string localId,
@@ -115,7 +116,8 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Delete by number bucket with an optional typed or native condition on the stored document.</summary>
-    public static Task<VespaResponse> DeleteByNumberAsync<T>(
+    public static Task<VespaResponse> DeleteByNumberAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         long number,
         string localId,
@@ -129,7 +131,8 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Update fields by group with an optional typed or native condition on the stored document.</summary>
-    public static Task<VespaResponse> UpdateFieldsByGroupAsync<T>(
+    public static Task<VespaResponse> UpdateFieldsByGroupAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string group,
         string localId,
@@ -145,7 +148,8 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Configure a typed field update by group with an optional typed or native condition.</summary>
-    public static Task<VespaResponse> UpdateFieldsByGroupAsync<T>(
+    public static Task<VespaResponse> UpdateFieldsByGroupAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string group,
         string localId,
@@ -164,7 +168,8 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Update fields by number bucket with an optional typed or native condition on the stored document.</summary>
-    public static Task<VespaResponse> UpdateFieldsByNumberAsync<T>(
+    public static Task<VespaResponse> UpdateFieldsByNumberAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         long number,
         string localId,
@@ -180,7 +185,8 @@ public static partial class DocumentOperationsExtensions
     }
 
     /// <summary>Configure a typed field update by number bucket with an optional typed or native condition.</summary>
-    public static Task<VespaResponse> UpdateFieldsByNumberAsync<T>(
+    public static Task<VespaResponse> UpdateFieldsByNumberAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         long number,
         string localId,
@@ -198,7 +204,8 @@ public static partial class DocumentOperationsExtensions
         return ops.UpdateFieldsByNumberAsync<T>(number, localId, builder.Build(), createIfMissing: createIfMissing, rawCondition: selector, requestOptions: requestOptions, cancellationToken: cancellationToken);
     }
 
-    private static string? ResolveCondition<T>(Expression<Func<T, bool>>? condition, string? rawCondition) where T : class
+    private static string? ResolveCondition<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(Expression<Func<T, bool>>? condition, string? rawCondition) where T : class
     {
         if (condition is not null && rawCondition is not null)
             throw new ArgumentException("Specify either condition or rawCondition, not both.", nameof(rawCondition));

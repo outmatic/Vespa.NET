@@ -631,13 +631,28 @@ It is not a cosine/distance score and is not comparable across arbitrary profile
 
 Remaining unsupported features include automatic key generation, `DataContent`
 embedding inputs, sparse/binary/non-float vectors, other metrics/index kinds,
-nested or immutable constructor-only records, and a validated trimming/Native AOT
-contract. Mappings use reflection. Schema creation/deletion, automatic schema or
+nested or immutable constructor-only records. Schema creation/deletion, automatic schema or
 rank-profile validation and universal data-plane schema discovery remain outside
 this provider. Bounded result windows are not a deep-export cursor; VectorData's
 core abstraction does not require a universal export method. Use the
 [base Vespa.NET client](https://github.com/outmatic/Vespa.NET) for document visiting,
 bulk feed, custom native queries/ranking and explicit application deployment.
+
+## Trimmed and Native AOT apps
+
+Register the provider's JSON metadata when you configure the client. Call `BindCollection` on `VespaVectorStore` to preserve the public parameterless constructor and public properties of a typed record.
+
+```csharp
+using var client = new VespaClient(new VespaClientOptions
+{
+    Endpoint = "http://localhost:8080",
+    JsonModels = new VespaJsonModels().WithVectorData()
+});
+using var store = new VespaVectorStore(client, new VespaVectorStoreOptions { Namespace = "demo" });
+using var articles = store.BindCollection<string, Article>("article");
+```
+
+Keep any registrations for your other Vespa models in the same `VespaJsonModels` instance. For dictionary records, call `GetDynamicCollection` with an explicit definition. Microsoft's two-argument `VectorStore.GetCollection` carries trimming and Native AOT warnings.
 
 ## Real embeddings and Microsoft Agent Framework
 

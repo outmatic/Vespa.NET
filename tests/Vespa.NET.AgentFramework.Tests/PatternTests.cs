@@ -272,6 +272,30 @@ public sealed class PatternTests
     }
 
     [Fact]
+    public async Task SessionStore_LoadsSnapshotsWrittenWithThePreviousKeyFormat()
+    {
+        using var fixture = new StateFixture();
+        using var model = new PatternChatClient();
+        var agent = model.AsAIAgent(name: "perché?");
+        var session = await agent.CreateSessionAsync("remote");
+        var key = new AgentSessionStoreKey("conversation/à",
+            new Dictionary<string, string> { ["z"] = "ultimo", ["A"] = "primo" });
+        var previousKey = "session/" + JsonSerializer.Serialize(new
+        {
+            Agent = agent.Name,
+            key.SessionId,
+            Partitions = new[] { new[] { "A", "primo" }, new[] { "z", "ultimo" } }
+        });
+        await fixture.Store.WriteAsync(previousKey, await agent.SerializeSessionAsync(session), null);
+
+        var sessions = new VespaAgentSessionStore(fixture.Store);
+        var restored = Assert.IsType<ChatClientAgentSession>(await sessions.GetSessionAsync(agent, key));
+        Assert.Equal("remote", restored.ConversationId);
+        await sessions.SaveSessionAsync(agent, key, restored);
+        Assert.Single(fixture.Backend.Documents);
+    }
+
+    [Fact]
     public async Task StreamingRun_PersistsHistoryAfterSuccessfulCompletion()
     {
         using var fixture = new StateFixture();
@@ -289,7 +313,7 @@ public sealed class PatternTests
     {
         using var fixture = new StateFixture();
         using var model = new PatternChatClient();
-        var history = new VespaChatHistoryProvider(fixture.Store);
+        var history = new VespaChatHistoryProvider(fixture.Store, _ => new() { ConversationId = "media" });
         var agent = model.AsAIAgent(new ChatClientAgentOptions { Name = "media", ChatHistoryProvider = history });
         var session = await agent.CreateSessionAsync();
         var input = new ChatMessage(ChatRole.User,
@@ -297,13 +321,22 @@ public sealed class PatternTests
             new TextContent("Inspect this image."),
             new DataContent(new byte[] { 1, 2, 3 }, "image/png"),
             new UriContent(new Uri("https://example.org/image.png"), "image/png")
-        ]) { AuthorName = "alice", MessageId = "message-1" };
+        ])
+        {
+            AuthorName = "alice",
+            MessageId = "message-1",
+            AdditionalProperties = new() { ["custom"] = new { Language = "it" } }
+        };
         await agent.RunAsync([input], session);
-        var saved = (await history.GetMessagesAsync(session))[0];
+        var messages = (await history.GetMessagesAsync(session)).ToList();
+        var saved = messages[0];
         Assert.Equal("alice", saved.AuthorName);
         Assert.Equal("message-1", saved.MessageId);
         Assert.Equal(new byte[] { 1, 2, 3 }, Assert.IsType<DataContent>(saved.Contents[1]).Data.ToArray());
         Assert.Equal("https://example.org/image.png", Assert.IsType<UriContent>(saved.Contents[2]).Uri.AbsoluteUri);
+        Assert.Equal("it", Assert.IsType<JsonElement>(saved.AdditionalProperties!["custom"]).GetProperty("Language").GetString());
+        var snapshot = await fixture.Store.ReadAsync("history/media");
+        Assert.Equal(JsonSerializer.Serialize(messages), snapshot!.Payload.GetRawText());
     }
 }
 

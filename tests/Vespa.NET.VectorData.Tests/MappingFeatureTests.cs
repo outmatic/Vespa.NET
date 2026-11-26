@@ -9,6 +9,40 @@ namespace Vespa.VectorData.Tests;
 public sealed class MappingFeatureTests
 {
     [Fact]
+    public async Task BoundCollection_RoundTripsWithRegisteredJsonMetadata()
+    {
+        const string storedFields = """{"fields":{"tags":["vespa"],"count":[7],"dates":[3]}}""";
+        using var handler = new RecordingHandler((request, _) =>
+            TestHarness.Json(request.Method == HttpMethod.Get ? storedFields : "{}"));
+        using var http = new HttpClient(handler);
+        using var client = new VespaClient(http, new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            JsonModels = new VespaJsonModels().WithVectorData()
+        });
+        using var store = new VespaVectorStore(client, TestHarness.Options);
+        using var collection = store.BindCollection<string, DateListRecord>("notes");
+        var record = new DateListRecord
+        {
+            Id = "a:1",
+            Tags = ["vespa"],
+            Count = [7],
+            Dates = [DateTime.UnixEpoch.AddTicks(3)]
+        };
+
+        await collection.UpsertAsync(record);
+        var actual = await collection.GetAsync(record.Id);
+
+        Assert.NotNull(actual);
+        Assert.Equal(record.Id, actual.Id);
+        Assert.Equal(record.Tags, actual.Tags);
+        Assert.Equal(record.Count, actual.Count);
+        Assert.Equal(record.Dates, actual.Dates);
+        using var sent = JsonDocument.Parse(handler.Requests[0].Body!);
+        Assert.Equal(3, sent.RootElement.GetProperty("fields").GetProperty("dates")[0].GetInt64());
+    }
+
+    [Fact]
     public async Task CollectionsWithoutVectors_SupportDocumentOperations()
     {
         using var harness = new TestHarness((request, _) => TestHarness.Json(request.Method == HttpMethod.Get

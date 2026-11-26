@@ -1,5 +1,7 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Vespa.Models;
 
@@ -11,9 +13,15 @@ public sealed class SearchHitConverterFactory : JsonConverterFactory
     public override bool CanConvert(Type typeToConvert) =>
         typeToConvert.IsGenericType && typeToConvert.GetGenericTypeDefinition() == typeof(SearchHit<>);
 
-    public override JsonConverter CreateConverter(Type typeToConvert, JsonSerializerOptions options) =>
-        (JsonConverter)Activator.CreateInstance(
+    public override JsonConverter CreateConverter(Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+            throw new NotSupportedException(
+                "Register the fields model in VespaClientOptions.JsonModels to read search hits in Native AOT.");
+
+        return (JsonConverter)Activator.CreateInstance(
             typeof(SearchHitConverter<>).MakeGenericType(typeToConvert.GetGenericArguments()[0]))!;
+    }
 }
 
 /// <summary>
@@ -30,8 +38,12 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
     public override SearchHit<T> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         using var document = JsonDocument.ParseValue(ref reader);
-        var root = document.RootElement;
+        return Read(document.RootElement, options);
+    }
 
+    internal static SearchHit<T> Read(
+        JsonElement root, JsonSerializerOptions options, Func<JsonElement, string, T?>? readFields = null)
+    {
         var fullId = string.Empty;
         double relevance = 0;
         string? source = null;
@@ -42,7 +54,7 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
         if (root.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
             fullId = id.GetString()!;
         if (root.TryGetProperty("relevance", out var rel) && rel.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
-            relevance = rel.Deserialize<double>(options);
+            relevance = rel.Deserialize(GetTypeInfo<double>(options));
         if (root.TryGetProperty("source", out var src) && src.ValueKind == JsonValueKind.String)
             source = src.GetString();
 
@@ -53,7 +65,9 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
 
         if (root.TryGetProperty("fields", out var fieldsElement) && fieldsElement.ValueKind != JsonValueKind.Null)
         {
-            fields = fieldsElement.Deserialize<T>(options);
+            fields = readFields is null
+                ? fieldsElement.Deserialize(GetTypeInfo<T>(options))
+                : readFields(fieldsElement, fullId);
 
             if (fieldsElement.ValueKind == JsonValueKind.Object)
             {
@@ -80,18 +94,21 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
         writer.WriteStartObject();
         writer.WriteString("id", value.FullId);
         writer.WritePropertyName("relevance");
-        JsonSerializer.Serialize(writer, value.Relevance, options);
+        JsonSerializer.Serialize(writer, value.Relevance, GetTypeInfo<double>(options));
         if (value.Source is not null)
             writer.WriteString("source", value.Source);
         if (value.Fields is not null)
         {
             writer.WritePropertyName("fields");
-            JsonSerializer.Serialize(writer, value.Fields, options);
+            JsonSerializer.Serialize(writer, value.Fields, GetTypeInfo<T>(options));
         }
         WriteFeatureMap(writer, "matchfeatures", value.MatchFeatures);
         WriteFeatureMap(writer, "summaryfeatures", value.SummaryFeatures);
         writer.WriteEndObject();
     }
+
+    private static JsonTypeInfo<TValue> GetTypeInfo<TValue>(JsonSerializerOptions options) =>
+        (JsonTypeInfo<TValue>)options.GetTypeInfo(typeof(TValue));
 
     private static Dictionary<string, JsonElement>? ToFeatureMap(JsonElement element)
     {

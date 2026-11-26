@@ -268,7 +268,7 @@ public sealed partial class VespaClient : IVespaClient
 
     public Task<VespaStateConfig?> GetConfigAsync(CancellationToken cancellationToken = default) =>
         GetOrDefaultAsync(VespaPaths.Config,
-            response => response.Content.ReadFromJsonAsync<VespaStateConfig>(VespaJsonOptions.Default, cancellationToken),
+            response => response.Content.ReadFromJsonAsync(VespaProtocolJsonContext.Default.VespaStateConfig, cancellationToken),
             cancellationToken);
 
     public Task<string?> GetVersionAsync(CancellationToken cancellationToken = default) =>
@@ -311,7 +311,7 @@ public sealed partial class VespaClient : IVespaClient
     {
         using var response = await _httpClient.GetAsync(VespaPaths.Metrics, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.IsSuccessStatusCode)
-            return await response.Content.ReadFromJsonAsync<VespaMetrics>(VespaJsonOptions.Default, cancellationToken);
+            return await response.Content.ReadFromJsonAsync(VespaProtocolJsonContext.Default.VespaMetrics, cancellationToken);
 
         if (_logger != null)
             LogMetricsFailed(_logger, response.StatusCode);

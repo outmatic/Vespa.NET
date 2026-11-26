@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Text.Json.Serialization;
 using Vespa.Documents;
@@ -19,7 +20,7 @@ public sealed record BulkFieldUpdate
 
     /// <summary>Creates an update with a shallow copy of the field-operation dictionary and an optional condition.</summary>
     /// <remarks>The batch supplies the namespace. A factory-bound schema is validated by the built-in feed client.</remarks>
-    public static BulkFieldUpdate Create<T>(
+    public static BulkFieldUpdate Create<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         IReadOnlyDictionary<string, FieldOperation> fieldOperations,
         string? documentType = null,
@@ -39,7 +40,7 @@ public sealed record BulkFieldUpdate
     }
 
     /// <summary>Creates an update using property selectors, freezing the condition before the callback runs.</summary>
-    public static BulkFieldUpdate Create<T>(
+    public static BulkFieldUpdate Create<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         Action<TypedFieldUpdateBuilder<T>> configure,
         string? documentType = null,

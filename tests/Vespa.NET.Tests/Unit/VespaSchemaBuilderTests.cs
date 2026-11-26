@@ -7,6 +7,47 @@ namespace Vespa.Tests.Unit;
 
 public class VespaSchemaBuilderTests
 {
+    [Fact]
+    public void RegisteredSchemaMetadata_ProducesTheSamePackageAsRuntimeDiscovery()
+    {
+        var metadata = new VespaSchemaMetadata()
+            .WithDocument<NestedStructDoc>()
+            .WithDocument<MapOfStructDoc>()
+            .WithStruct<PlaceStruct>()
+            .WithStruct<GeoPointStruct>()
+            .WithStruct<AddressStruct>();
+        var options = new ApplicationPackageOptions { NodeCount = 2, Redundancy = 2 };
+        using var discovered = new MemoryStream();
+        using var registered = new MemoryStream();
+
+        VespaSchemaBuilder.GenerateApplicationPackage(discovered, [typeof(NestedStructDoc), typeof(MapOfStructDoc)], options);
+        metadata.GenerateApplicationPackage(registered, options);
+        Assert.Equal(VespaSchemaBuilder.GenerateSchema<NestedStructDoc>(options), metadata.GenerateSchema<NestedStructDoc>(options));
+
+        using var expected = new ZipArchive(discovered, ZipArchiveMode.Read);
+        using var actual = new ZipArchive(registered, ZipArchiveMode.Read);
+        Assert.Equal(expected.Entries.Select(entry => entry.FullName), actual.Entries.Select(entry => entry.FullName));
+        foreach (var entry in expected.Entries)
+        {
+            using var expectedReader = new StreamReader(entry.Open());
+            using var actualReader = new StreamReader(actual.GetEntry(entry.FullName)!.Open());
+            Assert.Equal(expectedReader.ReadToEnd(), actualReader.ReadToEnd());
+        }
+    }
+
+    [Fact]
+    public void RegisteredSchemaMetadata_ReportsAnUnregisteredNestedStruct()
+    {
+        var metadata = new VespaSchemaMetadata().WithDocument<NestedStructDoc>().WithStruct<PlaceStruct>();
+
+        var error = Assert.Throws<InvalidOperationException>(() => metadata.GenerateSchema<NestedStructDoc>());
+
+        Assert.Contains(nameof(GeoPointStruct), error.Message);
+        Assert.Contains("WithStruct<T>()", error.Message);
+        Assert.Contains("struct geo_point", metadata.WithStruct<GeoPointStruct>().GenerateSchema<NestedStructDoc>());
+        Assert.Throws<InvalidOperationException>(() => metadata.GenerateSchema<NestedStructDoc>());
+    }
+
     // ── Test document types ───────────────────────────────────────────────────
 
     [VespaDocument("music")]

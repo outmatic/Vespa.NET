@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -29,6 +30,7 @@ public sealed partial class SearchOperations(
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Yql, nameof(request));
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "search");
 
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.Search);
         RecordYql(activity, request);
@@ -42,8 +44,12 @@ public sealed partial class SearchOperations(
             activity,
             async response =>
             {
-                var result = await VespaIdInjector.DeserializeSearchAndInjectAsync<T>(response.Content, cancellationToken)
-                    ?? throw new VespaException("Failed to deserialize search response");
+                var result = VespaJsonReflection.IsEnabled && model is null
+                    ? await VespaIdInjector.DeserializeSearchAndInjectAsync<T>(response.Content, cancellationToken)
+                    : (await response.Content.ReadFromJsonAsync(
+                        VespaProtocolJsonContext.Default.SearchResponseWire, cancellationToken))?.ToResponse(model!);
+                if (result is null)
+                    throw new VespaException("Failed to deserialize search response");
 
                 var totalCount = result.Root.Fields?.TotalCount ?? 0;
                 activity?.SetTag(VespaActivitySource.TagTotalCount, totalCount);
@@ -53,7 +59,8 @@ public sealed partial class SearchOperations(
 
                 return result;
             },
-            cancellationToken);
+            cancellationToken,
+            useGeneratedMetadata: model is not null);
     }
 
     public async Task<VespaSearchResponse<T>> NearestNeighborSearchAsync<T>(
@@ -121,6 +128,7 @@ public sealed partial class SearchOperations(
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Yql, nameof(request));
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "grouping");
 
         if (logger != null)
             LogExecutingSearch(logger, request.Yql);
@@ -135,9 +143,10 @@ public sealed partial class SearchOperations(
             {
                 using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-                return GroupingResponseParser.Parse<T>(doc.RootElement);
+                return GroupingResponseParser.Parse(doc.RootElement, model);
             },
-            cancellationToken);
+            cancellationToken,
+            useGeneratedMetadata: model is not null);
     }
 
     /// <summary>
@@ -154,7 +163,8 @@ public sealed partial class SearchOperations(
         VespaSearchRequest request,
         Activity? activity,
         Func<HttpResponseMessage, Task<TResult>> parseResponse,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool useGeneratedMetadata = false)
     {
         try
         {
@@ -165,7 +175,7 @@ public sealed partial class SearchOperations(
             {
                 Version = _httpClient.DefaultRequestVersion,
                 VersionPolicy = _httpClient.DefaultVersionPolicy,
-                Content = JsonContent.Create(request, options: VespaJsonOptions.Default)
+                Content = CreateSearchContent(request, useGeneratedMetadata)
             };
             using var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             await EnsureSearchSuccessAsync(response, activity, cancellationToken);
@@ -176,6 +186,19 @@ public sealed partial class SearchOperations(
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
         }
+    }
+
+    private static HttpContent CreateSearchContent(VespaSearchRequest request, bool useGeneratedMetadata)
+    {
+        if (VespaJsonReflection.IsEnabled && !useGeneratedMetadata)
+            return JsonContent.Create(request, options: VespaJsonOptions.Default);
+
+        // Resolve any runtime parameter types before the transport starts the request.
+        var json = JsonSerializer.SerializeToUtf8Bytes(request, VespaProtocolJsonContext.Default.VespaSearchRequest);
+        return new ByteArrayContent(json)
+        {
+            Headers = { ContentType = new MediaTypeHeaderValue("application/json", "utf-8") }
+        };
     }
 
     private static async Task EnsureSearchSuccessAsync(

@@ -39,6 +39,8 @@ The selected fields must be available in the document summary used by the query.
 
 ### Read a response with generated JSON metadata
 
+For client calls, [register the fields model](configuration.md#generated-json-metadata) in `VespaClientOptions.JsonModels`. The client reads the response envelope and uses the registered metadata for each hit's fields.
+
 To deserialize a response body directly with `System.Text.Json` source generation, include both the response type and the fields model in the context. The search hit converter reads the fields using the context's metadata.
 
 ```csharp
@@ -51,7 +53,7 @@ public sealed record ProductFields([property: JsonPropertyName("product_name")] 
 internal sealed partial class ProductJsonContext : JsonSerializerContext;
 ```
 
-The search hit converter creates a closed generic converter at runtime. Native AOT publication can report trimming and dynamic-code warnings.
+Direct search response deserialization uses a converter factory that needs runtime code generation. In a Native AOT app, use the client with registered fields metadata.
 
 ## User text and model filters
 

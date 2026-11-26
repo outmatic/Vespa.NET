@@ -11,7 +11,8 @@ namespace Vespa.VectorData;
 
 /// <summary>A record binding to an existing Vespa schema, with dense vector and keyword hybrid search.</summary>
 [SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "Matches the VectorData VectorStoreCollection abstraction.")]
-public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreCollection<TKey, TRecord>, IKeywordHybridSearchable<TRecord> where TKey : notnull where TRecord : class
+public sealed class VespaVectorStoreCollection<TKey, [DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord>
+    : VectorStoreCollection<TKey, TRecord>, IKeywordHybridSearchable<TRecord> where TKey : notnull where TRecord : class
 {
     private readonly IVespaClient _client;
     private readonly VespaVectorStoreOptions _options;
@@ -340,7 +341,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         // JSON quoting keeps every keyword inside a YQL string literal; full-text
         // analysis is performed by the selected field, without accepting query syntax.
         var lexical = "({totalTargetHits:" + keywordTarget.ToString(CultureInfo.InvariantCulture) + "}weakAnd(" +
-            string.Join(", ", terms.Select(term => $"{textProperty.StorageName} contains {JsonSerializer.Serialize(term)}")) + "))";
+            string.Join(", ", terms.Select(term => $"{textProperty.StorageName} contains {JsonSerializer.Serialize(term, VectorDataJsonContext.Default.String)}")) + "))";
         var predicate = $"({nearest} or {lexical})";
         if (filterPredicate is not null)
             predicate = $"({filterPredicate}) and {predicate}";

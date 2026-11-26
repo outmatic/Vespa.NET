@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Documents;
 using Vespa.Models.Attributes;
@@ -6,7 +7,8 @@ namespace Vespa.Feed;
 
 internal static class FeedEntryCondition
 {
-    internal static (string? DocumentType, string? Condition) Resolve<T>(
+    internal static (string? DocumentType, string? Condition) Resolve<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string? documentType, Expression<Func<T, bool>>? condition, string? rawCondition) where T : class
     {
         if (condition is not null && rawCondition is not null)

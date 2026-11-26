@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Models;
 using Vespa.Models.Attributes;
@@ -10,7 +11,8 @@ namespace Vespa.Documents;
 /// honouring <c>[VespaField(Name = "...")]</c> and falling back to snake_case.
 /// Properties that represent document metadata or lack an individual JSON binding are rejected.
 /// </summary>
-public sealed class TypedFieldUpdateBuilder<T> where T : class
+public sealed class TypedFieldUpdateBuilder<
+    [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T> where T : class
 {
     private readonly Dictionary<string, FieldOperation> _fields = [];
 

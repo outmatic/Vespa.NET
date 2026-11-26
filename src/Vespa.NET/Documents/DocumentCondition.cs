@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -23,17 +24,20 @@ public static class DocumentCondition
     /// <see cref="NotSupportedException"/> without compiling or executing the predicate.
     /// Conditions are evaluated by Vespa against the stored document.
     /// </remarks>
-    public static string For<T>(Expression<Func<T, bool>> condition) where T : class
+    public static string For<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(Expression<Func<T, bool>> condition) where T : class
     {
         ArgumentNullException.ThrowIfNull(condition);
         var (documentType, _) = VespaDocumentMeta.For<T>();
         return Render(documentType, condition);
     }
 
-    internal static string Render<T>(string documentType, Expression<Func<T, bool>> condition, bool escapeBackslashesAsHex = false) where T : class
+    internal static string Render<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, bool>> condition, bool escapeBackslashesAsHex = false) where T : class
         => Render(documentType, condition, escapeBackslashesAsHex ? RenderContext.Visitor : RenderContext.Write);
 
-    internal static string RenderForPackage<T>(string documentType, Expression<Func<T, bool>> selection) where T : class
+    internal static string RenderForPackage<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, bool>> selection) where T : class
     {
         var rendered = Render(documentType, selection, RenderContext.Package);
         try
@@ -48,7 +52,8 @@ public static class DocumentCondition
 
     private enum RenderContext { Write, Visitor, Package }
 
-    private static string Render<T>(string documentType, Expression<Func<T, bool>> condition, RenderContext context) where T : class
+    private static string Render<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, bool>> condition, RenderContext context) where T : class
     {
         ArgumentNullException.ThrowIfNull(condition);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
@@ -56,7 +61,8 @@ public static class DocumentCondition
         return new Renderer<T>(documentType, condition.Parameters[0], context).Predicate(condition.Body);
     }
 
-    private sealed class Renderer<T>(string documentType, ParameterExpression parameter, RenderContext context) where T : class
+    private sealed class Renderer<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, ParameterExpression parameter, RenderContext context) where T : class
     {
         internal string Predicate(Expression expression) => expression switch
         {

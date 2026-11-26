@@ -180,6 +180,26 @@ var schema = VespaSchemaBuilder.GenerateSchema<Product>();
 Console.WriteLine(schema);
 ```
 
+### Generate a package in a trimmed or Native AOT app
+
+Register each document type and every Vespa struct it uses, including nested structs and structs inside arrays or maps. The registration preserves the public properties the schema builder needs.
+
+```csharp
+var metadata = new VespaSchemaMetadata()
+    .WithDocument<Product>()
+    .WithDocument<Order>()
+    .WithStruct<Address>();
+
+using var package = new MemoryStream();
+metadata.GenerateApplicationPackage(package);
+package.Position = 0;
+await client.Admin.DeployAsync(package);
+```
+
+Pass `ApplicationPackageOptions` to include deployment settings, rank profiles, or additional files. To inspect an individual schema, call `metadata.GenerateSchema<Order>()`.
+
+`VespaSchemaBuilder` and `DeploySchemaAsync` discover document and struct properties at runtime. Use the registration above when publishing with trimming enabled.
+
 ---
 
 ## Application Package Options

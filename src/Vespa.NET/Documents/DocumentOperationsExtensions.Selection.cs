@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Models;
 using Vespa.Models.Attributes;
@@ -8,7 +9,8 @@ public static partial class DocumentOperationsExtensions
 {
     /// <summary>Updates matching documents of the model's type and namespace, following all continuation tokens.</summary>
     /// <remarks>Exactly one nonblank native selection or typed predicate is required. Typed values are frozen before the update starts.</remarks>
-    public static Task<VespaResponse> UpdateBySelectionAsync<T>(
+    public static Task<VespaResponse> UpdateBySelectionAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         Dictionary<string, FieldOperation> fieldOperations,
         Expression<Func<T, bool>>? selection = null,
@@ -25,7 +27,8 @@ public static partial class DocumentOperationsExtensions
 
     /// <summary>Configures a typed update and applies it to all matching documents of the model's type and namespace.</summary>
     /// <remarks>The required selection is validated and frozen before the callback runs.</remarks>
-    public static Task<VespaResponse> UpdateBySelectionAsync<T>(
+    public static Task<VespaResponse> UpdateBySelectionAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         Action<TypedFieldUpdateBuilder<T>> configure,
         Expression<Func<T, bool>>? selection = null,
@@ -44,7 +47,8 @@ public static partial class DocumentOperationsExtensions
 
     /// <summary>Updates one chunk of matching documents and returns its count and continuation token.</summary>
     /// <remarks>Exactly one selection is required. Resume with the same selector, cluster and request options.</remarks>
-    public static Task<SelectionPageResult> UpdateBySelectionPageAsync<T>(
+    public static Task<SelectionPageResult> UpdateBySelectionPageAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         Dictionary<string, FieldOperation> fieldOperations,
         Expression<Func<T, bool>>? selection = null,
@@ -62,7 +66,8 @@ public static partial class DocumentOperationsExtensions
 
     /// <summary>Configures a typed field update for one selection chunk.</summary>
     /// <remarks>Validates and freezes the required selection before the callback. For manual resume, save a selector rendered by DocumentSelection.For and pass it through rawSelection on every call.</remarks>
-    public static Task<SelectionPageResult> UpdateBySelectionPageAsync<T>(
+    public static Task<SelectionPageResult> UpdateBySelectionPageAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         Action<TypedFieldUpdateBuilder<T>> configure,
         Expression<Func<T, bool>>? selection = null,
@@ -82,7 +87,8 @@ public static partial class DocumentOperationsExtensions
 
     /// <summary>Deletes all matching documents of the model's type and namespace.</summary>
     /// <remarks>Exactly one selection is required. Use an explicit true predicate to select the entire addressed type.</remarks>
-    public static Task<VespaResponse> DeleteBySelectionAsync<T>(
+    public static Task<VespaResponse> DeleteBySelectionAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         Expression<Func<T, bool>>? selection = null,
         string? rawSelection = null,
@@ -97,7 +103,8 @@ public static partial class DocumentOperationsExtensions
 
     /// <summary>Deletes one selection chunk and returns its count and continuation token.</summary>
     /// <remarks>Exactly one selection is required. Resume with the same selector, cluster and request options.</remarks>
-    public static Task<SelectionPageResult> DeleteBySelectionPageAsync<T>(
+    public static Task<SelectionPageResult> DeleteBySelectionPageAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         Expression<Func<T, bool>>? selection = null,
         string? rawSelection = null,
@@ -113,7 +120,8 @@ public static partial class DocumentOperationsExtensions
 
     /// <summary>Copies matching documents of the model's type and namespace between content clusters.</summary>
     /// <remarks>The source documents remain in place. Exactly one selection and both cluster names are required.</remarks>
-    public static Task<VespaResponse> CopyBySelectionAsync<T>(
+    public static Task<VespaResponse> CopyBySelectionAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string cluster,
         string destinationCluster,
@@ -131,7 +139,8 @@ public static partial class DocumentOperationsExtensions
 
     /// <summary>Copies one selection chunk between content clusters and returns its count and continuation token.</summary>
     /// <remarks>Exactly one selection and both cluster names are required. Resume with the same selector and cluster names.</remarks>
-    public static Task<SelectionPageResult> CopyBySelectionPageAsync<T>(
+    public static Task<SelectionPageResult> CopyBySelectionPageAsync<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this IDocumentOperations ops,
         string cluster,
         string destinationCluster,
@@ -148,7 +157,8 @@ public static partial class DocumentOperationsExtensions
         return ops.CopyBySelectionPageAsync(selector, documentType, cluster, destinationCluster, ns, continuation, requestOptions, cancellationToken);
     }
 
-    private static string RequireSelection<T>(string documentType, Expression<Func<T, bool>>? selection, string? rawSelection) where T : class
+    private static string RequireSelection<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, bool>>? selection, string? rawSelection) where T : class
     {
         if (selection is not null && rawSelection is not null)
             throw new ArgumentException("Specify either selection or rawSelection, not both.", nameof(rawSelection));

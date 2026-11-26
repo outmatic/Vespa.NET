@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Text.Json.Serialization;
+using Vespa.Documents;
 
 namespace Vespa.Feed;
 
@@ -25,7 +27,7 @@ public static class FeedDocument
     /// An explicit target also binds unconditional and native-condition entries to that schema.
     /// The built-in feed validates this binding against the batch target. The batch supplies the namespace.
     /// </remarks>
-    public static FeedDocument<T> Create<T>(
+    public static FeedDocument<T> Create<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         T fields,
         string? documentType = null,

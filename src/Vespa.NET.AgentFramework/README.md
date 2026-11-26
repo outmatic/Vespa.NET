@@ -55,6 +55,12 @@ writes fail instead of overwriting another branch. Run each conversation seriall
 an agent invocation and its tool side effects are not part of a storage transaction.
 See the guide for revision tracking, retention, file editing and compaction caveats.
 
+## Trimmed and Native AOT apps
+
+Set `JsonModels = new VespaJsonModels().WithFieldMaps()` on `VespaClientOptions` to register the field dictionaries used by the snapshot store. The same registration works when you share the client with VectorData. Keep any registrations for your own Vespa models in the same `VespaJsonModels` instance.
+
+Session payloads are serialized by your `AIAgent`. Supply generated JSON metadata when adding your own objects to the session state bag. For application-defined values in chat messages or tool results, use JSON values such as `JsonElement` in apps with reflection disabled.
+
 For semantic recall with Microsoft's `ChatHistoryMemoryProvider`, use the separate
 `Vespa.NET.VectorData` package. Session snapshots, chronological history and semantic
 memory serve different purposes and can be combined.

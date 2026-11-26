@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Text;
 using Vespa.Documents;
@@ -10,7 +11,8 @@ public static class StreamingSearchExtensions
 {
     /// <summary>Sets a frozen document selector scoped to the filter model's document type.</summary>
     /// <remarks>Field predicates can scan all groups. For location-based searches, use StreamingGroupName or WithStreamingGroups.</remarks>
-    public static VespaSearchRequest WithStreamingSelection<T>(
+    public static VespaSearchRequest WithStreamingSelection<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         this VespaSearchRequest request,
         Expression<Func<T, bool>> selection) where T : class
     {

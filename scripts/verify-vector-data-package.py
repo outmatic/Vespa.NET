@@ -1,4 +1,4 @@
-"""Verify the connector artifact using published dependencies; never publish it."""
+"""Verify the connector artifact against published or local candidate dependencies."""
 
 import argparse
 from pathlib import Path
@@ -8,36 +8,28 @@ import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 
-
-def require(condition, message):
-    if not condition:
-        raise ValueError(message)
+from package_verification import FRAMEWORKS, read_feed, require, restore_consumer, verify_candidate_restore
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("packages", type=Path, help="Directory containing only the connector .nupkg")
+    parser.add_argument("packages", type=Path, help="Directory containing the connector .nupkg")
+    parser.add_argument("--candidate", action="store_true", help="Use the local feed for the core dependencies too")
     args = parser.parse_args()
     packages = args.packages.resolve()
     root = Path(__file__).resolve().parents[1]
     project = root / "src/Vespa.NET.VectorData"
-    version = ET.parse(project / "Vespa.NET.VectorData.csproj").findtext(".//Version")
-    archives = list(packages.glob("*.nupkg"))
-    require(len(archives) == 1, "Expected exactly one .nupkg: pack only Vespa.NET.VectorData into a clean directory.")
+    package_id = "Vespa.NET.VectorData"
+    feed = read_feed(packages, package_id, args.candidate)
+    archive, metadata = feed[package_id]
+    version = metadata.findtext("version") if args.candidate else ET.parse(project / f"{package_id}.csproj").findtext(".//Version")
 
-    with zipfile.ZipFile(archives[0]) as package:
-        nuspecs = [name for name in package.namelist() if name.endswith(".nuspec")]
-        require(len(nuspecs) == 1, "Expected one package manifest.")
-        manifest = ET.fromstring(package.read(nuspecs[0]))
-        for element in manifest.iter():
-            element.tag = element.tag.rsplit("}", 1)[-1]
-        metadata = manifest.find("metadata")
-        require(metadata.findtext("id") == "Vespa.NET.VectorData", "Unexpected package ID.")
+    with zipfile.ZipFile(archive) as package:
         require(metadata.findtext("version") == version, "Package version differs from the project.")
         require(metadata.findtext("license") == "MIT", "Expected the MIT license.")
         require(metadata.findtext("readme") == "README.md", "Package README is missing.")
         require(package.read("README.md") == (project / "README.md").read_bytes(), "Package README is out of date.")
-        for framework in ("net8.0", "net10.0"):
+        for framework in FRAMEWORKS:
             for extension in ("dll", "xml"):
                 require(f"lib/{framework}/Vespa.NET.VectorData.{extension}" in package.namelist(),
                         f"Missing {framework} assembly or API documentation.")
@@ -49,7 +41,7 @@ def main():
                     f"Unexpected public dependencies: {dependencies}")
 
     # Reuse the existing behavior tests with package references instead of projects.
-    # A fresh cache and exact source mapping force the base client to come from nuget.org.
+    # A fresh cache applies the source mapping even if the package was installed before.
     runtimes = subprocess.check_output(["dotnet", "--list-runtimes"], text=True, timeout=30)
     require(all(f"Microsoft.NETCore.App {major}." in runtimes for major in (8, 10)),
             "Install both the .NET 8 and .NET 10 runtimes to execute the package tests.")
@@ -72,24 +64,19 @@ def main():
         ET.SubElement(tree.find("ItemGroup"), "PackageReference", Include="Vespa.NET.VectorData")
         tree.write(consumer / "PackageTests.csproj")
         central = ET.parse(root / "Directory.Packages.props")
-        ET.SubElement(central.find("ItemGroup"), "PackageVersion", Include="Vespa.NET.VectorData", Version=version)
+        ET.SubElement(central.find("ItemGroup"), "PackageVersion", Include=package_id, Version=f"[{version}]")
         central.write(consumer / "Directory.Packages.props")
         for source in tests.glob("*.cs"):
             if source.name not in {"LiveVespaTests.cs", "LiveFeatureTests.cs"}:
                 shutil.copyfile(source, consumer / source.name)
 
-        config = ET.Element("configuration")
-        sources = ET.SubElement(config, "packageSources")
-        ET.SubElement(sources, "clear")
-        ET.SubElement(sources, "add", key="connector", value=str(packages))
-        ET.SubElement(sources, "add", key="nuget.org", value="https://api.nuget.org/v3/index.json")
-        mapping = ET.SubElement(config, "packageSourceMapping")
-        ET.SubElement(ET.SubElement(mapping, "packageSource", key="connector"), "package", pattern="Vespa.NET.VectorData")
-        ET.SubElement(ET.SubElement(mapping, "packageSource", key="nuget.org"), "package", pattern="*")
-        ET.ElementTree(config).write(consumer / "NuGet.Config")
-        print(f"Verifying Vespa.NET.VectorData {version} against nuget.org dependencies.", flush=True)
-        subprocess.run(["dotnet", "restore", "PackageTests.csproj", "--packages", str(consumer / "packages")],
-                       cwd=consumer, check=True, timeout=300)
+        dependency_source = "the local core candidate" if args.candidate else "nuget.org dependencies"
+        print(f"Verifying {package_id} {version} against {dependency_source}.", flush=True)
+        cache = consumer / "packages"
+        candidate_ids = (package_id, "Vespa.NET", "Vespa.NET.Models")
+        restore_consumer(consumer, cache, packages, candidate_ids if args.candidate else (package_id,))
+        if args.candidate:
+            verify_candidate_restore(consumer, cache, packages, feed, candidate_ids)
         # Keep testhost on the same dotnet installation checked above, including portable installations.
         subprocess.run(["dotnet", "test", "PackageTests.csproj", "-c", "Release", "--no-restore", "--disable-build-servers",
                         "--", f"RunConfiguration.DotNetHostPath={shutil.which('dotnet')}", "RunConfiguration.TreatNoTestsAsError=true"],

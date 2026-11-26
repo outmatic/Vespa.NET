@@ -31,7 +31,7 @@ public sealed partial class DocumentOperations
             HttpMethod.Put, selection, documentType, @namespace, cluster,
             extraParams: [],
             requestOptions: requestOptions,
-            contentFactory: () => JsonContent.Create(new { fields = fieldOperations }, options: VespaJsonOptions.Default),
+            contentFactory: () => CreateUpdateContent(fieldOperations),
             cancellationToken);
     }
 
@@ -199,7 +199,7 @@ public sealed partial class DocumentOperations
             extraParams: [],
             requestOptions: requestOptions,
             continuation: continuation,
-            contentFactory: () => JsonContent.Create(new { fields = fieldOperations }, options: VespaJsonOptions.Default),
+            contentFactory: () => CreateUpdateContent(fieldOperations),
             cancellationToken);
     }
 
@@ -254,7 +254,7 @@ public sealed partial class DocumentOperations
         SelectionResponseBody? body;
         try
         {
-            body = await response.Content.ReadFromJsonAsync<SelectionResponseBody>(VespaJsonOptions.Default, cancellationToken);
+            body = await response.Content.ReadFromJsonAsync(VespaProtocolJsonContext.Default.SelectionResponseBody, cancellationToken);
         }
         catch (Exception ex) when (ex is JsonException or IOException or HttpRequestException)
         {
@@ -268,9 +268,9 @@ public sealed partial class DocumentOperations
 
         return body;
     }
-
-    private sealed record SelectionResponseBody(
-        [property: JsonPropertyName("documentCount")] long? DocumentCount,
-        [property: JsonPropertyName("continuation")] string? Continuation,
-        [property: JsonPropertyName("message")] string? Message);
 }
+
+internal sealed record SelectionResponseBody(
+    [property: JsonPropertyName("documentCount")] long? DocumentCount,
+    [property: JsonPropertyName("continuation")] string? Continuation,
+    [property: JsonPropertyName("message")] string? Message);

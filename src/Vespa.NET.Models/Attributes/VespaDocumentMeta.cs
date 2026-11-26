@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using Vespa.Models.Schema;
@@ -22,15 +21,11 @@ public static class VespaDocumentMeta
     /// <exception cref="InvalidOperationException">
     /// Thrown when <typeparamref name="T"/> is not decorated with <see cref="VespaDocumentAttribute"/>.
     /// </exception>
-    public static (string DocumentType, string? Namespace) For<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] T>()
+    public static (string DocumentType, string? Namespace) For<T>()
         where T : class => For(typeof(T));
 
     /// <inheritdoc cref="For{T}"/>
-    [UnconditionalSuppressMessage("Trimming", "IL2067",
-        Justification = "Callers are annotated with DynamicallyAccessedMembers(All).")]
-    public static (string DocumentType, string? Namespace) For(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] Type type) =>
+    public static (string DocumentType, string? Namespace) For(Type type) =>
         _typeCache.GetOrAdd(type, static t =>
         {
             var attr = t.GetCustomAttribute<VespaDocumentAttribute>()
@@ -52,9 +47,7 @@ public static class VespaDocumentMeta
     /// // → "artist_name"  (snake_case fallback)
     /// </code>
     /// </example>
-    public static string FieldName<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
-        Expression<Func<T, object?>> selector)
+    public static string FieldName<T>(Expression<Func<T, object?>> selector)
     {
         ArgumentNullException.ThrowIfNull(selector);
         var body = selector.Body;

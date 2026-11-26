@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -6,7 +7,7 @@ using MappedProperty = Vespa.VectorData.VespaCollectionModel.MappedProperty;
 
 namespace Vespa.VectorData;
 
-internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
+internal sealed class VespaVectorRecordMapper<[DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord> where TRecord : class
 {
     internal VespaVectorRecordMapper(VectorStoreCollectionDefinition? definition, IReadOnlyCollection<string> requiredDataFields,
         IEmbeddingGenerator? defaultEmbeddingGenerator = null) =>
@@ -138,7 +139,7 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
                 }
                 if (tensor.ValueKind == JsonValueKind.Object && !tensor.TryGetProperty("values", out tensor))
                     throw new VectorStoreException($"Expected a dense tensor values array for '{property.StorageName}'.");
-                var vector = tensor.Deserialize<float[]>()
+                var vector = tensor.Deserialize(VectorDataJsonContext.Default.SingleArray)
                     ?? throw new VectorStoreException($"Missing dense tensor values for '{property.StorageName}'.");
                 try
                 {

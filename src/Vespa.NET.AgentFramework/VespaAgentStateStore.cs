@@ -91,7 +91,9 @@ public sealed class VespaAgentStateStore
     private string DocumentKey(string key)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
-        return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new[] { _options.Scope, key }))).ToLowerInvariant();
+        var identity = JsonSerializer.SerializeToUtf8Bytes(
+            new[] { _options.Scope, key }, AgentStorageJsonContext.Default.StringArray);
+        return Convert.ToHexString(SHA256.HashData(identity)).ToLowerInvariant();
     }
 
     private string Condition(string revision) => $"{_options.Schema}.revision == \"{revision}\"";

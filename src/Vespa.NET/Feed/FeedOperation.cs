@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Documents;
 using Vespa.Models;
@@ -51,7 +52,7 @@ public abstract class FeedOperation
     /// allows models without <c>[VespaDocument]</c>; its namespace defaults to the client.
     /// </summary>
     /// <remarks>Use condition for a typed predicate or rawCondition for a native string. Captured values are read when this factory is called.</remarks>
-    public static FeedOperation Put<T>(
+    public static FeedOperation Put<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         T document,
         string? documentType = null,
@@ -69,7 +70,7 @@ public abstract class FeedOperation
 
     /// <summary>Create a model-aware field update using property selectors.</summary>
     /// <remarks>The condition is validated and frozen against the resolved target before configure runs.</remarks>
-    public static FeedOperation Update<T>(
+    public static FeedOperation Update<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         Action<TypedFieldUpdateBuilder<T>> configure,
         string? documentType = null,
@@ -89,7 +90,7 @@ public abstract class FeedOperation
 
     /// <summary>Create a model-aware field update using Vespa field names and operations.</summary>
     /// <remarks>The typed condition uses the resolved document type, including explicit overrides.</remarks>
-    public static FeedOperation Update<T>(
+    public static FeedOperation Update<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         IReadOnlyDictionary<string, FieldOperation> fieldOperations,
         string? documentType = null,
@@ -121,7 +122,7 @@ public abstract class FeedOperation
     }
 
     /// <summary>Create a model-aware delete operation.</summary>
-    public static FeedOperation Delete<T>(
+    public static FeedOperation Delete<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         string? documentType = null,
         string? @namespace = null,
@@ -162,7 +163,8 @@ public abstract class FeedOperation
         return (type, @namespace ?? ns);
     }
 
-    private static string? ResolveCondition<T>(string documentType, Expression<Func<T, bool>>? condition, string? rawCondition) where T : class
+    private static string? ResolveCondition<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, bool>>? condition, string? rawCondition) where T : class
     {
         if (condition is not null && rawCondition is not null)
             throw new ArgumentException("Specify either condition or rawCondition, not both.", nameof(rawCondition));

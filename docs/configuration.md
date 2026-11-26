@@ -71,6 +71,42 @@ Notes:
 
 ---
 
+## Generated JSON metadata
+
+Register the document and projection types you use with reads, writes, visits, and search, including grouping summaries. The client handles the Vespa envelope and uses your `JsonSerializerContext` for the fields inside it.
+
+```csharp
+var options = new VespaClientOptions
+{
+    Endpoint = "http://localhost:8080",
+    JsonModels = new VespaJsonModels()
+        .With(ProductJsonContext.Default.Product, static (product, id) => product.WithId(id))
+};
+
+public sealed record Product([property: JsonPropertyName("product_name")] string Name)
+{
+    [JsonIgnore]
+    public string? Id { get; private init; }
+
+    public Product WithId(string id) => this with { Id = id };
+}
+
+[JsonSerializable(typeof(Product))]
+internal sealed partial class ProductJsonContext : JsonSerializerContext;
+```
+
+Use the JSON attributes and converters in your context to match the schema. The optional function receives the short Vespa ID on reads. When you use `JsonModels`, register each fields type before sending a request, including projections. For custom query parameters or field update values, pass a `JsonElement` made with `JsonSerializer.SerializeToElement(value, typeInfo)`.
+
+To read grouping outputs with generated metadata, pass your context's `Options` to `GetAggregation<T>` or `TryGetAggregation<T>`. Include each result type in that context.
+
+Typed document selectors inspect the model's inheritance chain to resolve overrides and reject hidden properties. If your library forwards a generic model to these selectors, preserve the model metadata by applying `DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)` to the forwarding type parameter.
+
+### Trimming and Native AOT
+
+The paths that use generated metadata were verified in self-contained .NET 8 and .NET 10 applications with JSON reflection disabled. The verification covers macOS Arm64 and Linux x64, with Linux x64 executed under emulation. It includes document operations, search, visits, grouping, feed, dependency injection, and the registered schema and package APIs.
+
+Use `VespaSchemaMetadata` for code-first packages and `WithFieldMaps()` when the client is shared with VectorData or Agent Framework. Follow each adapter's guidance for record binding and custom session data. [Schema generation](schema.md#generate-a-package-in-a-trimmed-or-native-aot-app) · [VectorData](../src/Vespa.NET.VectorData/README.md#trimmed-and-native-aot-apps) · [Agent Framework](../src/Vespa.NET.AgentFramework/README.md#trimmed-and-native-aot-apps)
+
 ## DI Integration
 
 ```csharp

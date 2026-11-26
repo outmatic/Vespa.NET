@@ -8,6 +8,12 @@ namespace Vespa;
 public sealed class VespaClientOptions
 {
     /// <summary>
+    /// JSON metadata for models used by document reads, writes, visits, and search.
+    /// Register each fields or projection type used by those operations.
+    /// </summary>
+    public VespaJsonModels? JsonModels { get; init; }
+
+    /// <summary>
     /// Vespa endpoint URL (e.g., "https://myapp.vespa-cloud.com" or "http://localhost:8080")
     /// </summary>
     public string Endpoint { get; init; } = string.Empty;
