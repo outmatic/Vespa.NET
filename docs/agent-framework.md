@@ -242,6 +242,7 @@ dotnet run --project samples/Vespa.NET.AgentFramework -- --pattern history --str
 - A conflict can be detected after the model and tools ran. Those actions are not undone. An interrupted HTTP response also leaves the caller needing to reconcile the operation's outcome; this is not an exactly-once execution system.
 - Successful streaming runs are saved after enumeration completes. Consume the stream fully and save the session afterward. A failed/cancelled run does not add its new messages, though a configured before-retrieval reducer may already have reduced older history.
 - `RawRepresentation`, custom runtime-only objects and external media bytes not included in serializable content are not durable storage. Referenced URLs may expire. Supply an application media-retention policy for attachments.
+- With JSON reflection disabled, use a supported scalar or array type for tool results, or convert the result to `JsonElement` with generated metadata. Enable JSON reflection where supported if you need to store other result types directly. [Supported history result types](configuration.md#trimming-and-native-aot)
 - Service-managed chat history and a custom `ChatHistoryProvider` are alternative history owners. Do not configure both to replay the same conversation.
 
 ## Context and semantic memory

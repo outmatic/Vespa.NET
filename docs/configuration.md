@@ -115,6 +115,8 @@ Compatibility applies to the paths that use registered metadata. Runtime discove
 
 Use `VespaSchemaMetadata` for code-first packages and `WithFieldMaps()` when the client is shared with VectorData or Agent Framework. The adapter paths verified with the same fixture were VectorData record operations and search, and Agent Framework session, chat history and file persistence. Follow each adapter's guidance for record binding and custom session data. [Schema generation](schema.md#generate-a-package-in-a-trimmed-or-native-aot-app) · [VectorData](../src/Vespa.NET.VectorData/README.md#trimmed-and-native-aot-apps) · [Agent Framework](../src/Vespa.NET.AgentFramework/README.md#trimmed-and-native-aot-apps)
 
+With JSON reflection disabled, chat-history snapshots can serialize `bool`, `int`, `long`, `float`, `double`, `decimal`, `string`, `Guid`, `DateTime`, and their one-dimensional arrays as tool results. For other result types, such as enums, dictionaries or custom objects, enable JSON reflection where supported or pass a `JsonElement` created with `JsonSerializer.SerializeToElement(value, typeInfo)`.
+
 ## DI Integration
 
 ```csharp
