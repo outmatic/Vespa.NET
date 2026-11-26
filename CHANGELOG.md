@@ -4,6 +4,61 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### What's new in Vespa.NET 4.0
+
+Conditional writes now accept C# predicates such as `condition: p => p.Price > 0`. Pass existing Vespa selectors through `rawCondition:`. If you're upgrading from 3.x, follow the migration guide and rebuild callers of the changed APIs. [Migration guide](docs/migration-4.0.md)
+
+The client targets .NET 8 and .NET 10. The core client and VectorData use Vespa 8.640.27 as their server baseline.
+
+#### Document and feed APIs
+
+- Use the same predicate style for visits, streaming search selections and updates, deletes or copies by selection. Pass existing Vespa selections through `rawSelection:`.
+- Request fields with `DocumentFieldSet` and pass read or write options alongside the operation. Model-aware document extensions went from 37 methods in 3.1.1 to 30 (**19% fewer**). Of those, read methods went from 10 to 5 (**50% fewer**).
+- Use the same condition pattern for mixed feed operations and homogeneous batches. `DocumentCondition.FormatLiteral` formats values for native Vespa selectors, including decimals on hosts that use a comma as the decimal separator. [Document operations](docs/document-operations.md) · [Feed](docs/feed.md)
+
+#### Search, deployment and adapters
+
+- Choose sort direction, nearest-neighbor execution mode and tensor update operations with enums. Use `YqlTermAnnotations` to set term options by name. Grouping supports continuation with an inline expression or the request's `Select` property. [Search](docs/search.md) · [Grouping](docs/grouping.md)
+- Generated application packages report conflicting schema struct names before deployment. Set the minimum Vespa version for a package when it uses features that need a newer server. [Schema generation](docs/schema.md)
+- Use `WithFieldMaps()` when sharing a client between VectorData and Agent Framework. Typed VectorData records can use `BindCollection` in trimmed applications. Agent Framework history preserves numeric tool results with JSON reflection disabled. Both adapters keep independent package versions. [VectorData](src/Vespa.NET.VectorData/README.md) · [Agent Framework](src/Vespa.NET.AgentFramework/README.md)
+
+#### Trimming and Native AOT
+
+Register source-generated JSON metadata for the documents, projections and grouping summaries your client reads or writes. Use the optional ID callback to populate IDs on reads. Register document and struct types with `VespaSchemaMetadata` to generate an application package in a trimmed or Native AOT app. Tensor properties need the Vespa tensor converter in the registered JSON contract. [Trimming and Native AOT](docs/configuration.md#trimming-and-native-aot)
+
+An installed-package smoke test exercised the registered paths in JIT, trimmed and Native AOT builds on .NET 8 and .NET 10, on macOS Arm64 and Linux x64. It covered document operations, feed, grouping, schema packages, VectorData search and Agent Framework persistence. The Linux x64 runs used emulation. [Compatibility notes](docs/configuration.md#trimming-and-native-aot)
+
+The performance comparison used the same earlier 4.0 candidate packages and generated metadata in both self-contained JIT and Native AOT builds on an Apple M5. The client issued one request at a time against an in-memory HTTP handler. The first-response measurements include process startup. The steady-state measurements follow warm-up, using a 322-byte GET response or a search response with 25 hits.
+
+| Runtime and workload | First response, p50 | Warm request latency, p50 | Warm requests/s |
+| --- | ---: | ---: | ---: |
+| .NET 8 GET | 109.09 → 13.47 ms (**−88%**) | 3.12 → 4.04 µs (**+29%**) | 288,783 → 231,973 (**−20%**) |
+| .NET 8 search | 156.72 → 13.89 ms (**−91%**) | 74.25 → 91.71 µs (**+24%**) | 12,448 → 10,344 (**−17%**) |
+| .NET 10 GET | 79.90 → 12.05 ms (**−85%**) | 10.62 → 3.62 µs (**−66%**) | 90,784 → 265,565 (**+193%**) |
+| .NET 10 search | 104.18 → 12.44 ms (**−88%**) | 170.58 → 83.29 µs (**−51%**) | 6,290 → 11,363 (**+81%**) |
+
+On .NET 10, resident memory after the first search fell from 59.3 to 21.0 MiB (**−65%**). Startup improved on both runtimes. Warm throughput rose on .NET 10 and fell on .NET 8 in this fixture. Network and Vespa server time are outside these measurements.
+
+#### Client response processing
+
+These measurements compare the 4.0 candidate with the earlier 4.0 build at `0693003`. They use .NET 10.0.10 on Arm64 and in-memory HTTP responses.
+
+| Workload | Allocated bytes per response | Client time per response |
+| --- | ---: | ---: |
+| Grouping with 24 groups and four aggregation values per group | 48,593 → 42,449 B (**−12.6%**) | 45.44 → 43.47 µs (**−4.3%**) |
+| Search with 50 hits and feature maps at both hit and field level | 113,979 → 83,544 B (**−26.7%**) | 179.24 → 160.97 µs (**−10.2%**) |
+
+The search response with feature maps only inside `fields` allocated 71,224 bytes on both builds. These figures measure client allocations for the scenarios shown.
+
+#### Feed loop costs
+
+BenchmarkDotNet measured operation construction on .NET 10.0.10 Arm64. Pass a pre-rendered condition when the same predicate applies to every operation. With a varying threshold, use `FormatLiteral` to format the value for a native condition. These savings come from how you construct operations in your application. [Feed conditions](docs/feed.md#conditions)
+
+| Condition | Construction time | Allocated bytes per operation |
+| --- | ---: | ---: |
+| Render the same predicate each time → reuse its rendered string | 1,063 → 8.7 ns (**−99.2%**) | 2,104 → 72 B (**−96.6%**) |
+| Render a predicate with a captured threshold → format just the threshold | 894 → 52.4 ns (**−94.1%**) | 1,806 → 206 B (**−88.6%**) |
+
 ## [3.1.1] - 2026-11-09
 
 ### Changed
