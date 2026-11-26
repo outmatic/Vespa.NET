@@ -1,10 +1,12 @@
 # Migrating to Vespa.NET 4.0
 
-This guide covers the planned 4.0 API changes. The release date and the rest of the major's scope are still being decided. Model-aware calls require a `[VespaDocument]` attribute; calls with an explicit document type can use an undecorated model.
+Update `Vespa.NET` and any direct references to `Vespa.NET.Models` and `Vespa.NET.Testcontainers` together. VectorData and Agent Framework use their own package versions. Choose releases of those packages that depend on the 4.0 core.
+
+Rebuild applications and libraries that call changed methods, even if they relied on optional arguments and their source needs no edits. Model-aware calls that infer the document type require `[VespaDocument]`. Calls with an explicit document type can use an undecorated model.
 
 ## Vespa server compatibility
 
-The server baseline for the core client and VectorData is Vespa 8.640.27. The nearest-neighbor helper uses `totalTargetHits` with `nearestNeighbor`, and VectorData hybrid search also uses it with `weakAnd`. The integration checks ran on 8.640.27 and 8.788.13.
+The server baseline for the core client and VectorData is Vespa 8.640.27. The nearest-neighbor helper uses `totalTargetHits` with `nearestNeighbor`, and VectorData hybrid search also uses it with `weakAnd`. Core and VectorData integration checks used self-managed Vespa 8.640.27 and 8.788.13.
 
 Individual server features can require a newer release. For example, `totalTargetHits` with `wand` requires 8.664.22, and the ANN time budget requires 8.684.9. [YQL builder](yql-builder.md#clause-level-predicates) · [Search](search.md)
 
@@ -34,7 +36,9 @@ Typed predicates compare enum properties through their supported numeric backing
 
 Omitting both arguments makes the write unconditional. Explicit `condition: null`, `condition: default`, and `rawCondition: null` are also supported. For an existing string variable, change `condition: selector` to `rawCondition: selector` at the call site.
 
-Use named arguments for conditions. `PutAsync(id, product, "product.price > 0")` selects the explicit-target instance method and treats the string as `documentType`; it now throws `ArgumentException` naming `documentType` before sending any HTTP request. A positional null or default in that slot also selects the document-type argument and fails local argument validation. Document types must match `[A-Za-z_][A-Za-z0-9_]*` and cannot be `true`, `false`, `and`, `or`, `not`, `null` or `id`, ignoring case.
+Use named arguments for conditions. `PutAsync(id, product, "product.price > 0")` selects the explicit-target instance method and treats the string as `documentType`. It now throws `ArgumentException` naming `documentType` before sending any HTTP request. A positional null or default in that slot also selects the document-type argument and fails local argument validation.
+
+The same document-type validation applies to reads, writes and feeds. Use names that match `[A-Za-z_][A-Za-z0-9_]*` and avoid the reserved names `true`, `false`, `and`, `or`, `not`, `null` and `id`, ignoring case.
 
 ## Write request options
 
@@ -121,9 +125,11 @@ Use `documentType:` on a factory for an explicit schema, including models withou
 
 Factory-bound entries retain their schema through `with` copies, even when `Condition` changes. The built-in feed rejects a mismatching entry locally as one `FeedError` with no HTTP status and continues with the other entries. Vespa returns HTTP 412 when a submitted condition fails against the stored document. Construct a fresh entry for another schema. The condition is frozen before an update callback and remains stable across retries.
 
-`ExpectedDocumentType` participates in record equality, so entries with different bindings can compare unequal despite matching public data; the generated `ToString()` omits this internal binding.
+`ExpectedDocumentType` participates in record equality. Entries with the same public data can compare unequal if they bind to different schemas. The generated `ToString()` omits the internal binding.
 
-The expected schema is excluded from JSON. A deserialized `FeedDocument<T>` has the original raw DTO semantics; save the batch schema separately and rebuild a factory entry if schema validation is needed on replay. Custom `IFeedOperations` implementations keep their existing contract and do not inherit the built-in client's check. See [Per-document conditions](feed.md#per-document-conditions) for examples and serialization details.
+The expected schema is excluded from JSON. To validate the schema on replay, save the batch schema separately. After deserializing the entry, pass that schema to the factory. Custom `IFeedOperations` implementations keep their existing contract.
+
+For feed conditions that vary per entry, use `DocumentCondition.FormatLiteral(value)` to insert each value into a native predicate with Vespa quoting and culture-independent number formatting. See [Per-document conditions](feed.md#per-document-conditions) for examples and serialization details.
 
 ## Selection mutations
 
@@ -189,7 +195,7 @@ Root visits can filter one model and return another through `VisitAllAsync<Resul
 
 `WithStreamingGroups("tenant-a", "tenant-b")` sets a native disjunction of `id.group` equalities, allowing Vespa to restrict visiting to those groups. Keep content filters in YQL. `WithStreamingSelection<Product>(p => p.Price > 100)` builds a document selector scoped to the model's exact document type, but can scan all groups. It does not change the YQL source, namespace or result model.
 
-These helpers require `using Vespa.Query;`, return the same request and replace only `StreamingSelection`. Values are frozen when called. They reject an existing `StreamingGroupName` and conflicting streaming location keys in `CustomParameters` before changing the request. The native `StreamingSelection` setter remains available. No existing search signature has changed.
+These helpers require `using Vespa.Query;`, return the same request and replace only `StreamingSelection`. Values are frozen when called. They reject an existing `StreamingGroupName` and conflicting streaming location keys in `CustomParameters` before changing the request. The native `StreamingSelection` setter remains available.
 
 The group helper removes ordinal duplicates and escapes the names. It rejects more than one distinct group name ending in a backslash because Vespa's selector parser cannot safely combine them; use separate requests. `StreamingMaxBucketsPerVisit` retains its name and JSON binding, with corrected documentation: it controls backend bucket concurrency, not a total bucket or coverage limit. See [Native streaming search](search.md#native-streaming-search) for examples and input rules.
 
@@ -292,15 +298,31 @@ Rename `CircuitBreakerFailureThreshold` to `CircuitBreakerMinimumThroughput` in 
 
 The default is still five sampled HTTP attempts. The default DI circuit breaker opens on a handled failure once it has sampled the minimum number of attempts and at least half have failed. [Client options](configuration.md#vespaclientoptions)
 
-## Search pagination with WithYql
+## Search pagination with `WithYql`
 
 `WithYql(builder)` now copies the builder's explicit limit and offset to `Hits` and `Offset`. If the request already has `Offset=20` and the builder sets only `.Limit(10)`, the single search returns up to ten hits starting at offset 20. Set `.Offset(0)` to start at the beginning. Assign either request property after `WithYql` to override the builder value. [Search pagination](search.md#paged-search)
 
+For `SearchPagedAsync` and `SearchStreamAsync`, build the YQL with a stable sort order and omit inline `limit` and `offset`. Set the starting offset on the request and pass `pageSize` to the search method.
+
+## Grouping continuation
+
+`GroupByStreamAsync` accepts a grouping expression in the YQL pipe or in `VespaSearchRequest.Select`. For manual paging with a pipe, use `GroupingContinuations.Apply(yql, tokens)`. With `Select`, keep the expression and send the returned tokens in order as a space-separated `continue` parameter. `AsTyped()` and `GetHits<T>()` remain available to read typed summaries. [Paginated grouping](grouping.md#paginated-streaming)
+
 ## Sort direction
 
-`OrderBy` and `OrderByRaw` use `SortDirection`. Replace `descending: true` with `SortDirection.Descending` and `descending: false` with `SortDirection.Ascending`. Omitting the direction selects ascending order.
+`OrderBy` and `OrderByRaw` use `SortDirection` from `Vespa.Query`. Replace `descending: true` with `direction: SortDirection.Descending` and `descending: false` with `direction: SortDirection.Ascending`. Omitting the direction selects ascending order.
 
 `RankingBuilder.MatchPhase` uses nullable `SortDirection`. Replace `ascending: true` with `direction: SortDirection.Ascending` and `ascending: false` with `direction: SortDirection.Descending`. Omit the direction to use Vespa's configured order. If you set `RankingConfig.MatchPhaseAscending` directly, it still accepts the nullable boolean used by the Query API.
+
+```csharp
+// 3.x
+var ordered = YqlBuilder.Select().From<Product>().OrderBy(p => p.Price, descending: true);
+var ranking = RankingBuilder.WithProfile("price_rank").MatchPhase("price", maxHits: 100, ascending: true);
+
+// 4.0
+var ordered = YqlBuilder.Select().From<Product>().OrderBy(p => p.Price, direction: SortDirection.Descending);
+var ranking = RankingBuilder.WithProfile("price_rank").MatchPhase("price", maxHits: 100, direction: SortDirection.Ascending);
+```
 
 Rebuild callers of these builder methods, including calls that omit the direction.
 
@@ -310,7 +332,7 @@ Rebuild callers of these builder methods, including calls that omit the directio
 
 ## Nearest-neighbor search mode
 
-`NearestNeighbor` and `HybridSearch` in the YQL builder accept `NearestNeighborMode?` in place of `bool? approximate`. Replace `approximate: false` with `mode: NearestNeighborMode.Exact`, and `approximate: true` with `mode: NearestNeighborMode.Approximate`. Omit `mode` to keep the server default. Rebuild callers of these methods. [Nearest-neighbor search](search.md#nearest-neighbor-search)
+`NearestNeighbor` and `HybridSearch` in the YQL builder accept `NearestNeighborMode?` in place of `bool? approximate`. Replace `approximate: false` with `mode: NearestNeighborMode.Exact`, and `approximate: true` with `mode: NearestNeighborMode.Approximate`. Omit `mode` or pass null to keep the server default. Rebuild callers of these methods. [Nearest-neighbor search](search.md#nearest-neighbor-search)
 
 ## Term annotations
 
@@ -321,3 +343,33 @@ Rebuild callers of these builder methods, including calls that omit the directio
 - A standalone `connectivityWeight` was ignored. Drop it or supply a target ID and weight in `Connectivity` to create a link.
 
 Set both `TermId` and `Connectivity` to identify a term that also links to another term. [Annotated terms](yql-builder.md#field-predicates)
+
+```csharp
+// 3.x
+var query = YqlBuilder.Select().From<Product>()
+    .Where(w => w.Field(p => p.Name).ContainsAnnotated("headphones", filter: true, stem: false))
+    .Build();
+
+// 4.0
+var query = YqlBuilder.Select().From<Product>()
+    .Where(w => w.Field(p => p.Name).ContainsAnnotated("headphones", new() { Filter = true, Stem = false }))
+    .Build();
+```
+
+## Trimming and Native AOT
+
+Set `VespaClientOptions.JsonModels` to a `VespaJsonModels` registry and register the generated JSON metadata for each document and result type your client uses. Include projections and grouping summaries. To populate a model ID on reads, supply the optional ID callback when registering the model. JIT applications can keep the default reflection-based path by leaving `JsonModels` unset. [Generated JSON metadata](configuration.md#generated-json-metadata)
+
+The [compatibility notes](configuration.md#trimming-and-native-aot) list the tested operations and platforms.
+
+Use `VespaSchemaMetadata.WithDocument<T>()` and `WithStruct<T>()` to register schema types before generating a package from a trimmed app. Deploy that package with `Admin.DeployAsync`. Existing code-first `DeploySchemaAsync` overloads discover types through reflection and carry trimming warnings. [Schema generation](schema.md#generate-a-package-in-a-trimmed-or-native-aot-app)
+
+For VectorData and Agent Framework, add `WithFieldMaps()` to the same JSON registry. For typed VectorData records, call `BindCollection<TKey, TRecord>()` on `VespaVectorStore` in place of the two-argument `VectorStore.GetCollection` path when trimming or using Native AOT. For dictionary records, use `GetDynamicCollection` with an explicit definition. [VectorData](../src/Vespa.NET.VectorData/README.md#trimmed-and-native-aot-apps) · [Agent Framework](../src/Vespa.NET.AgentFramework/README.md#trimmed-and-native-aot-apps)
+
+## VectorData catalog failures
+
+Handle catalog HTTP, Vespa and JSON failures as `VectorStoreException` and inspect `InnerException` for the underlying error. A timeout reported as cancellation is also wrapped when the caller has not canceled the operation. Caller cancellation still propagates as cancellation. A configured catalog remains the source for existence and listing, including deployed schemas with no documents. [Schema discovery](../src/Vespa.NET.VectorData/README.md#deploy-the-schema-first)
+
+## Testcontainers lifecycle
+
+Calling `StartAsync` again while `VespaContainer` is running keeps the active application. After `StopAsync`, call `StartAsync` to restart that instance. Read `Endpoint` and `ConfigEndpoint` again and recreate any clients that use them, because Docker can assign different host ports. The endpoint properties require a running container. [Testing with Testcontainers](configuration.md#testing-with-testcontainers)

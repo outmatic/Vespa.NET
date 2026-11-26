@@ -219,7 +219,8 @@ public sealed class VespaClientOptions
     public bool UseConnectionPooling { get; init; } = true;
 
     /// <summary>
-    /// Enable compression for requests and responses
+    /// Enables automatic gzip and deflate response decompression on handlers built by the SDK.
+    /// The handler advertises those encodings through <c>Accept-Encoding</c>.
     /// </summary>
     public bool UseCompression { get; init; } = true;
 

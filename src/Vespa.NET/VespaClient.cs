@@ -87,12 +87,14 @@ public sealed partial class VespaClient : IVespaClient
     /// <c>BaseAddress</c>, <c>Timeout</c>, the HTTP version policy, and default request
     /// headers (including <c>Authorization</c> from <see cref="VespaClientOptions.ApiKey"/>)
     /// from <paramref name="options"/>. Do not share the instance with non-Vespa callers.</para>
-    /// <para>Options that live on the HTTP handler cannot be honored here and throw
-    /// <see cref="InvalidOperationException"/> when set (mTLS certificates) — configure the
-    /// handler yourself via <see cref="VespaServiceCollectionExtensions.BuildSocketsHttpHandler(VespaClientOptions)"/>,
-    /// use the <see cref="VespaClient(VespaClientOptions, ILogger{VespaClient})"/> constructor,
-    /// or register through DI. HTTP-level retry/circuit-breaker options are only installed by
-    /// the DI registrations and log a warning here when set.</para>
+    /// <para>The caller owns the supplied client and its handler. Configure TLS and response
+    /// decompression on that handler before constructing the client. Passing
+    /// <see cref="VespaClientOptions.CertificatePath"/> or <see cref="VespaClientOptions.ClientCertificate"/>
+    /// to this constructor throws <see cref="InvalidOperationException"/>. Use the
+    /// <see cref="VespaClient(VespaClientOptions, ILogger{VespaClient})"/> constructor or register
+    /// through DI to apply certificate options to the data-plane and admin handlers.</para>
+    /// <para>HTTP retries and the circuit breaker are installed by the DI registrations.
+    /// This constructor logs a warning if those options are enabled and a logger is supplied.</para>
     /// </remarks>
     public VespaClient(
         HttpClient httpClient,

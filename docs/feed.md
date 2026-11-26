@@ -104,34 +104,22 @@ A typed condition is evaluated against the stored document and does not add a do
 
 ### Ordering and Backpressure
 
-- Within one mixed-feed call, mutations of the same document execute in source
-  order, including retries. A failed operation is recorded and the next operation
-  for that document is still attempted.
-- Identity includes namespace, schema, group/number location and user ID. Full and
-  bare IDs addressing the same document share an ordered queue. Full IDs must agree
-  with the operation's target schema and namespace, as with regular document CRUD.
-- Different documents can execute concurrently. There is no global completion
-  order or coordination between separate feed calls or clients.
-- `MaxConcurrency` (default 64) limits in-flight operations. `BoundedCapacity`
-  (default 256) limits queued operations across all documents, including operations
-  waiting behind a busy document. The source can have one additional prefetched entry.
+- Within one mixed-feed call, mutations of the same document execute in source order, including retries. A failed operation is recorded and the next operation for that document is still attempted.
+- Identity includes namespace, schema, group/number location and user ID. Full and bare IDs addressing the same document share an ordered queue. Full IDs must agree with the operation's target schema and namespace, as with regular document CRUD.
+- Different documents can execute concurrently. There is no global completion order or coordination between separate feed calls or clients.
+- `MaxConcurrency` (default 64) limits in-flight operations. `BoundedCapacity` (default 256) limits queued operations across all documents, including operations waiting behind a busy document. The source can have one additional prefetched entry.
 
-Retries follow the same rules described below. Ordering does not provide
-exactly-once execution: replaying non-idempotent updates such as increments can
-apply them more than once. Use test-and-set conditions when needed; see
-[Vespa reads and writes](https://docs.vespa.ai/en/writing/reads-and-writes.html).
+Retries follow the same rules described below. Ordering does not provide exactly-once execution: replaying non-idempotent updates such as increments can apply them more than once. Use test-and-set conditions when needed; see [Vespa reads and writes](https://docs.vespa.ai/en/writing/reads-and-writes.html).
 
-For mixed feeds, `FeedError` includes `OperationKind`, `DocumentType`, the resolved
-`Namespace`, and a zero-based `OperationIndex` in the source. These distinguish
-mutations with the same local ID. `FeedProgress` provides the corresponding
-`LastOperationKind`, `LastDocumentType`, `LastNamespace`, and `OperationIndex`.
-The additional metadata is null for the existing bulk and generic feed APIs.
+For mixed feeds, `FeedError` includes `OperationKind`, `DocumentType`, the resolved `Namespace`, and a zero-based `OperationIndex` in the source. These distinguish mutations with the same local ID. `FeedProgress` provides the corresponding `LastOperationKind`, `LastDocumentType`, `LastNamespace`, and `OperationIndex`. The additional metadata is null for the existing bulk and generic feed APIs.
 
 Use `FeedResult.TotalOperations` when reporting a feed result. A null entry faults the source. The feed drains accepted operations before surfacing the resulting `VespaFeedException`. See [FeedResult](#feedresult) for count and error details.
 
 ---
 
 ## BulkPut / BulkUpdate / BulkDelete
+
+Pass a lazy `IEnumerable` to produce entries as the bulk feed needs them. The client pauses enumeration while the channel is full. Use `FeedAsync` when the source is asynchronous or you want to set the buffer size or receive progress callbacks.
 
 ```csharp
 using Vespa.Feed;
@@ -211,7 +199,9 @@ An explicit schema binds the entry even when its condition is native or absent. 
 
 The built-in feed client compares that expected schema with the batch schema before sending the entry. A mismatch produces a `FeedError` with no HTTP status, sends no request for that entry and allows the other entries to continue. Schema names are compared exactly, including case. This check belongs to the built-in `FeedOperations`; third-party implementations retain their existing interface contract.
 
-Copies made with `with` retain the expected schema, including copies that change or clear `Condition`. That binding is part of record equality. Construct a new entry to retarget it. Conditions are rendered at factory invocation and stay fixed during queuing and retries. A lazy source may invoke the factory during enumeration. Keep payloads and field-operation objects unchanged until the feed completes.
+Copies made with `with` retain the expected schema, including copies that change or clear `Condition`. Construct a new entry to target another schema. Conditions are rendered when the factory runs and stay fixed during queuing and retries. A lazy source may invoke the factory during enumeration. Keep payloads and field-operation objects unchanged until the feed completes.
+
+Two entries can have identical public properties and still compare unequal if they bind to different schemas. The generated `ToString()` omits that binding.
 
 Existing initializers and native condition strings remain supported:
 

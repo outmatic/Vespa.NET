@@ -1,7 +1,6 @@
 # Grouping & Aggregation
 
-Vespa.NET provides a fluent builder for Vespa's grouping expressions. Results are returned as
-`GroupingSearchResponse<T>`; call `.AsTyped()` for a grouping hierarchy with typed document summaries.
+Vespa.NET provides a fluent builder for Vespa's grouping expressions. Results are returned as `GroupingSearchResponse<T>`; call `.AsTyped()` for a grouping hierarchy with typed document summaries.
 
 ---
 
@@ -31,9 +30,7 @@ foreach (var group in groupList.Groups)
     Console.WriteLine($"{group.Value}: count={group.GetAggregation<long>("count()")}");
 ```
 
-`VespaGroup.Aggregations` holds the numeric outputs; non-numeric outputs (e.g.
-`tostring(...)`/`toraw(...)`) are available as `JsonElement`s in
-`VespaGroup.RawAggregations`.
+`VespaGroup.Aggregations` holds the numeric outputs; non-numeric outputs (e.g. `tostring(...)`/`toraw(...)`) are available as `JsonElement`s in `VespaGroup.RawAggregations`.
 
 ### Typed results and exact aggregation values
 
@@ -57,17 +54,9 @@ The projection creates typed groups and lists in memory and reuses the existing 
 
 Both views expose root outputs and summaries, rest buckets, nested groups, coverage, errors, timing and trace. If you construct a response yourself, supply `SearchHit<T>` summaries matching its document type. A mismatch throws `InvalidCastException` when you read the summaries through `GetHits<T>()` or `AsTyped()`.
 
-Both typed and original groups expose `GetAggregation<TValue>(name)` and
-`TryGetAggregation<TValue>(name, out value)`. They deserialize the original
-`RawAggregations` JSON instead of converting the legacy `double` values.
-This preserves 64-bit integer values beyond `2^53` and the precision present
-in JSON decimal values. Choosing `double` still uses floating-point precision;
-choosing `decimal` cannot recover precision already lost by the server.
+Both typed and original groups expose `GetAggregation<TValue>(name)` and `TryGetAggregation<TValue>(name, out value)`. They deserialize the original `RawAggregations` JSON instead of converting the legacy `double` values. This preserves 64-bit integer values beyond `2^53` and the precision present in JSON decimal values. Choosing `double` still uses floating-point precision; choosing `decimal` cannot recover precision already lost by the server.
 
-Vespa returns `count()` as a long, and outputs can also contain structured
-values such as the array returned by `quantiles(...)` (see the official
-[grouping reference](https://docs.vespa.ai/en/reference/querying/grouping-language.html#group-aggregators)).
-Select the corresponding CLR type, or use `JsonElement` for arbitrary JSON:
+Vespa returns `count()` as a long, and outputs can also contain structured values such as the array returned by `quantiles(...)` (see the official [grouping reference](https://docs.vespa.ai/en/reference/querying/grouping-language.html#group-aggregators)). Select the corresponding CLR type, or use `JsonElement` for arbitrary JSON:
 
 ```csharp
 using System.Text.Json;
@@ -80,13 +69,7 @@ if (group.TryGetAggregation<double>("avg(price)", out var average))
     Console.WriteLine(average);
 ```
 
-Use an aggregation's alias, such as `"total"`, when the query uses
-`count() as(total)`. Structured outputs can also be read into arrays or DTOs;
-an optional `JsonSerializerOptions` argument controls deserialization. By
-default, standard `System.Text.Json` rules apply, including case-sensitive
-property matching and no conversion of JSON strings to numbers.
-For string-rendered `"NaN"` or infinities, pass options with
-`NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals`.
+Use an aggregation's alias, such as `"total"`, when the query uses `count() as(total)`. Structured outputs can also be read into arrays or DTOs; an optional `JsonSerializerOptions` argument controls deserialization. By default, standard `System.Text.Json` rules apply, including case-sensitive property matching and no conversion of JSON strings to numbers. For string-rendered `"NaN"` or infinities, pass options with `NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals`.
 
 | Situation | `GetAggregation<TValue>` | `TryGetAggregation<TValue>` |
 |---|---|---|
@@ -96,23 +79,13 @@ For string-rendered `"NaN"` or infinities, pass options with
 | JSON null, non-nullable value target | `JsonException` | `false`, default output |
 | Unsupported CLR type or invalid serializer configuration | Exception | Exception |
 
-Null or empty names throw an argument exception in both methods. Manually
-constructed groups must populate `RawAggregations` to use these accessors;
-there is no fallback to potentially rounded `Aggregations` values.
+Null or empty names throw an argument exception in both methods. Manually constructed groups must populate `RawAggregations` to use these accessors; there is no fallback to potentially rounded `Aggregations` values.
 
-`GroupingSearchResponse.Coverage`, `Errors`, and `Trace` retain the same metadata
-as a regular search response. Check coverage and errors when consuming results:
-Vespa can return partial results with HTTP 200.
+`GroupingSearchResponse.Coverage`, `Errors`, and `Trace` retain the same metadata as a regular search response. Check coverage and errors when consuming results: Vespa can return partial results with HTTP 200.
 
-`GroupingRoots` contains the root of each grouping expression, including its
-aggregations and hit lists. For example, a request containing
-`| all(output(count()))` exposes the count through
-`result.GroupingRoots[0].GetAggregation<long>("count()")`.
+`GroupingRoots` contains the root of each grouping expression, including its aggregations and hit lists. For example, a request containing `| all(output(count()))` exposes the count through `result.GroupingRoots[0].GetAggregation<long>("count()")`.
 
-For numeric aggregations over all matched documents, create a single constant
-group, for example `all(group(1) each(output(sum(price))))`, and read the value
-from `result.GroupingResults[0].Groups[0]`. This follows the official
-[whole-document aggregation example](https://docs.vespa.ai/en/querying/grouping.html#aggregating-over-all-documents).
+For numeric aggregations over all matched documents, create a single constant group, for example `all(group(1) each(output(sum(price))))`, and read the value from `result.GroupingResults[0].Groups[0]`. This follows the official [whole-document aggregation example](https://docs.vespa.ai/en/querying/grouping.html#aggregating-over-all-documents).
 
 ---
 
@@ -138,14 +111,11 @@ GroupingBuilder.All().GroupByBuckets("price",
     GroupingBucket.Numeric(500, null, fromInclusive: false)); // bucket<500,inf)
 ```
 
-Rest groups are retained in the results: `group.IsRestBucket` identifies them,
-and `group.Id` preserves Vespa's `group:null` identity. Their aggregation values
-are included just like those of the explicit buckets.
+Rest groups are retained in the results: `group.IsRestBucket` identifies them, and `group.Id` preserves Vespa's `group:null` identity. Their aggregation values are included just like those of the explicit buckets.
 
 ### Filtering groups
 
-`filter(...)` / `keep(...)` restrict which values are collected when grouping on
-multivalue attributes (`where(true)` was removed from the grouping grammar):
+`filter(...)` / `keep(...)` restrict which values are collected when grouping on multivalue attributes (`where(true)` was removed from the grouping grammar):
 
 ```csharp
 GroupingBuilder.All()
@@ -177,8 +147,7 @@ GroupingBuilder.All()
 
 ### Per-group document summaries
 
-Return the actual documents inside each group (`hitlist:*` in the response).
-Use `.AsTyped()` to read `SearchHit<T>` directly from `group.Hits`:
+Return the actual documents inside each group (`hitlist:*` in the response). Use `.AsTyped()` to read `SearchHit<T>` directly from `group.Hits`:
 
 ```csharp
 var request = YqlBuilder<Product>.Select()
@@ -195,8 +164,7 @@ foreach (var group in response.GroupingResults[0].Groups)
 
 ### Nested grouping
 
-`SubGroup` may be called multiple times for parallel sub-groupings (label them
-with `.As("name")`):
+`SubGroup` may be called multiple times for parallel sub-groupings (label them with `.As("name")`):
 
 ```csharp
 GroupingBuilder.All().Group("category").Each(e => e

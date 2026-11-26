@@ -43,8 +43,8 @@ public static class VespaDocumentMeta
     /// <example>
     /// <code>
     /// VespaDocumentMeta.FieldName&lt;Music&gt;(m =&gt; m.ArtistName)
-    /// // → "artist_name"  (when [VespaField(Name = "artist_name")] is present)
-    /// // → "artist_name"  (snake_case fallback)
+    /// // Returns "performer" with [VespaField(Name = "performer")].
+    /// // Returns "artist_name" with the snake_case fallback.
     /// </code>
     /// </example>
     public static string FieldName<T>(Expression<Func<T, object?>> selector)

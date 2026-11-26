@@ -48,7 +48,7 @@ public interface IFeedOperations
         throw new NotSupportedException("This feed implementation does not support mixed operations.");
 
     /// <summary>
-    /// Bulk insert/update multiple documents
+    /// Inserts or replaces documents, enumerating the source as space becomes available in the bounded feed channel.
     /// </summary>
     Task<FeedResult> BulkPutAsync<T>(
         IEnumerable<FeedDocument<T>> documents,
@@ -84,10 +84,8 @@ public interface IFeedOperations
     );
 
     /// <summary>
-    /// High-throughput streaming feed pipeline. Reads documents from an <see cref="IAsyncEnumerable{T}"/>
-    /// and writes them concurrently using a bounded channel with HTTP/2 multiplexing.
-    /// Unlike <see cref="BulkPutAsync{T}"/>, the input is not materialized into a list —
-    /// documents are consumed on-demand with backpressure.
+    /// Reads an <see cref="IAsyncEnumerable{T}"/> into a bounded channel and writes documents concurrently.
+    /// Both this method and <see cref="BulkPutAsync{T}"/> enumerate their sources incrementally.
     /// </summary>
     /// <param name="documents">Streaming source of documents (e.g. from a database cursor).</param>
     /// <param name="documentType">Vespa document type.</param>

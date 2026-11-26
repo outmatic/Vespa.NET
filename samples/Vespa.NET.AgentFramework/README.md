@@ -98,7 +98,7 @@ To let the model decide when to search, enable the provider's own retrieval func
 dotnet run --project samples/Vespa.NET.AgentFramework -- --history-memory --on-demand "What language do I prefer?"
 ```
 
-The [`chathistory` schema](app/schemas/chathistory.sd) matches the provider's field names and 768-dimensional vector. The connector generates embeddings from its string vector inputs, using the configured document prefix; text searches use the query prefix. `EnsureCollectionExistsAsync` verifies that the deployed schema is searchable and does not deploy it.
+The [`chathistory` schema](app/schemas/chathistory.sd) matches the provider's field names and 768-dimensional vector. The connector generates embeddings from its string vector inputs, using the configured document prefix for stored messages and the query prefix for recall. The sample sets `AssumeSchemaExists = true` because it expects the schema to be deployed. In an application that needs authoritative schema checks, supply a collection catalog. [VectorData initialization](../../docs/agent-framework.md#reuse-an-existing-client-and-deployment)
 
 This mode retrieves related conversation messages. The `--memory` mode above maintains one current preference through explicit tools. For exact conversation replay, manage the agent's session history separately.
 

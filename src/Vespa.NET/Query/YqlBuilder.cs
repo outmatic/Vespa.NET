@@ -199,7 +199,7 @@ public sealed class YqlBuilder<T> where T : class
     ///     .Select(p => p.Price, p => p.Name)
     ///     .Where(w => w.Field(p => p.Price).LessThan(100))
     ///     .Build();
-    /// // → select price, name from product where price &lt; 100;
+    /// // → select price, name from product where price &lt; 100
     /// </code>
     /// </example>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1000:Do not declare static members on generic types",

@@ -7,9 +7,8 @@ namespace Vespa.Documents;
 
 /// <summary>
 /// Fluent builder for typed field-level update operations.
-/// Field names are resolved via <see cref="VespaDocumentMeta.FieldName{T}"/>,
-/// honouring <c>[VespaField(Name = "...")]</c> and falling back to snake_case.
-/// Properties that represent document metadata or lack an individual JSON binding are rejected.
+/// Field names use <see cref="VespaFieldAttribute.Name"/> when supplied, otherwise the snake_case property name.
+/// Each selected property must have its own document JSON binding with the same name.
 /// </summary>
 public sealed class TypedFieldUpdateBuilder<
     [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T> where T : class

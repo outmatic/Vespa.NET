@@ -209,7 +209,7 @@ public sealed class YqlWhereClause
 
     /// <summary>
     /// Standard Vespa hybrid search pattern:
-    /// <c>rank({targetHits:N}nearestNeighbor(field, tensor), userInput(@param))</c>.
+    /// <c>rank(({targetHits:N}nearestNeighbor(field, tensor)), userInput(@param))</c>.
     /// Nearest-neighbor retrieves documents; userInput contributes text-matching features for ranking.
     /// </summary>
     /// <param name="vectorField">The tensor field to search (e.g. "embedding").</param>

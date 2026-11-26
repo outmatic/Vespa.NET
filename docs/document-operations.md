@@ -207,8 +207,7 @@ await client.Documents.UpdateFieldsAsync(product.Id, new Dictionary<string, Fiel
 
 ## Document Addressing
 
-Every CRUD verb has matching `...ByGroupAsync` and `...ByNumberAsync` variants that
-use Vespa's group/number document-ID modifiers instead of a plain document ID.
+Every CRUD verb has matching `...ByGroupAsync` and `...ByNumberAsync` variants that use Vespa's group/number document-ID modifiers instead of a plain document ID.
 
 ```csharp
 // Read
@@ -300,16 +299,11 @@ await client.Documents.CopyBySelectionAsync(
     destinationCluster: "archive");
 ```
 
-`cluster` identifies the source content cluster and is required by Vespa whenever
-the target is ambiguous — pass it explicitly. `CopyBySelectionAsync` takes
-`destinationCluster` as a dedicated argument (it is no longer a field on
-`DocumentRequestOptions`).
+`cluster` identifies the source content cluster and is required by Vespa whenever the target is ambiguous — pass it explicitly. `CopyBySelectionAsync` takes `destinationCluster` as a dedicated argument (it is no longer a field on `DocumentRequestOptions`).
 
 ### SelectionRequestOptions
 
-Selection operations take a `SelectionRequestOptions` record instead of
-`DocumentRequestOptions`. Each field maps to a Vespa query parameter on
-`/document/v1`:
+Selection operations take a `SelectionRequestOptions` record instead of `DocumentRequestOptions`. Each field maps to a Vespa query parameter on `/document/v1`:
 
 | Field | Maps to | Notes |
 |---|---|---|
@@ -340,19 +334,14 @@ await client.Documents.DeleteBySelectionAsync(
 
 The model-aware `UpdateBySelectionPageAsync<Product>`, `DeleteBySelectionPageAsync<Product>` and `CopyBySelectionPageAsync<Product>` accept the same typed or native selectors. For manual resume, render `DocumentSelection.For<Product>(...)` before starting, save that string with the continuation token and pass it as `rawSelection:` on each call. Calling a lambda again reads its captured values again. The automatic methods freeze one selector for their entire continuation loop.
 
-Each selection operation has a `...PageAsync` variant that performs exactly one
-HTTP call, returns a `SelectionPageResult`, and lets you drive the loop yourself.
-Use this when you need to persist the continuation token between chunks — for
-example, to resume a long-running backfill after a crash or deployment.
+Each selection operation has a `...PageAsync` variant that performs exactly one HTTP call, returns a `SelectionPageResult`, and lets you drive the loop yourself. Use this when you need to persist the continuation token between chunks — for example, to resume a long-running backfill after a crash or deployment.
 
 `SelectionPageResult` exposes:
 
 - `DocumentCount` — documents visited and selected by Vespa in this chunk.
 - `Continuation` — token to pass back to resume; `null` when complete.
 - `IsComplete` — `true` iff `Continuation is null`.
-- `StatusCode`, `HadIgnoredFields` — same as `VespaResponse` (`HadIgnoredFields` is a
-  boolean flag from the `X-Vespa-Ignored-Fields: true` header; Vespa does not report
-  which fields were ignored).
+- `StatusCode`, `HadIgnoredFields` — same as `VespaResponse` (`HadIgnoredFields` is a boolean flag from the `X-Vespa-Ignored-Fields: true` header; Vespa does not report which fields were ignored).
 
 ```csharp
 string? token = await LoadCheckpoint();  // e.g. from database, null on first run
@@ -415,8 +404,7 @@ For an explicit target, use `DocumentSelection.For<Product>("other_product", p =
 
 ### Standard Visit (continuation tokens)
 
-Common parameters (`selection`, `cluster`, `namespace`) stay on the method; everything
-else lives in the `VisitOptions` record:
+Use `VisitOptions` for settings such as the requested document count, field set and slicing. Pass the target and selection as named arguments. For a single page, pass the continuation token to `VisitPageAsync`.
 
 ```csharp
 await foreach (var doc in client.Documents.VisitAsync<Product>(
@@ -434,10 +422,7 @@ await foreach (var doc in client.Documents.VisitAsync<Product>(
 }
 ```
 
-`VisitOptions` also supports `FieldSet`, `Timeout`, `Concurrency`, `ToTimestamp`,
-`BucketSpace`, `TraceLevel`, and `TensorFormat`. `FromTimestamp`/`ToTimestamp` are
-**microseconds** since UTC epoch. `dryRun` is deliberately unavailable — Vespa
-rejects it on visits.
+`VisitOptions` also supports `FieldSet`, `Timeout`, `Concurrency`, `ToTimestamp`, `BucketSpace`, `TraceLevel`, and `TensorFormat`. `FromTimestamp`/`ToTimestamp` are **microseconds** since UTC epoch. `dryRun` is deliberately unavailable — Vespa rejects it on visits.
 
 ### Group / Number / Root-Level Visiting
 
@@ -468,10 +453,7 @@ This visits only the exact Product document type across namespaces. Derived docu
 
 ### Manual Visit Pages and Checkpoints
 
-`VisitPageAsync<T>` makes one request and returns a `VespaVisitResponse<T>` with
-`Documents`, `DocumentCount`, `PathId`, `Continuation` and `IsComplete`. It does
-not fetch the next page automatically. The model-aware overload infers the schema
-and namespace from `[VespaDocument]`:
+`VisitPageAsync<T>` makes one request and returns a `VespaVisitResponse<T>` with `Documents`, `DocumentCount`, `PathId`, `Continuation` and `IsComplete`. It does not fetch the next page automatically. The model-aware overload infers the schema and namespace from `[VespaDocument]`:
 
 ```csharp
 var (continuation, completed, selection) = await LoadCheckpointAsync();
@@ -494,39 +476,22 @@ while (!completed)
 }
 ```
 
-Save the continuation **after** processing the page. Treat it as an opaque string
-and resume with the same schema, namespace, selection, cluster and visit options
-(including slice settings). Persist completion separately: a null continuation
-also represents the initial request. Reprocessing a page after a crash is possible.
+Save the continuation **after** processing the page. Treat it as an opaque string and resume with the same schema, namespace, selection, cluster and visit options (including slice settings). Persist completion separately: a null continuation also represents the initial request. Reprocessing a page after a crash is possible.
 
 The example saves the rendered selection with the checkpoint. Reusing that string keeps the filter stable even if the original captured values change before a restart. A new call with a lambda reads its captured values again.
 
-An empty page can still have a continuation; only `IsComplete` signals completion.
-`WantedDocumentCount` is a best-effort lower bound, not a maximum page size.
-Document IDs and `[VespaId]` injection work as with `VisitAsync`.
+An empty page can still have a continuation; only `IsComplete` signals completion. `WantedDocumentCount` is a best-effort lower bound, not a maximum page size. Document IDs and `[VespaId]` injection work as with `VisitAsync`.
 
-For explicit schema/namespace addressing, pass `documentType` and `namespace`.
-Use `VisitAllPageAsync<T>(cluster: "content", continuation: continuation)` to page
-across all schemas and namespaces in a cluster. It requires a cluster and does not
-accept `VisitOptions.Group` or `VisitOptions.Number`.
+For explicit schema/namespace addressing, pass `documentType` and `namespace`. Use `VisitAllPageAsync<T>(cluster: "content", continuation: continuation)` to page across all schemas and namespaces in a cluster. It requires a cluster and does not accept `VisitOptions.Group` or `VisitOptions.Number`.
 
 ### JSONL Streaming (lower memory)
 
-`VisitJsonlAsync` streams one document per line (`stream=true`,
-`Accept: application/jsonl`) and takes the same `VisitOptions`. Prefer it for large
-result sets. Notes:
+`VisitJsonlAsync` streams one document per line (`stream=true`, `Accept: application/jsonl`) and takes the same `VisitOptions`. Prefer it for large result sets. Notes:
 
-- Requires **Vespa ≥ 8.593** — older versions answer with plain JSON, which the
-  client rejects with a `VespaException` instead of silently yielding nothing.
-- If a chunk ends with a continuation token (e.g. after a server-side visit
-  timeout), the client **resumes automatically** until the final continuation
-  reports completion. Malformed lines or a missing final continuation marker
-  throw `VespaException`; an incomplete export is never reported as completed.
-- Server messages with severity `error` throw `VespaException`. Messages with
-  severity `info` or `warning` are logged at the corresponding level and the
-  visit continues.
-- `FullId` retains the complete Vespa document ID, including group/number
-  addressing, for both documents and removal tombstones. `Id` is the short user part.
+- Requires **Vespa ≥ 8.593** — older versions answer with plain JSON, which the client rejects with a `VespaException` instead of silently yielding nothing.
+- If a chunk ends with a continuation token (e.g. after a server-side visit timeout), the client **resumes automatically** until the final continuation reports completion. Malformed lines or a missing final continuation marker throw `VespaException`; an incomplete export is never reported as completed.
+- Server messages with severity `error` throw `VespaException`. Messages with severity `info` or `warning` are logged at the corresponding level and the visit continues.
+- `FullId` retains the complete Vespa document ID, including group/number addressing, for both documents and removal tombstones. `Id` is the short user part.
 - `WantedDocumentCount` is not sent on this path — streaming makes it redundant.
 
 ```csharp
@@ -545,10 +510,7 @@ await foreach (var doc in client.Documents.VisitJsonlAsync<Product>(
 }
 ```
 
-Selection-based update/delete/copy operations also require a readable response
-with `documentCount`. A malformed or interrupted response throws instead of
-treating a missing continuation as successful completion. The server may already
-have applied part of the operation; the client does not automatically repeat it.
+Selection-based update/delete/copy operations also require a readable response with `documentCount`. A malformed or interrupted response throws instead of treating a missing continuation as successful completion. The server may already have applied part of the operation; the client does not automatically repeat it.
 
 ---
 
@@ -602,8 +564,7 @@ All model-aware group and number writes accept `requestOptions:` as a named argu
 > the server-side timeout a bit lower than the HTTP timeout so Vespa can return
 > a clean response before the client gives up.
 
-For selection operations, use `SelectionRequestOptions` instead (see
-[Selection-Based Operations](#selection-based-operations)).
+For selection operations, use `SelectionRequestOptions` instead (see [Selection-Based Operations](#selection-based-operations)).
 
 ## Cancellation
 

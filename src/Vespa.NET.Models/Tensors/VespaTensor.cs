@@ -111,8 +111,9 @@ public sealed class VespaTensor
     }
 
     /// <summary>
-    /// Detect value type from Vespa type string (e.g., "tensor&lt;float&gt;(x[8])")
-    /// Returns typeof(float), typeof(double), typeof(sbyte), or typeof(Half)
+    /// Returns the .NET type used to decode cells from a Vespa tensor type specification.
+    /// Vespa float and bfloat16 use <see cref="float"/>, int8 uses <see cref="sbyte"/>,
+    /// and double or an unspecified type uses <see cref="double"/>.
     /// </summary>
     public static Type DetectValueType(string? typeSpec)
     {

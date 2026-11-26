@@ -18,7 +18,7 @@ var yql = YqlBuilder<Product>
     .Where(w => w.Field(p => p.Price).LessThan(500))
     .Limit(20)
     .Build();
-// select * from product where price < 500 limit 20;
+// select * from product where price < 500 limit 20
 
 // Specific fields — names resolved via [VespaField]
 var yql2 = YqlBuilder<Product>

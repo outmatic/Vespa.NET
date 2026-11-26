@@ -84,6 +84,8 @@ Use `WithRecall(builder)` to apply required and excluded terms without contribut
 
 `PresentationFormatTensors = "hex-value"` omits tensor type information from the response. Declare `[VespaTensor("tensor<float>(x[384])")]` (using the actual schema type) on a `VespaTensor` property so the client can decode the correct cell width. The same metadata disambiguates mapped labels named `type`, `cells`, `blocks`, or `values` in value-only forms.
 
+The decoder stores Vespa `float` and `bfloat16` cells as C# `float`. Read dense values from either type with `GetDenseValues<float>()`. Converting to C# `Half` uses IEEE binary16, which has a smaller exponent range than bfloat16.
+
 When using `VespaTensorConverter` directly, supply the type explicitly:
 
 ```csharp
@@ -145,7 +147,7 @@ var yql = YqlBuilder<Product>
     .Where(w => w.HybridSearch(
         p => p.Embedding, "query_embedding", "userQuery", targetHits: 100))
     .Build();
-// select * from product where rank({targetHits: 100}nearestNeighbor(embedding, query_embedding), userInput(@userQuery));
+// select * from product where rank(({targetHits:100}nearestNeighbor(embedding, query_embedding)), userInput(@userQuery))
 
 // Combined with filters
 var yql2 = YqlBuilder<Product>

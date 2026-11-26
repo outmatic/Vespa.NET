@@ -94,24 +94,14 @@ C# property types are inferred as follows:
 | other `Dictionary<K,V>` / `IDictionary` / `IReadOnlyDictionary` | `map<K,V>` |
 | `[VespaStruct]` type (also nested) | struct |
 
-Unmappable types **throw at generation time** instead of silently producing a
-schema that fails at feed time: C# `byte` (0–255 does not fit Vespa's signed
-byte — use `sbyte` or `short`), `ulong` (no unsigned 64-bit), enums (serialized
-as numbers by default — use `int`/`long`, or a string-serialized property with
-`FieldType = VespaFieldType.String`), and anything else unknown (e.g. `DateTime`
-— store epoch seconds in a `long` or an ISO string).
+Unmappable types **throw at generation time** instead of silently producing a schema that fails at feed time: C# `byte` (0–255 does not fit Vespa's signed byte — use `sbyte` or `short`), `ulong` (no unsigned 64-bit), enums (serialized as numbers by default — use `int`/`long`, or a string-serialized property with `FieldType = VespaFieldType.String`), and anything else unknown (e.g. `DateTime` — store epoch seconds in a `long` or an ISO string).
 
 ### Struct, array-of-struct and map fields
 
-Vespa does not allow `attribute`/`index` on the outer field of structs and maps.
-The `IndexingMode` flags are translated instead:
+Vespa does not allow `attribute`/`index` on the outer field of structs and maps. The `IndexingMode` flags are translated instead:
 
 - `Summary` → `indexing: summary` (whole field in the document summary)
-- `Attribute` → `struct-field <member> { indexing: attribute }` for every
-  *primitive-typed* struct member; for maps, `key`/`value` (or `value.<member>`
-  when the map value is a struct). Vespa supports these struct-field attributes
-  on **array-of-struct and map fields only** — on a *single* struct field
-  `Attribute` **throws** (use `IndexingMode.Summary`)
+- `Attribute` → `struct-field <member> { indexing: attribute }` for every *primitive-typed* struct member; for maps, `key`/`value` (or `value.<member>` when the map value is a struct). Vespa supports these struct-field attributes on **array-of-struct and map fields only** — on a *single* struct field `Attribute` **throws** (use `IndexingMode.Summary`)
 - `Index` → **throws** (only supported in streaming search)
 
 ```csharp
@@ -157,9 +147,7 @@ public record ProductFields
 
 ## Generate and Deploy
 
-`client.Admin` deploys to a self-hosted config server. To deploy a generated package
-to Vespa Cloud, use the Cloud CLI or CI/CD pipeline, then connect the client to
-the deployed application's endpoint. See [deployment configuration](agent-framework.md#configure-application-deployment-from-c).
+`client.Admin` deploys to a self-hosted config server. To deploy a generated package to Vespa Cloud, use the Cloud CLI or CI/CD pipeline, then connect the client to the deployed application's endpoint. See [deployment configuration](agent-framework.md#configure-application-deployment-from-c).
 
 ```csharp
 // Deploy directly from type
@@ -198,7 +186,7 @@ await client.Admin.DeployAsync(package);
 
 Pass `ApplicationPackageOptions` to include deployment settings, rank profiles, or additional files. To inspect an individual schema, call `metadata.GenerateSchema<Order>()`.
 
-`VespaSchemaBuilder` and `DeploySchemaAsync` discover document and struct properties at runtime. Use the registration above when publishing with trimming enabled.
+`VespaSchemaBuilder` and `DeploySchemaAsync` discover document and struct properties at runtime. Use the registration above when publishing with trimming or Native AOT.
 
 ---
 

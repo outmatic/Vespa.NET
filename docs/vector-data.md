@@ -30,7 +30,8 @@ The provider targets `Microsoft.Extensions.VectorData.Abstractions` 10.11.0. Its
 | Core ensure/create/delete | Ensure requires a catalog or explicit predeployment assertion, then checks searchability on each call. No creation/deletion/deployment |
 | Concrete searchability helper | `ValidateSearchabilityAsync` checks query execution; it does not certify schema existence |
 | Extra hybrid capability | `IKeywordHybridSearchable<TRecord>` retrieves dense OR lexical candidates, applies filters to both, and returns deployed combined relevance |
-| Not implemented | Automatic keys; DataContent embedding input; sparse/binary/non-float vectors; other metrics/index kinds; nested/immutable constructor-only mappings; validated trimming/Native AOT support |
+| Trimming and Native AOT with the 4.0 core | Register field-map metadata. Bind typed records with `BindCollection` or use `GetDynamicCollection` with an explicit definition. [Setup and limits](../src/Vespa.NET.VectorData/README.md#trimmed-and-native-aot-apps) |
+| Not implemented | Automatic keys; DataContent embedding input; sparse/binary/non-float vectors; other metrics/index kinds; nested/immutable constructor-only mappings |
 
 The catalog must describe the deployed application, include empty schemas and separate absence from operational failure. Both existence and listing throw without a catalog. A successful data-plane query can involve aliases/routing and is not proof of schema existence; no search-result inference is used.
 
