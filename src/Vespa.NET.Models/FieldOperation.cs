@@ -187,6 +187,7 @@ internal sealed class FieldOperationConverter : JsonConverter<FieldOperation>
                 writer.WriteBoolean("create", true);
             if (modify.Cells is not null)
             {
+                // Vespa's tensor modify system test uses a cells array; the JSON reference shows addresses.
                 writer.WritePropertyName("cells");
                 WriteCellArray(writer, modify.Cells);
             }

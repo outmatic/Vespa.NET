@@ -50,7 +50,7 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                 var put = await fixture.Client.Documents.PutAsync(id, doc);
                 Assert.True(put.IsSuccess, $"Could not seed product '{id}': {put.StatusCode} {put.Message}");
             }
-            await WaitForSeedAsync(tag, ids);
+            await WaitForSeedAsync(QueryByTag(tag).Build(), ids);
             return (ids, tag);
         }
         catch
@@ -60,9 +60,8 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         }
     }
 
-    private async Task WaitForSeedAsync(string tag, IReadOnlyCollection<string> ids)
+    private async Task WaitForSeedAsync(string yql, IReadOnlyCollection<string> ids)
     {
-        var yql = QueryByTag(tag).Build();
         var expectedIds = ids.ToHashSet(StringComparer.Ordinal);
         string[] visibleIds = [];
         Coverage? coverage = null;
@@ -83,7 +82,7 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            Assert.Fail($"Products for '{tag}' were not searchable within 30 seconds. " +
+            Assert.Fail($"Products for query '{yql}' were not searchable within 30 seconds. " +
                 $"Expected IDs: [{string.Join(", ", ids)}]. Visible IDs: [{string.Join(", ", visibleIds)}]. Coverage: {coverage}");
         }
     }
@@ -119,7 +118,7 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             Assert.True((await fixture.Client.Documents.PutAsync(ids[0], match)).IsSuccess);
             Assert.True((await fixture.Client.Documents.PutAsync(ids[1], other)).IsSuccess);
             // The YQL query matches the escaped tag on a string attribute and checks both IDs.
-            await WaitForSeedAsync(tag, ids);
+            await WaitForSeedAsync(QueryByTag(tag).Build(), ids);
 
             var filtered = await fixture.Client.Search.GroupByAsync<TestProduct>(GroupingRequest(tag,
                 GroupingBuilder.All().Group("category").Filter(GroupingFilter.Regex(pattern, "category"))
@@ -138,6 +137,40 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             Assert.Equal(ids[0], Assert.Single(bucket.GetHits<TestProduct>()).Id);
         }
         finally { await CleanupAsync(ids); }
+    }
+
+    [Fact]
+    public async Task Contains_MatchesNewlineAndEscapedNewlineOnAStringAttribute()
+    {
+        if (!Enabled) return;
+        var prefix = $"newline-{Guid.NewGuid():N}-";
+        string[] tags = [prefix + "a\nb", prefix + "a b", prefix + @"a\nb"];
+        var ids = new List<string> { NewId(), NewId(), NewId() };
+        var marker = Random.Shared.Next(1_000_000, int.MaxValue);
+        var client = fixture.Client;
+        try
+        {
+            for (var index = 0; index < tags.Length; index++)
+                await client.Documents.PutAsync(ids[index], new TestProduct { Tag = tags[index], Quantity = marker });
+            await WaitForSeedAsync(YqlBuilder<TestProduct>.Select()
+                .Where(w => w.Field(p => p.Quantity).EqualTo(marker)).Build(), ids);
+
+            await AssertMatchAsync(QueryByTag(tags[0]).Build(), 0);
+            await AssertMatchAsync($"select * from product where tag contains \"{prefix}a\\nb\"", 0);
+            await AssertMatchAsync(QueryByTag(tags[1]).Build(), 1);
+            await AssertMatchAsync(QueryByTag(tags[2]).Build(), 2);
+        }
+        finally { await CleanupAsync(ids); }
+
+        async Task AssertMatchAsync(string yql, int index)
+        {
+            var result = await client.Search.QueryAsync<TestProduct>(yql);
+            Assert.Empty(result.Root.Errors ?? []);
+            Assert.True(result.Root.Coverage?.Full);
+            var hit = Assert.Single(result.Root.Children);
+            Assert.Equal(ids[index], hit.Id);
+            Assert.Equal(tags[index], hit.Fields!.Tag);
+        }
     }
 
     // ── Grouping filter / keep ───────────────────────────────────────────────

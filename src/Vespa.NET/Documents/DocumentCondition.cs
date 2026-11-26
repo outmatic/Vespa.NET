@@ -10,7 +10,7 @@ using Vespa.Models.Schema;
 
 namespace Vespa.Documents;
 
-/// <summary>Builds native Vespa document conditions from typed predicates.</summary>
+/// <summary>Builds native Vespa document conditions and formats their values.</summary>
 public static class DocumentCondition
 {
     /// <summary>
@@ -31,6 +31,11 @@ public static class DocumentCondition
         var (documentType, _) = VespaDocumentMeta.For<T>();
         return Render(documentType, condition);
     }
+
+    /// <summary>Formats a value as a literal for a raw Vespa write condition.</summary>
+    /// <remarks>Uses invariant number formatting and Vespa document-selector string escapes.</remarks>
+    /// <exception cref="NotSupportedException">The value is outside the supported condition literal types.</exception>
+    public static string FormatLiteral(object? value) => Literal(value, RenderContext.Write);
 
     internal static string Render<
         [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, bool>> condition, bool escapeBackslashesAsHex = false) where T : class

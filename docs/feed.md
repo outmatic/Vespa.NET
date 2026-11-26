@@ -9,6 +9,7 @@ Vespa.NET provides high-throughput feed helpers built on Vespa's `/document/v1` 
 Feed puts, field updates and deletes through one call, including operations for different schemas and namespaces. Both `IEnumerable<FeedOperation>` and `IAsyncEnumerable<FeedOperation>` are accepted. The examples below use the planned 4.0 mixed-feed factories:
 
 ```csharp
+using Vespa.Documents;
 using Vespa.Feed;
 using Vespa.Models;
 
@@ -78,6 +79,25 @@ var condition = DocumentCondition.For<Product>(p => p.Price > 0);
 var operations = products.Select(product =>
     FeedOperation.Put(product.Id, product, rawCondition: condition));
 await client.Feed.FeedAsync(operations);
+```
+
+When each document has its own threshold, capture that value when you construct the operation. The typed condition formats the threshold using a decimal point even under cultures such as `it-IT`.
+
+```csharp
+var operations = updates.Select(update =>
+{
+    var minimum = update.MinimumStoredPrice;
+    return FeedOperation.Put(update.Product.Id, update.Product,
+        condition: stored => stored.Price > minimum);
+});
+```
+
+In a hot loop, keep the field and operator fixed and format only the value with `DocumentCondition.FormatLiteral`. This uses the same number formatting and string escaping as typed write conditions. Ordinary interpolation under `it-IT` would put `100,5` in the selector. Vespa rejects that syntax, and the feed records the parser error in `FeedResult.Errors`.
+
+```csharp
+var operations = updates.Select(update =>
+    FeedOperation.Put(update.Product.Id, update.Product,
+        rawCondition: $"product.price > {DocumentCondition.FormatLiteral(update.MinimumStoredPrice)}"));
 ```
 
 A typed condition is evaluated against the stored document and does not add a document-type guard. `p => true` renders native `true`. Individual HTTP 412 failures are recorded in `FeedResult.Errors`; later operations for the same document are still attempted. See [Conditional writes](document-operations.md#conditional-writes) for supported expressions and native evaluation rules.

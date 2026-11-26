@@ -242,6 +242,37 @@ public class DocumentV1AdvancedE2ETests(VespaFixture fixture)
     }
 
     [Fact]
+    public async Task TensorModify_ReplaceWithCellArray_ChangesOnlyAddressedDenseCell()
+    {
+        if (!Enabled) return;
+
+        var id = NewId();
+        var documents = fixture.Client.Documents;
+        try
+        {
+            await documents.PutAsync(id, new TestProduct
+            {
+                Name = "tensor-modify-replace",
+                DenseDouble = VespaTensor.FromDenseValues<double>([2, 3, 4])
+            });
+
+            var response = await documents.UpdateFieldsAsync<TestProduct>(id, new Dictionary<string, FieldOperation>
+            {
+                ["dense_double"] = FieldOp.Modify(TensorModifyOperation.Replace,
+                    [new TensorCellUpdate(new() { ["x"] = "1" }, 9.5)])
+            });
+            Assert.True(response.IsSuccess);
+
+            var stored = Assert.IsType<TestProduct>((await documents.GetAsync<TestProduct>(id))?.Fields);
+            Assert.Equal(new double[] { 2, 9.5, 4 }, stored.DenseDouble?.GetDenseValues<double>());
+        }
+        finally
+        {
+            await documents.DeleteAsync<TestProduct>(id);
+        }
+    }
+
+    [Fact]
     public async Task TensorAdd_AddsCellsToMappedTensor()
     {
         if (!Enabled) return;

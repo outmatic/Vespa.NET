@@ -39,6 +39,32 @@ public sealed class DocumentConditionTests
     }
 
     [Fact]
+    public void FormatLiteral_UsesTheSameNumbersAndStringEscapesAsTypedConditions()
+    {
+        var previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("it-IT");
+            Assert.Equal("100.5", DocumentCondition.FormatLiteral(100.5m));
+            Assert.Equal("123.0", DocumentCondition.FormatLiteral(123d));
+            Assert.Equal("0.10000000149011612", DocumentCondition.FormatLiteral(0.1f));
+            Assert.Equal("0x8000000000000000", DocumentCondition.FormatLiteral(long.MinValue));
+            Assert.Equal("true", DocumentCondition.FormatLiteral(true));
+            Assert.Equal("false", DocumentCondition.FormatLiteral(false));
+            Assert.Equal("null", DocumentCondition.FormatLiteral(null));
+            const string escaped = """
+                "caff\xC3\xA8\t\"\\"
+                """;
+            Assert.Equal(escaped, DocumentCondition.FormatLiteral("caffè\t\"\\"));
+            Assert.Throws<NotSupportedException>(() => DocumentCondition.FormatLiteral(double.NaN));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Fact]
     public void NumericLiterals_PreserveFloatValuesAndNativeParserSyntax()
     {
         var single = 0.1f;
