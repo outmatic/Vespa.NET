@@ -207,8 +207,43 @@ jobs:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: dotnet nuget push artifacts/agent-framework/Vespa.NET.AgentFramework.*.nupkg --source https://api.nuget.org/v3/index.json
 
+  # The 4.0 adapters use APIs that are not in the published core yet.
+  verify-candidate-packages:
+    name: Verify 4.0 candidate packages
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/vespa-4.0-api'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Pack the local candidate feed
+        shell: bash
+        run: |
+          for package in Vespa.NET.Models Vespa.NET Vespa.NET.Testcontainers Vespa.NET.VectorData Vespa.NET.AgentFramework; do
+            dotnet pack "src/$package/$package.csproj" -c Release -o "$RUNNER_TEMP/vespa-candidate-feed" \
+              "-p:DirectoryBuildTargetsPath=$GITHUB_WORKSPACE/.github/CandidateVersions.targets"
+          done
+
+      - name: Verify both adapters against the local candidate
+        shell: bash
+        run: |
+          python3 scripts/verify-vector-data-package.py "$RUNNER_TEMP/vespa-candidate-feed" --candidate
+          python3 scripts/verify-agent-framework-package.py "$RUNNER_TEMP/vespa-candidate-feed" --candidate
+
   package-vector-data:
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    if: >-
+      github.head_ref != 'feature/vespa-4.0-api' &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -241,19 +276,7 @@ jobs:
             8.0.x
             10.0.x
 
-      - name: Pack connector
-        run: dotnet pack src/Vespa.NET.VectorData -c Release -o artifacts/packages
-
-      - name: Verify package against published dependencies
-        run: python3 scripts/verify-vector-data-package.py artifacts/packages
-
-      - name: Upload verified package
-        uses: actions/upload-artifact@v7
-        with:
-          name: Vespa.NET.VectorData
-          path: artifacts/packages/Vespa.NET.VectorData.*.nupkg
-          if-no-files-found: error
-          retention-days: 14
+      - uses: ./.github/actions/package-vector-data
 
   publish-vector-data:
     if: >-

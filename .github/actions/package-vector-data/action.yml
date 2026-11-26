@@ -1,0 +1,21 @@
+name: Pack and verify VectorData
+description: Verify the VectorData package with published dependencies and upload it for review.
+
+runs:
+  using: composite
+  steps:
+    - name: Pack connector
+      shell: bash
+      run: dotnet pack src/Vespa.NET.VectorData -c Release -o artifacts/packages
+
+    - name: Verify package against published dependencies
+      shell: bash
+      run: python3 scripts/verify-vector-data-package.py artifacts/packages
+
+    - name: Upload verified package
+      uses: actions/upload-artifact@v7
+      with:
+        name: Vespa.NET.VectorData
+        path: artifacts/packages/Vespa.NET.VectorData.*.nupkg
+        if-no-files-found: error
+        retention-days: 14

@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Vespa.NET.Models' Or '$(MSBuildProjectName)' == 'Vespa.NET' Or '$(MSBuildProjectName)' == 'Vespa.NET.Testcontainers'">
+    <Version>4.0.0-local.1</Version>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Vespa.NET.VectorData'">
+    <Version>2.0.0-local.4.0.1</Version>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Vespa.NET.AgentFramework'">
+    <Version>1.1.0-local.4.0.1</Version>
+  </PropertyGroup>
+</Project>
