@@ -1411,6 +1411,25 @@ public class GroupingBuilderTests : IDisposable
     // --- D27: non-numeric aggregation outputs are kept in RawAggregations ---
 
     [Fact]
+    public void RawAggregationValuesRemainReadableAfterDisposingTheSourceDocument()
+    {
+        IReadOnlyDictionary<string, JsonElement> aggregations;
+        using (var document = JsonDocument.Parse("""
+            {"root":{"children":[{"id":"group:root:0","fields":{
+                "count()":9007199254740993,"label":"all","range":{"min":1,"max":9}
+            }}]}}
+            """))
+        {
+            var response = GroupingResponseParser.Parse<object>(document.RootElement, model: null);
+            aggregations = Assert.Single(response.GroupingRoots).RawAggregations;
+        }
+
+        Assert.Equal(9007199254740993L, aggregations["count()"].GetInt64());
+        Assert.Equal("all", aggregations["label"].GetString());
+        Assert.Equal(9, aggregations["range"].GetProperty("max").GetInt32());
+    }
+
+    [Fact]
     public async Task GroupByAsync_NonNumericAggregations_KeptInRawAggregations()
     {
         var json = """

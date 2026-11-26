@@ -228,6 +228,20 @@ public class ResponseModelTests
     }
 
     [Fact]
+    public void SearchHit_FeaturesInsideFieldsTakePrecedenceOverHitLevelFeatures()
+    {
+        var hit = JsonSerializer.Deserialize<SearchHit<object>>("""
+            {"matchfeatures":{"score":1},"summaryfeatures":{"summary":20,"only_at_hit_level":30},
+             "fields":{"matchfeatures":{"score":2},"summaryfeatures":{"summary":40}}}
+            """);
+
+        Assert.NotNull(hit);
+        Assert.Equal(2, hit.MatchFeatures!["score"].GetInt32());
+        Assert.Equal(40, hit.SummaryFeatures!["summary"].GetInt32());
+        Assert.False(hit.SummaryFeatures.ContainsKey("only_at_hit_level"));
+    }
+
+    [Fact]
     public void SearchHit_MatchFeatures_AtHitLevel_StillRead()
     {
         // Custom renderers may put the features at hit level; keep reading them there.

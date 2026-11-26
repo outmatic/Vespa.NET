@@ -48,8 +48,6 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
         double relevance = 0;
         string? source = null;
         T? fields = null;
-        Dictionary<string, JsonElement>? matchFeatures = null;
-        Dictionary<string, JsonElement>? summaryFeatures = null;
 
         if (root.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
             fullId = id.GetString()!;
@@ -58,25 +56,10 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
         if (root.TryGetProperty("source", out var src) && src.ValueKind == JsonValueKind.String)
             source = src.GetString();
 
-        if (root.TryGetProperty("matchfeatures", out var hitMatch))
-            matchFeatures = ToFeatureMap(hitMatch);
-        if (root.TryGetProperty("summaryfeatures", out var hitSummary))
-            summaryFeatures = ToFeatureMap(hitSummary);
-
         if (root.TryGetProperty("fields", out var fieldsElement) && fieldsElement.ValueKind != JsonValueKind.Null)
-        {
             fields = readFields is null
                 ? fieldsElement.Deserialize(GetTypeInfo<T>(options))
                 : readFields(fieldsElement, fullId);
-
-            if (fieldsElement.ValueKind == JsonValueKind.Object)
-            {
-                if (fieldsElement.TryGetProperty("matchfeatures", out var fieldsMatch))
-                    matchFeatures = ToFeatureMap(fieldsMatch) ?? matchFeatures;
-                if (fieldsElement.TryGetProperty("summaryfeatures", out var fieldsSummary))
-                    summaryFeatures = ToFeatureMap(fieldsSummary) ?? summaryFeatures;
-            }
-        }
 
         return new SearchHit<T>
         {
@@ -84,8 +67,8 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
             Relevance = relevance,
             Source = source,
             Fields = fields,
-            MatchFeatures = matchFeatures,
-            SummaryFeatures = summaryFeatures
+            MatchFeatures = ReadFeatureMap(root, fieldsElement, "matchfeatures"),
+            SummaryFeatures = ReadFeatureMap(root, fieldsElement, "summaryfeatures")
         };
     }
 
@@ -110,10 +93,14 @@ internal sealed class SearchHitConverter<T> : JsonConverter<SearchHit<T>> where 
     private static JsonTypeInfo<TValue> GetTypeInfo<TValue>(JsonSerializerOptions options) =>
         (JsonTypeInfo<TValue>)options.GetTypeInfo(typeof(TValue));
 
-    private static Dictionary<string, JsonElement>? ToFeatureMap(JsonElement element)
+    private static Dictionary<string, JsonElement>? ReadFeatureMap(JsonElement root, JsonElement fields, string name)
     {
-        if (element.ValueKind != JsonValueKind.Object)
-            return null;
+        if (fields.ValueKind != JsonValueKind.Object || !fields.TryGetProperty(name, out var element) ||
+            element.ValueKind != JsonValueKind.Object)
+        {
+            if (!root.TryGetProperty(name, out element) || element.ValueKind != JsonValueKind.Object)
+                return null;
+        }
 
         var map = new Dictionary<string, JsonElement>();
         foreach (var property in element.EnumerateObject())

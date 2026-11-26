@@ -143,13 +143,15 @@ internal static class GroupingResponseParser
         var rawAggregations = new Dictionary<string, JsonElement>();
 
         if (node.TryGetProperty("fields", out var fields))
-            foreach (var field in fields.EnumerateObject())
+        {
+            // The detached fields object keeps every value readable after the response is disposed.
+            foreach (var field in fields.Clone().EnumerateObject())
             {
-                // Clones must outlive the response JsonDocument.
-                rawAggregations[field.Name] = field.Value.Clone();
+                rawAggregations[field.Name] = field.Value;
                 if (field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetDouble(out var number))
                     aggregations[field.Name] = number;
             }
+        }
 
         var subGroups = (IReadOnlyList<VespaGroupList>)[];
         var hits = (IReadOnlyList<object>)[];
