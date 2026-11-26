@@ -28,6 +28,8 @@ await client.Documents.DeleteAsync(product.Id, documentType: "product");
 > [!TIP]
 > With `[VespaDocument]` on your model, `documentType` and `namespace` are inferred automatically — no string arguments needed.
 
+When registering generated JSON metadata for a model with a `VespaTensor` property, apply `[JsonConverter(typeof(VespaTensorConverter))]` to the property or include `VespaTensorConverter` in the context's `Converters`. Registration throws `InvalidOperationException` if the tensor converter is missing. For value-only formats such as `hex-value`, configure the converter with the tensor type from the schema.
+
 ---
 
 ## Document Field Sets

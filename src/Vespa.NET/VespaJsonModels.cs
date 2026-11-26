@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Vespa.Models;
+using Vespa.Models.Tensors;
 
 namespace Vespa;
 
@@ -26,9 +27,26 @@ public sealed class VespaJsonModels
     /// </summary>
     /// <param name="typeInfo">JSON metadata for the fields model.</param>
     /// <param name="applyId">Optional function that applies Vespa's short ID to the model returned by a read.</param>
+    /// <exception cref="InvalidOperationException">A tensor property has no Vespa tensor converter.</exception>
     public VespaJsonModels With<T>(JsonTypeInfo<T> typeInfo, Func<T, string, T>? applyId = null) where T : class
     {
         ArgumentNullException.ThrowIfNull(typeInfo);
+
+        foreach (var property in typeInfo.Properties)
+        {
+            if (property.PropertyType != typeof(VespaTensor) || (property.Get is null && property.Set is null))
+                continue;
+
+            var converter = property.CustomConverter;
+            if (converter is null && typeInfo.Options.TryGetTypeInfo(typeof(VespaTensor), out var tensorInfo))
+                converter = tensorInfo.Converter;
+
+            if (converter is not VespaTensorConverter)
+                throw new InvalidOperationException(
+                    $"Tensor property '{property.Name}' on model '{typeof(T)}' requires VespaTensorConverter. " +
+                    "Add [JsonConverter(typeof(VespaTensorConverter))] to the property or include " +
+                    "VespaTensorConverter in the JSON context's Converters.");
+        }
 
         return new VespaJsonModels(new Dictionary<Type, object>(_models)
         {

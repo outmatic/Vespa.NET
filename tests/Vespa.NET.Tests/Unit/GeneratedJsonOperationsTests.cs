@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Vespa.Models;
+using Vespa.Models.Tensors;
 using Vespa.Tests.Helpers;
 using Xunit;
 
@@ -9,6 +10,84 @@ namespace Vespa.Tests.Unit;
 
 public sealed class GeneratedJsonOperationsTests
 {
+    [Fact]
+    public async Task TensorRegistrationWithoutConverterFailsBeforeSendingAnyRequest()
+    {
+        using var handler = new MockHttpMessageHandler();
+        using var http = new HttpClient(handler);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            using var client = new VespaClient(http, new VespaClientOptions
+            {
+                Endpoint = "http://vespa.test",
+                JsonModels = new VespaJsonModels().With(TestModelJson.Default.GeneratedTensorWithoutConverter)
+            });
+            await client.Documents.GetAsync<GeneratedTensorWithoutConverter>("one", "product");
+        });
+
+        Assert.Contains(nameof(GeneratedTensorWithoutConverter), error.Message);
+        Assert.Contains("embedding", error.Message);
+        Assert.Contains(nameof(VespaTensorConverter), error.Message);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RegisteredTensorConverterPreservesCellsOnDocumentReadsAndWrites(bool useGlobalConverter)
+    {
+        if (useGlobalConverter)
+        {
+            var options = new JsonSerializerOptions();
+            options.Converters.Add(new VespaTensorConverter());
+            var context = new TestModelJson(options);
+            await CheckTensorRoundTrip(new VespaJsonModels().With(context.GeneratedTensorWithoutConverter),
+                new GeneratedTensorWithoutConverter(DenseTensor()), model => model.Embedding);
+        }
+        else
+        {
+            await CheckTensorRoundTrip(new VespaJsonModels().With(TestModelJson.Default.GeneratedTensorWithConverter),
+                new GeneratedTensorWithConverter(DenseTensor()), model => model.Embedding);
+        }
+    }
+
+    [Fact]
+    public async Task UnregisteredTensorModelStillUsesTheDefaultConverter()
+    {
+        await CheckTensorRoundTrip(null, new GeneratedTensorWithoutConverter(DenseTensor()), model => model.Embedding);
+    }
+
+    private static VespaTensor DenseTensor() =>
+        VespaTensor.FromDenseValues<float>([1.5f, 2.5f, 3.5f], "tensor<float>(x[3])");
+
+    private static async Task CheckTensorRoundTrip<T>(VespaJsonModels? models, T data, Func<T, VespaTensor> embedding)
+        where T : class
+    {
+        using var handler = new MockHttpMessageHandler();
+        handler.QueueResponses(
+            Json("{}"),
+            Json("""{"fields":{"embedding":[1.5,2.5,3.5]}}"""),
+            Json("""
+                {"fields":{"embedding":{"type":"tensor<float>(x[3])","cells":[
+                    {"address":{"x":"0"},"value":1.5},
+                    {"address":{"x":"1"},"value":2.5},
+                    {"address":{"x":"2"},"value":3.5}
+                ]}}}
+                """));
+        using var http = new HttpClient(handler);
+        using var client = new VespaClient(http, new VespaClientOptions { Endpoint = "http://vespa.test", JsonModels = models });
+        var expected = DenseTensor().GetDenseValues<float>();
+
+        await client.Documents.PutAsync("one", data, "product");
+        using var body = JsonDocument.Parse(await Assert.Single(handler.Requests).Content!.ReadAsStringAsync());
+        Assert.Equal(expected, body.RootElement.GetProperty("fields").GetProperty("embedding")
+            .EnumerateArray().Select(cell => cell.GetSingle()));
+        var dense = await client.Documents.GetAsync<T>("one", "product");
+        Assert.Equal(expected, embedding(dense!.Fields!).GetDenseValues<float>());
+        var verbose = await client.Documents.GetAsync<T>("one", "product");
+        Assert.Equal(expected, embedding(verbose!.Fields!).Cells!.Select(cell => (float)cell.Value));
+    }
+
     [Fact]
     public async Task DocumentReadsAndWritesUseRegisteredMetadata()
     {
@@ -204,6 +283,16 @@ internal sealed record GeneratedJsonProduct([property: JsonPropertyName("product
     public GeneratedJsonProduct WithId(string id) => this with { Id = id };
 }
 
+internal sealed record GeneratedTensorWithoutConverter(
+    [property: JsonPropertyName("embedding"), Vespa.Models.Attributes.VespaTensor("tensor<float>(x[3])")]
+    VespaTensor Embedding);
+
+internal sealed record GeneratedTensorWithConverter(
+    [property: JsonPropertyName("embedding"), JsonConverter(typeof(VespaTensorConverter))]
+    VespaTensor Embedding);
+
+[JsonSerializable(typeof(GeneratedTensorWithoutConverter))]
+[JsonSerializable(typeof(GeneratedTensorWithConverter))]
 [JsonSerializable(typeof(GeneratedJsonProduct))]
 [JsonSerializable(typeof(long))]
 internal sealed partial class TestModelJson : JsonSerializerContext;

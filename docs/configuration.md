@@ -101,6 +101,8 @@ internal sealed partial class ProductJsonContext : JsonSerializerContext;
 
 Use the JSON attributes and converters in your context to match the schema. The optional function receives the short Vespa ID on reads. When you use `JsonModels`, register each fields type before sending a request, including projections. For custom query parameters or field update values, pass a `JsonElement` made with `JsonSerializer.SerializeToElement(value, typeInfo)`.
 
+Set `PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower` to match the client's default field names, and declare any custom field names with `[JsonPropertyName]` in the generated model.
+
 To read grouping outputs with generated metadata, pass your context's `Options` to `GetAggregation<T>` or `TryGetAggregation<T>`. Include each result type in that context.
 
 Typed document selectors inspect the model's inheritance chain to resolve overrides and reject hidden properties. If your library forwards a generic model to these selectors, preserve the model metadata by applying `DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)` to the forwarding type parameter.
