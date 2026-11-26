@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Vespa.Models;
 
@@ -70,6 +71,10 @@ internal static class GroupingResponseParser
         };
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "With reflection JSON disabled, GroupByAsync resolves registered model metadata before parsing hits.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled reader uses the generated protocol context and the registered fields metadata.")]
     private static Func<JsonElement, SearchHit<T>?> CreateHitReader<T>(ModelJson<T>? model) where T : class
     {
         if (VespaJsonReflection.IsEnabled && model is null)

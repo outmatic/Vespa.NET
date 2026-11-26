@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -188,6 +189,10 @@ public sealed partial class SearchOperations(
         }
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "The reflection-disabled path creates search content with the generated protocol context.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path serializes the request using generated JsonTypeInfo.")]
     private static HttpContent CreateSearchContent(VespaSearchRequest request, bool useGeneratedMetadata)
     {
         if (VespaJsonReflection.IsEnabled && !useGeneratedMetadata)

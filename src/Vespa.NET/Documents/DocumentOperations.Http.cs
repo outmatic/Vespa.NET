@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Http.Json;
 using Vespa.Models;
@@ -30,6 +31,10 @@ public sealed partial class DocumentOperations
         };
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Resolve requires registered model metadata when reflection JSON is disabled.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path writes with the registered JsonTypeInfo.")]
     private async Task<VespaResponse> SendPutAsync<T>(string url, T document, CancellationToken cancellationToken) where T : class
     {
         var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "document writes");
@@ -47,6 +52,10 @@ public sealed partial class DocumentOperations
         return await ParseResponseAsync(response, cancellationToken);
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "When reflection JSON is disabled, the update envelope uses the generated protocol context.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path creates content with generated metadata for the update envelope.")]
     private JsonContent CreateUpdateContent(Dictionary<string, FieldOperation> fieldOperations)
     {
         if (VespaJsonReflection.IsEnabled && _options.JsonModels is null)

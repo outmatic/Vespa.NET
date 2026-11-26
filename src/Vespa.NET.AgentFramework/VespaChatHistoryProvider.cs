@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Agents.AI;
@@ -77,6 +78,10 @@ public sealed class VespaChatHistoryProvider : ChatHistoryProvider
         : snapshot.Payload.Deserialize(HistoryMessages)
             ?? throw new JsonException("The history snapshot is missing its messages.");
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "The reflection serializer is selected only when reflection JSON is enabled. The other path uses generated history metadata.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Native AOT uses the generated history context with reflection JSON disabled.")]
     private static JsonTypeInfo<List<ChatMessage>> CreateHistoryMetadata()
     {
         // Keep the original serializer for application-defined message values in JIT apps with reflection.

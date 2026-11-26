@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -38,6 +39,10 @@ internal static class GroupingAggregation
         }
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "When reflection JSON is disabled, callers must pass generated metadata for the aggregation result.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path deserializes with the caller's JsonTypeInfo.")]
     private static TValue? Deserialize<TValue>(JsonElement element, JsonSerializerOptions? options)
     {
         if (VespaJsonReflection.IsEnabled)

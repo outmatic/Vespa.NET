@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
@@ -266,6 +267,10 @@ public sealed partial class DocumentOperations
     /// <c>IncludeRemoves = true</c>) are <c>{"remove":"id:..."}</c> and yield a document
     /// with <see langword="null"/> <c>Fields</c>; other metadata returns <see langword="null"/>.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "The visit resolves model metadata before reading the lines when reflection JSON is disabled.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path deserializes the fields with the registered JsonTypeInfo.")]
     private static VespaDocument<T>? ParseJsonlDocument<T>(JsonElement root, ModelJson<T>? model) where T : class
     {
         if (root.TryGetProperty("remove", out var removeElem))

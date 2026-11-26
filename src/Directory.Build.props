@@ -8,6 +8,8 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <!-- Deliberate suppressions:
          CA2007 (ConfigureAwait) NOT enabled: consumers are assumed to be ASP.NET Core /
                 console apps without a synchronization context (review decision 2026-07-09).

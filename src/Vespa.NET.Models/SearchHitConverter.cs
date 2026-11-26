@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -13,6 +14,8 @@ public sealed class SearchHitConverterFactory : JsonConverterFactory
     public override bool CanConvert(Type typeToConvert) =>
         typeToConvert.IsGenericType && typeToConvert.GetGenericTypeDefinition() == typeof(SearchHit<>);
 
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The factory checks IsDynamicCodeSupported before closing a generic converter. Native AOT uses registered metadata and the hit reader directly.")]
     public override JsonConverter CreateConverter(Type typeToConvert, JsonSerializerOptions options)
     {
         if (!RuntimeFeature.IsDynamicCodeSupported)

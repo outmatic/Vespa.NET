@@ -58,6 +58,8 @@ Use `--framework net8.0` to target .NET 8.
 
 Use generated JSON metadata when publishing a Vespa.NET 4.0 app with trimming or Native AOT. The support notes list the paths and platforms tested from installed packages. [Trimming and Native AOT](docs/configuration.md#trimming-and-native-aot)
 
+The library projects run the trim and AOT analyzers during build. Native AOT support covers the documented operations with registered metadata. Reflection-based JSON, runtime schema discovery and direct deserialization of `SearchHit<T>` still require runtime capabilities, so the packages do not declare blanket AOT compatibility.
+
 | Package | Use |
 |---|---|
 | [`Vespa.NET`](https://www.nuget.org/packages/Vespa.NET) | Client, DI integration, YQL and schema builders; includes `Vespa.NET.Models` transitively |
