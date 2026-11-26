@@ -11,6 +11,8 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
 {
     private readonly List<SchemaStructModel> _structs = [];
     private readonly Dictionary<Type, SchemaStructModel> _structIndex = [];
+    private readonly Dictionary<string, (Type Type, string Field, SchemaStructModel Model)> _structsByName =
+        new(StringComparer.Ordinal);
     private readonly HashSet<Type> _structsInProgress = [];
 
     private sealed record ResolvedFieldType(
@@ -290,7 +292,7 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
             return new ResolvedFieldType(scalar, FieldShape.Simple);
 
         if (type.GetCustomAttribute<VespaStructAttribute>() is not null)
-            return new ResolvedFieldType(CollectStruct(type).Name, FieldShape.Struct, type);
+            return new ResolvedFieldType(CollectStruct(type, context).Name, FieldShape.Struct, type);
 
         if (VespaTypeMapper.TryGetDictionaryTypes(type, out var keyType, out var valueType))
         {
@@ -302,7 +304,7 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
             var unwrappedValue = Nullable.GetUnderlyingType(valueType) ?? valueType;
             if (unwrappedValue.GetCustomAttribute<VespaStructAttribute>() is not null)
             {
-                var structModel = CollectStruct(unwrappedValue);
+                var structModel = CollectStruct(unwrappedValue, context);
                 return new ResolvedFieldType(
                     $"map<{key},{structModel.Name}>", FieldShape.Map, MapValueStructType: unwrappedValue);
             }
@@ -318,7 +320,7 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
             var element = Nullable.GetUnderlyingType(elementType) ?? elementType;
             if (element.GetCustomAttribute<VespaStructAttribute>() is not null)
                 return new ResolvedFieldType(
-                    $"array<{CollectStruct(element).Name}>", FieldShape.StructCollection, element);
+                    $"array<{CollectStruct(element, context).Name}>", FieldShape.StructCollection, element);
 
             return new ResolvedFieldType(
                 $"array<{ResolveClrType(element, context).VespaType}>", FieldShape.Simple);
@@ -331,7 +333,7 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
             "collections/dictionaries of these, or a [VespaStruct]-annotated type.");
     }
 
-    private SchemaStructModel CollectStruct(Type structType)
+    private SchemaStructModel CollectStruct(Type structType, string context)
     {
         if (_structIndex.TryGetValue(structType, out var existing))
             return existing;
@@ -358,10 +360,23 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
 
         _structsInProgress.Remove(structType);
 
+        if (_structsByName.TryGetValue(structName, out var named))
+        {
+            if (!named.Model.Fields.SequenceEqual(members))
+                throw new NotSupportedException(
+                    $"Vespa struct '{structName}' has different members on CLR types '{named.Type}' " +
+                    $"({named.Field}) and '{structType}' ({context}). " +
+                    "Give one type a different [VespaStruct] name or use separate schemas.");
+
+            _structIndex[structType] = named.Model;
+            return named.Model;
+        }
+
         // Nested structs were collected during member resolution, so dependencies
         // land in _structs before their containing struct.
         var model = new SchemaStructModel(structName, members);
         _structIndex[structType] = model;
+        _structsByName.Add(structName, (structType, context, model));
         _structs.Add(model);
         return model;
     }

@@ -601,6 +601,37 @@ public class VespaSchemaBuilderTests
     // --- M16: Struct field types ---
 
     [Fact]
+    public void GenerateSchema_RejectsDifferentStructsWithTheSameDerivedName()
+    {
+        var error = Assert.Throws<NotSupportedException>(() => VespaSchemaBuilder.GenerateSchema<DerivedStructCollision>());
+        Assert.Contains("address", error.Message);
+        Assert.Contains(typeof(BillingModel.Address).FullName!, error.Message);
+        Assert.Contains(typeof(DeliveryModel.Address).FullName!, error.Message);
+        Assert.Contains(nameof(DerivedStructCollision.Billing), error.Message);
+        Assert.Contains(nameof(DerivedStructCollision.Delivery), error.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_DeduplicatesDifferentClrTypesWithIdenticalStructMembers()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<MatchingStructs>();
+        Assert.Single(schema.Split('\n'), line => line.Trim() == "struct address {");
+        Assert.Contains("field billing type address {", schema);
+        Assert.Contains("field delivery type address {", schema);
+        Assert.Contains("field return_address type address {", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_RejectsAnExplicitStructNameThatConflictsWithADerivedName()
+    {
+        var error = Assert.Throws<NotSupportedException>(() => VespaSchemaBuilder.GenerateSchema<ExplicitStructCollision>());
+        Assert.Contains("address", error.Message);
+        Assert.Contains(typeof(BillingModel.Address).FullName!, error.Message);
+        Assert.Contains(typeof(ExplicitAddress).FullName!, error.Message);
+        Assert.Contains(nameof(ExplicitStructCollision.Delivery), error.Message);
+    }
+
+    [Fact]
     public void GenerateSchema_StructField_EmitsStructDefinition()
     {
         var schema = VespaSchemaBuilder.GenerateSchema<StructDoc>();
@@ -1522,6 +1553,40 @@ file class AddressStruct
     [VespaField(Name = "street")] public string Street { get; set; } = "";
     [VespaField(Name = "city")] public string City { get; set; } = "";
 }
+
+file static class BillingModel
+{
+    [VespaStruct]
+    public sealed record Address(string Street);
+}
+
+file static class DeliveryModel
+{
+    [VespaStruct]
+    public sealed record Address(int PostalCode);
+}
+
+[VespaStruct("address")]
+file sealed record MatchingAddress(string Street);
+
+[VespaStruct("address")]
+file sealed record ExplicitAddress(int PostalCode);
+
+[VespaDocument("derived_struct_collision")]
+file sealed record DerivedStructCollision(
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address Billing,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] DeliveryModel.Address Delivery);
+
+[VespaDocument("matching_structs")]
+file sealed record MatchingStructs(
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address Billing,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] MatchingAddress Delivery,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address ReturnAddress);
+
+[VespaDocument("explicit_struct_collision")]
+file sealed record ExplicitStructCollision(
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address Billing,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] ExplicitAddress Delivery);
 
 [VespaDocument("struct_doc")]
 file record StructDoc
