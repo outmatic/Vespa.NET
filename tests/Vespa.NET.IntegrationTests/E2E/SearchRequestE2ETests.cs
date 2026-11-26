@@ -311,7 +311,10 @@ public class SearchRequestE2ETests(VespaFixture fixture)
             for (var i = 0; i < ids.Count; i++)
                 await fixture.Client.Documents.PutAsync(ids[i], new TestProduct
                 {
-                    Name = ids[i], Tag = tag, Price = i == 2 ? 20 : 10, Quantity = i
+                    Name = ids[i],
+                    Tag = tag,
+                    Price = i == 2 ? 20 : 10,
+                    Quantity = i
                 }, cancellationToken: cancellationToken);
 
             var query = YqlBuilder<TestProduct>.Select()

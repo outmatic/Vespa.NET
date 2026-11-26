@@ -113,7 +113,8 @@ public sealed class PatternTests
         Assert.Equal(6, (await nextHistory.GetMessagesAsync(restored)).Count);
         var different = model.AsAIAgent(new ChatClientAgentOptions
         {
-            Name = "test", ChatHistoryProvider = new VespaChatHistoryProvider(fixture.OtherScope, _ => new() { ConversationId = "conversation-1" })
+            Name = "test",
+            ChatHistoryProvider = new VespaChatHistoryProvider(fixture.OtherScope, _ => new() { ConversationId = "conversation-1" })
         });
         await different.RunAsync("Other user.", await different.CreateSessionAsync());
         Assert.Single(model.LastMessages);

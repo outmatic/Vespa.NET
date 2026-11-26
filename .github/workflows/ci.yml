@@ -37,6 +37,9 @@ jobs:
       - name: Build
         run: dotnet build Vespa.NET.slnx -c Release -p:TestNet8=true
 
+      - name: Verify formatting
+        run: dotnet format Vespa.NET.slnx --verify-no-changes
+
       - name: Test (unit)
         run: >-
           dotnet test tests/Vespa.NET.Tests/Vespa.NET.Tests.csproj -c Release -p:TestNet8=true

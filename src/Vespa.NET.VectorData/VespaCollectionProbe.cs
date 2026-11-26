@@ -60,9 +60,9 @@ internal static class VespaVectorErrors
 
     internal static VectorStoreException Create(string? collectionName, string operation, string message,
         Exception? innerException = null) => new(message, innerException)
-    {
-        VectorStoreSystemName = "vespa",
-        CollectionName = collectionName,
-        OperationName = operation
-    };
+        {
+            VectorStoreSystemName = "vespa",
+            CollectionName = collectionName,
+            OperationName = operation
+        };
 }

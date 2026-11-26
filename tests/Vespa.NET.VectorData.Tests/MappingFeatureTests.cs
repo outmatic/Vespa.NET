@@ -103,7 +103,9 @@ public sealed class MappingFeatureTests
         using var collection = harness.Store.GetCollection<string, MultipleVectorRecord>("vectors");
         await collection.UpsertAsync(new MultipleVectorRecord
         {
-            Id = "a", Short = new Embedding<float>(new float[] { 1, 0 }), Long = new float[] { 0, 1, 0 }
+            Id = "a",
+            Short = new Embedding<float>(new float[] { 1, 0 }),
+            Long = new float[] { 0, 1, 0 }
         });
         var read = await collection.GetAsync("a", new() { IncludeVectors = true });
         Assert.Equal(new float[] { 1, 0 }, read!.Short.Vector.ToArray());
@@ -115,7 +117,9 @@ public sealed class MappingFeatureTests
         Assert.Contains("short_vector,long_vector", Uri.UnescapeDataString(harness.Handler.Requests[1].Uri.Query));
         await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new MultipleVectorRecord
         {
-            Id = "b", Short = new Embedding<float>(new float[] { 1, 0, 0 }), Long = new float[] { 0, 1, 0 }
+            Id = "b",
+            Short = new Embedding<float>(new float[] { 1, 0, 0 }),
+            Long = new float[] { 0, 1, 0 }
         }));
         Assert.Equal(2, harness.Handler.Requests.Count);
     }
@@ -169,7 +173,8 @@ public sealed class MappingFeatureTests
         using var collection = harness.Store.GetDynamicCollection("vectors", DynamicCollectionTests.Definition(typeof(float[])));
         await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new Dictionary<string, object?>
         {
-            ["Key"] = Guid.NewGuid(), ["Vector"] = null
+            ["Key"] = Guid.NewGuid(),
+            ["Vector"] = null
         }));
         Assert.Empty(harness.Handler.Requests);
         await Assert.ThrowsAsync<VectorStoreException>(() => collection.GetAsync(Guid.NewGuid(), new() { IncludeVectors = true }));
@@ -218,7 +223,8 @@ public sealed class MappingFeatureTests
         using var collection = harness.Store.GetDynamicCollection("vectors", definition);
         await collection.UpsertAsync(new Dictionary<string, object?>
         {
-            ["Key"] = Guid.NewGuid(), ["Vector"] = new float[] { 0, 0, 0 }
+            ["Key"] = Guid.NewGuid(),
+            ["Vector"] = new float[] { 0, 0, 0 }
         });
         Assert.Single(harness.Handler.Requests);
     }
@@ -234,7 +240,8 @@ public sealed class MappingFeatureTests
         using var collection = harness.Store.GetDynamicCollection("vectors", definition);
         await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new Dictionary<string, object?>
         {
-            ["Key"] = Guid.NewGuid(), ["Vector"] = new float[] { 0, 0, 0 }
+            ["Key"] = Guid.NewGuid(),
+            ["Vector"] = new float[] { 0, 0, 0 }
         }));
         Assert.Empty(harness.Handler.Requests);
     }
@@ -298,7 +305,8 @@ public sealed class MappingFeatureTests
         using var collection = harness.Store.GetCollection<string, DateListRecord>("records");
         await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new DateListRecord
         {
-            Id = "a", Utc = DateTime.SpecifyKind(DateTime.UnixEpoch, kind)
+            Id = "a",
+            Utc = DateTime.SpecifyKind(DateTime.UnixEpoch, kind)
         }));
         Assert.Empty(harness.Handler.Requests);
     }

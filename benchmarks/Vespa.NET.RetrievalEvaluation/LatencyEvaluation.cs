@@ -22,12 +22,27 @@ internal static class LatencyEvaluation
             foreach (var configuration in configurations)
             {
                 var (_, _, trace) = await SearchAsync(configuration, query, profile: true);
-                traces.Add(new { queryId = query.Id, mode = configuration.Name,
-                    words = query.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length, trace });
+                traces.Add(new
+                {
+                    queryId = query.Id,
+                    mode = configuration.Name,
+                    words = query.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length,
+                    trace
+                });
             }
-        await WriteAsync("latency-traces.json", new { datasetSha256 = datasetHash, corpusSha256 = corpusHash,
-            schemaSha256 = SchemaHash(), configurationSha256 = configurationHash, configurationSource, configurations, k,
-            serverLabel, runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, traces });
+        await WriteAsync("latency-traces.json", new
+        {
+            datasetSha256 = datasetHash,
+            corpusSha256 = corpusHash,
+            schemaSha256 = SchemaHash(),
+            configurationSha256 = configurationHash,
+            configurationSource,
+            configurations,
+            k,
+            serverLabel,
+            runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+            traces
+        });
         if (tracesOnly)
             return;
 
@@ -55,9 +70,18 @@ internal static class LatencyEvaluation
         }
         await WriteAsync("latency-results.json", new
         {
-            datasetSha256 = datasetHash, corpusSha256 = corpusHash, schemaSha256 = SchemaHash(),
-            configurationSha256 = configurationHash, configurationSource, configurations, k, repeats, warmup,
-            serverLabel, completedAtUtc = DateTimeOffset.UtcNow, runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+            datasetSha256 = datasetHash,
+            corpusSha256 = corpusHash,
+            schemaSha256 = SchemaHash(),
+            configurationSha256 = configurationHash,
+            configurationSource,
+            configurations,
+            k,
+            repeats,
+            warmup,
+            serverLabel,
+            completedAtUtc = DateTimeOffset.UtcNow,
+            runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
             note = "Warmed serial client latency, including native request/response processing and summaries, excluding embeddings. Query and configuration order shuffled seed 1729; traces excluded.",
             results
         });
