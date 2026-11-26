@@ -52,6 +52,82 @@ public sealed class GeneratedJsonOperationsTests
     }
 
     [Fact]
+    public async Task NestedTensorRegistrationWithoutConverterFailsBeforeSendingAnyRequest()
+    {
+        using var handler = new MockHttpMessageHandler();
+        handler.QueueResponse(Json("{}"));
+        using var http = new HttpClient(handler);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            using var client = new VespaClient(http, new VespaClientOptions
+            {
+                Endpoint = "http://vespa.test",
+                JsonModels = new VespaJsonModels().With(TestModelJson.Default.GeneratedNestedTensorWithoutConverter)
+            });
+            await client.Documents.PutAsync("one",
+                new GeneratedNestedTensorWithoutConverter(new GeneratedTensorWithoutConverter(DenseTensor())), "product");
+        });
+
+        Assert.Contains(nameof(GeneratedNestedTensorWithoutConverter), error.Message);
+        Assert.Contains("inner.embedding", error.Message);
+        Assert.Contains(nameof(VespaTensorConverter), error.Message);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RegisteredNestedTensorConverterPreservesCellsOnDocumentReadsAndWrites(bool useGlobalConverter)
+    {
+        if (useGlobalConverter)
+        {
+            var options = new JsonSerializerOptions();
+            options.Converters.Add(new VespaTensorConverter());
+            var context = new TestModelJson(options);
+            await CheckTensorRoundTrip(new VespaJsonModels().With(context.GeneratedNestedTensorWithoutConverter),
+                new GeneratedNestedTensorWithoutConverter(new GeneratedTensorWithoutConverter(DenseTensor())),
+                model => model.Inner.Embedding, nested: true);
+        }
+        else
+        {
+            await CheckTensorRoundTrip(new VespaJsonModels().With(TestModelJson.Default.GeneratedNestedTensorWithConverter),
+                new GeneratedNestedTensorWithConverter(new GeneratedTensorWithConverter(DenseTensor())),
+                model => model.Inner.Embedding, nested: true);
+        }
+    }
+
+    [Fact]
+    public void RegistrationWalksTensorCollectionsAndDictionaryValues()
+    {
+        var models = new VespaJsonModels();
+        var collectionError = Assert.Throws<InvalidOperationException>(() =>
+            models.With(TestModelJson.Default.GeneratedNestedTensorCollection));
+        Assert.Contains("items[].embedding", collectionError.Message);
+
+        var dictionaryError = Assert.Throws<InvalidOperationException>(() =>
+            models.With(TestModelJson.Default.GeneratedTensorDictionary));
+        Assert.Contains("tensors[]", dictionaryError.Message);
+    }
+
+    [Fact]
+    public void SelfReferencingModelCanBeRegistered()
+    {
+        var metadata = TestModelJson.Default.GeneratedRecursiveNode;
+        var models = new VespaJsonModels().With(metadata);
+
+        Assert.Same(metadata, VespaJsonModels.Resolve<GeneratedRecursiveNode>(models, "document read")!.TypeInfo);
+    }
+
+    [Fact]
+    public void RegistrationLeavesObjectAndJsonElementPayloadsUnchecked()
+    {
+        var metadata = TestModelJson.Default.GeneratedRuntimePayload;
+        var models = new VespaJsonModels().With(metadata);
+
+        Assert.Same(metadata, VespaJsonModels.Resolve<GeneratedRuntimePayload>(models, "document read")!.TypeInfo);
+    }
+
+    [Fact]
     public async Task UnregisteredTensorModelStillUsesTheDefaultConverter()
     {
         await CheckTensorRoundTrip(null, new GeneratedTensorWithoutConverter(DenseTensor()), model => model.Embedding);
@@ -60,32 +136,42 @@ public sealed class GeneratedJsonOperationsTests
     private static VespaTensor DenseTensor() =>
         VespaTensor.FromDenseValues<float>([1.5f, 2.5f, 3.5f], "tensor<float>(x[3])");
 
-    private static async Task CheckTensorRoundTrip<T>(VespaJsonModels? models, T data, Func<T, VespaTensor> embedding)
-        where T : class
+    private static async Task CheckTensorRoundTrip<T>(
+        VespaJsonModels? models, T data, Func<T, VespaTensor> embedding, bool nested = false) where T : class
     {
         using var handler = new MockHttpMessageHandler();
         handler.QueueResponses(
             Json("{}"),
-            Json("""{"fields":{"embedding":[1.5,2.5,3.5]}}"""),
-            Json("""
-                {"fields":{"embedding":{"type":"tensor<float>(x[3])","cells":[
+            Json(TensorDocument("[1.5,2.5,3.5]")),
+            Json(TensorDocument("""
+                {"type":"tensor<float>(x[3])","cells":[
                     {"address":{"x":"0"},"value":1.5},
                     {"address":{"x":"1"},"value":2.5},
                     {"address":{"x":"2"},"value":3.5}
-                ]}}}
-                """));
+                ]}
+                """)));
         using var http = new HttpClient(handler);
         using var client = new VespaClient(http, new VespaClientOptions { Endpoint = "http://vespa.test", JsonModels = models });
         var expected = DenseTensor().GetDenseValues<float>();
 
         await client.Documents.PutAsync("one", data, "product");
         using var body = JsonDocument.Parse(await Assert.Single(handler.Requests).Content!.ReadAsStringAsync());
-        Assert.Equal(expected, body.RootElement.GetProperty("fields").GetProperty("embedding")
-            .EnumerateArray().Select(cell => cell.GetSingle()));
+        var fields = body.RootElement.GetProperty("fields");
+        if (nested)
+            fields = fields.GetProperty("inner");
+        Assert.Equal(expected, fields.GetProperty("embedding").EnumerateArray().Select(cell => cell.GetSingle()));
         var dense = await client.Documents.GetAsync<T>("one", "product");
         Assert.Equal(expected, embedding(dense!.Fields!).GetDenseValues<float>());
         var verbose = await client.Documents.GetAsync<T>("one", "product");
         Assert.Equal(expected, embedding(verbose!.Fields!).Cells!.Select(cell => (float)cell.Value));
+
+        string TensorDocument(string tensor)
+        {
+            var documentFields = "{\"embedding\":" + tensor + "}";
+            if (nested)
+                documentFields = "{\"inner\":" + documentFields + "}";
+            return "{\"fields\":" + documentFields + "}";
+        }
     }
 
     [Fact]
@@ -291,8 +377,36 @@ internal sealed record GeneratedTensorWithConverter(
     [property: JsonPropertyName("embedding"), JsonConverter(typeof(VespaTensorConverter))]
     VespaTensor Embedding);
 
+internal sealed record GeneratedNestedTensorWithoutConverter(
+    [property: JsonPropertyName("inner")] GeneratedTensorWithoutConverter Inner);
+
+internal sealed record GeneratedNestedTensorWithConverter(
+    [property: JsonPropertyName("inner")] GeneratedTensorWithConverter Inner);
+
+internal sealed record GeneratedNestedTensorCollection(
+    [property: JsonPropertyName("items")] GeneratedTensorWithoutConverter[] Items);
+
+internal sealed record GeneratedTensorDictionary(
+    [property: JsonPropertyName("tensors")] Dictionary<string, VespaTensor> Tensors);
+
+internal sealed class GeneratedRecursiveNode
+{
+    [JsonPropertyName("child")]
+    public GeneratedRecursiveNode? Child { get; init; }
+}
+
+internal sealed record GeneratedRuntimePayload(
+    [property: JsonPropertyName("payload")] object Payload,
+    [property: JsonPropertyName("extra")] JsonElement Extra);
+
 [JsonSerializable(typeof(GeneratedTensorWithoutConverter))]
 [JsonSerializable(typeof(GeneratedTensorWithConverter))]
+[JsonSerializable(typeof(GeneratedNestedTensorWithoutConverter))]
+[JsonSerializable(typeof(GeneratedNestedTensorWithConverter))]
+[JsonSerializable(typeof(GeneratedNestedTensorCollection))]
+[JsonSerializable(typeof(GeneratedTensorDictionary))]
+[JsonSerializable(typeof(GeneratedRecursiveNode))]
+[JsonSerializable(typeof(GeneratedRuntimePayload))]
 [JsonSerializable(typeof(GeneratedJsonProduct))]
 [JsonSerializable(typeof(long))]
 internal sealed partial class TestModelJson : JsonSerializerContext;

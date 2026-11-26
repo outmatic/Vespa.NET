@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Vespa.Models;
 using Vespa.Models.Tensors;
@@ -27,32 +29,122 @@ public sealed class VespaJsonModels
     /// </summary>
     /// <param name="typeInfo">JSON metadata for the fields model.</param>
     /// <param name="applyId">Optional function that applies Vespa's short ID to the model returned by a read.</param>
-    /// <exception cref="InvalidOperationException">A tensor property has no Vespa tensor converter.</exception>
+    /// <exception cref="InvalidOperationException">A tensor reachable through the registered metadata has no Vespa tensor converter.</exception>
     public VespaJsonModels With<T>(JsonTypeInfo<T> typeInfo, Func<T, string, T>? applyId = null) where T : class
     {
         ArgumentNullException.ThrowIfNull(typeInfo);
 
-        foreach (var property in typeInfo.Properties)
-        {
-            if (property.PropertyType != typeof(VespaTensor) || (property.Get is null && property.Set is null))
-                continue;
-
-            var converter = property.CustomConverter;
-            if (converter is null && typeInfo.Options.TryGetTypeInfo(typeof(VespaTensor), out var tensorInfo))
-                converter = tensorInfo.Converter;
-
-            if (converter is not VespaTensorConverter)
-                throw new InvalidOperationException(
-                    $"Tensor property '{property.Name}' on model '{typeof(T)}' requires VespaTensorConverter. " +
-                    "Add [JsonConverter(typeof(VespaTensorConverter))] to the property or include " +
-                    "VespaTensorConverter in the JSON context's Converters.");
-        }
+        ValidateTensorConverters(typeInfo);
 
         return new VespaJsonModels(new Dictionary<Type, object>(_models)
         {
             [typeof(T)] = new ModelJson<T>(typeInfo, applyId)
         });
     }
+
+    private static void ValidateTensorConverters(JsonTypeInfo root)
+    {
+        var visited = new HashSet<Type>();
+        Visit(root, string.Empty);
+
+        void Visit(JsonTypeInfo metadata, string path)
+        {
+            if (!visited.Add(metadata.Type))
+                return;
+
+            if (metadata.Type == typeof(VespaTensor))
+            {
+                RequireConverter(metadata.Converter, path.Length == 0 ? metadata.Type.Name : path);
+                return;
+            }
+
+            foreach (var property in metadata.Properties)
+            {
+                if (property.Get is null && property.Set is null)
+                    continue;
+
+                var propertyPath = path.Length == 0 ? property.Name : path + "." + property.Name;
+                if (property.CustomConverter is { } converter)
+                {
+                    if (property.PropertyType == typeof(VespaTensor))
+                        RequireConverter(converter, propertyPath);
+                    continue;
+                }
+
+                VisitType(property.PropertyType, metadata.Options, propertyPath);
+            }
+
+            if (GetCollectionElementType(metadata) is { } elementType)
+                VisitType(elementType, metadata.Options, path + "[]");
+            if (Nullable.GetUnderlyingType(metadata.Type) is { } underlyingType)
+                VisitType(underlyingType, metadata.Options, path);
+            if (metadata.PolymorphismOptions is { } polymorphism)
+                foreach (var derived in polymorphism.DerivedTypes)
+                    VisitType(derived.DerivedType, metadata.Options, path);
+        }
+
+        void VisitType(Type type, JsonSerializerOptions options, string path)
+        {
+            if (type == typeof(object) || type == typeof(JsonElement) || typeof(JsonNode).IsAssignableFrom(type) ||
+                type.IsInterface || type.IsAbstract || visited.Contains(type))
+                return;
+
+            if (options.TryGetTypeInfo(type, out var metadata))
+                Visit(metadata, path);
+            else if (type == typeof(VespaTensor))
+                RequireConverter(null, path);
+        }
+
+        void RequireConverter(JsonConverter? converter, string path)
+        {
+            if (converter is not VespaTensorConverter)
+                throw new InvalidOperationException(
+                    $"Tensor property '{path}' on model '{root.Type}' requires VespaTensorConverter. " +
+                    "Add [JsonConverter(typeof(VespaTensorConverter))] to the property or include " +
+                    "VespaTensorConverter in the JSON context's Converters.");
+        }
+    }
+
+#if NET8_0
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075",
+        Justification = "The registered JSON collection converter already uses the collection's enumerable or dictionary interface.")]
+    private static Type? GetCollectionElementType(JsonTypeInfo metadata)
+    {
+        if (metadata.Kind is not (JsonTypeInfoKind.Enumerable or JsonTypeInfoKind.Dictionary))
+            return null;
+
+        var type = metadata.Type;
+        if (type.IsArray)
+            return type.GetElementType();
+        if (type.IsGenericType)
+        {
+            var definition = type.GetGenericTypeDefinition();
+            if (definition == typeof(Memory<>) || definition == typeof(ReadOnlyMemory<>))
+                return type.GetGenericArguments()[0];
+        }
+
+        foreach (var contract in type.GetInterfaces())
+        {
+            if (!contract.IsGenericType)
+                continue;
+
+            var contractType = contract.GetGenericTypeDefinition();
+            if (metadata.Kind == JsonTypeInfoKind.Dictionary)
+            {
+                if (contractType == typeof(IDictionary<,>) || contractType == typeof(IReadOnlyDictionary<,>))
+                    return contract.GetGenericArguments()[1];
+            }
+            else if (contractType == typeof(IEnumerable<>))
+            {
+                return contract.GetGenericArguments()[0];
+            }
+        }
+
+        return null;
+    }
+#else
+    private static Type? GetCollectionElementType(JsonTypeInfo metadata) => metadata.ElementType;
+#endif
 
     internal static ModelJson<T>? Resolve<T>(VespaJsonModels? registrations, string operation) where T : class
     {
