@@ -10,6 +10,7 @@ namespace Vespa.Tests.Unit;
 
 public class VespaMetricsTests : IDisposable
 {
+    private readonly Uri _endpoint = new($"http://{Guid.NewGuid():N}.metrics.test:8080");
     private readonly MeterListener _listener;
     private readonly ConcurrentDictionary<string, long> _longCounters = new();
     private readonly ConcurrentBag<double> _durations = [];
@@ -26,15 +27,31 @@ public class VespaMetricsTests : IDisposable
         };
         _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
+            if (!BelongsToTest(tags))
+                return;
+
             _longCounters.AddOrUpdate(instrument.Name, measurement, (_, current) => current + measurement);
             _lastTags[instrument.Name] = ToDictionary(tags);
         });
         _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
         {
+            if (!BelongsToTest(tags))
+                return;
+
             _durations.Add(measurement);
             _lastTags[instrument.Name] = ToDictionary(tags);
         });
         _listener.Start();
+    }
+
+    // Parallel tests share the meter, so capture only measurements for this test's endpoint.
+    private bool BelongsToTest(ReadOnlySpan<KeyValuePair<string, object?>> tags)
+    {
+        foreach (var tag in tags)
+            if (tag.Key == "server.address" && tag.Value is string host && host == _endpoint.Host)
+                return true;
+
+        return false;
     }
 
     private static Dictionary<string, object?> ToDictionary(ReadOnlySpan<KeyValuePair<string, object?>> tags)
@@ -57,7 +74,7 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_RecordsRequestsTotal()
     {
         var handler = CreateHandler(HttpStatusCode.OK);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         var before = GetCounter("vespa.client.requests");
         await client.GetAsync("/state/v1/health");
@@ -69,7 +86,7 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_RecordsErrors()
     {
         var handler = CreateHandler(HttpStatusCode.InternalServerError);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         var before = GetCounter("vespa.client.request_errors");
         await client.GetAsync("/state/v1/health");
@@ -81,7 +98,7 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_RecordsDuration()
     {
         var handler = CreateHandler(HttpStatusCode.OK);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         var countBefore = _durations.Count;
         await client.GetAsync("/state/v1/health");
@@ -94,7 +111,7 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_RecordsSearchRequests()
     {
         var handler = CreateHandler(HttpStatusCode.OK);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         var before = GetCounter("vespa.client.search_requests");
         await client.GetAsync("/search/?yql=select...");
@@ -106,7 +123,7 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_RecordsDocumentsPut()
     {
         var handler = CreateHandler(HttpStatusCode.OK);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         var before = GetCounter("vespa.client.documents_written");
         await client.PostAsync("/document/v1/ns/type/docid/1", null);
@@ -118,7 +135,7 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_RecordsDocumentsDeleted()
     {
         var handler = CreateHandler(HttpStatusCode.OK);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         var before = GetCounter("vespa.client.documents_deleted");
         await client.DeleteAsync("/document/v1/ns/type/docid/1");
@@ -136,7 +153,7 @@ public class VespaMetricsTests : IDisposable
             .ThrowsAsync(new HttpRequestException("boom"));
 
         var handler = new VespaMetricsHandler { InnerHandler = inner.Object };
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         var before = GetCounter("vespa.client.request_errors");
         await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync("/test"));
@@ -171,13 +188,13 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_TagsMeasurements_WithMethodHostOperationAndStatus()
     {
         var handler = CreateHandler(HttpStatusCode.OK);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         await client.PostAsync("/search/", new StringContent("{}"));
 
         var tags = _lastTags["vespa.client.requests"];
         Assert.Equal("POST", tags["http.request.method"]);
-        Assert.Equal("localhost", tags["server.address"]);
+        Assert.Equal(_endpoint.Host, tags["server.address"]);
         Assert.Equal("search", tags["vespa.operation"]);
         Assert.Equal(200, tags["http.response.status_code"]);
     }
@@ -186,7 +203,7 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_TagsErrors_WithStatusCode()
     {
         var handler = CreateHandler(HttpStatusCode.ServiceUnavailable);
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         await client.DeleteAsync("/document/v1/ns/type/docid/1");
 
@@ -205,7 +222,7 @@ public class VespaMetricsTests : IDisposable
             .ThrowsAsync(new HttpRequestException("boom"));
 
         var handler = new VespaMetricsHandler { InnerHandler = inner.Object };
-        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
+        using var client = new HttpClient(handler) { BaseAddress = _endpoint };
 
         await Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync("/test"));
 
@@ -217,12 +234,17 @@ public class VespaMetricsTests : IDisposable
     public async Task MetricsHandler_CallerCancellation_IsNotCountedAsRequestError()
     {
         using var cts = new CancellationTokenSource();
+        using var unrelatedClient = new HttpClient(CreateHandler(HttpStatusCode.ServiceUnavailable))
+        {
+            BaseAddress = new Uri("http://unrelated-metrics.test:8080")
+        };
         var inner = new Mock<HttpMessageHandler>();
         inner.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
             .Returns(async (HttpRequestMessage _, CancellationToken ct) =>
             {
+                using var unrelatedResponse = await unrelatedClient.GetAsync("/search/", ct);
                 cts.Cancel();
                 await Task.Delay(Timeout.Infinite, ct);
                 return new HttpResponseMessage(HttpStatusCode.OK);
@@ -230,7 +252,7 @@ public class VespaMetricsTests : IDisposable
 
         var handler = new VespaMetricsHandler { InnerHandler = inner.Object };
         using var invoker = new HttpMessageInvoker(handler);
-        using var request = new HttpRequestMessage(HttpMethod.Get, "http://localhost:8080/search/");
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_endpoint, "/search/"));
 
         var errorsBefore = GetCounter("vespa.client.request_errors");
         var totalBefore = GetCounter("vespa.client.requests");
@@ -240,7 +262,7 @@ public class VespaMetricsTests : IDisposable
 
         // Counted as a request (tagged error.type=cancelled) but never as a request error
         Assert.Equal(errorsBefore, GetCounter("vespa.client.request_errors"));
-        Assert.True(GetCounter("vespa.client.requests") > totalBefore);
+        Assert.Equal(totalBefore + 1, GetCounter("vespa.client.requests"));
         Assert.Equal("cancelled", _lastTags["vespa.client.requests"]["error.type"]);
     }
 
