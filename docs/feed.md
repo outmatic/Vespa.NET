@@ -72,7 +72,7 @@ Typed predicates use the actual resolved document type. For example, `FeedOperat
 
 Captured values are read when the factory is called, before the update callback. The resulting `FeedOperation.Condition` is a native string that stays fixed while the operation waits in the queue and across retries. A lazy source may call the factory during enumeration; constructing that source does not construct its operations.
 
-When every operation uses the same condition and schema, render it once before the feed loop and reuse it through `rawCondition:`.
+The factory renders a typed condition on every call, even when you reuse the expression. When every operation uses the same condition and schema, render it once before the feed loop and reuse it through `rawCondition:`. In a client-only .NET 10 benchmark, rendering a fixed predicate took roughly two orders of magnitude longer than passing the rendered string.
 
 ```csharp
 var condition = DocumentCondition.For<Product>(p => p.Price > 0);
@@ -92,7 +92,7 @@ var operations = updates.Select(update =>
 });
 ```
 
-In a hot loop, keep the field and operator fixed and format only the value with `DocumentCondition.FormatLiteral`. This uses the same number formatting and string escaping as typed write conditions. Ordinary interpolation under `it-IT` would put `100,5` in the selector. Vespa rejects that syntax, and the feed records the parser error in `FeedResult.Errors`.
+In a hot loop, keep the field and operator fixed and pass a `rawCondition:` that formats just the value with `DocumentCondition.FormatLiteral`. In the same benchmark, rendering a predicate with a different threshold on every call took about 20 times as long as formatting just the threshold. The helper uses the same number formatting and string escaping as typed write conditions. Ordinary interpolation under `it-IT` would put `100,5` in the selector. Vespa rejects that syntax, and the feed records the parser error in `FeedResult.Errors`.
 
 ```csharp
 var operations = updates.Select(update =>

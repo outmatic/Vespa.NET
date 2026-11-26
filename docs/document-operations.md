@@ -135,7 +135,9 @@ Set either `condition` or `rawCondition`. Supplying both with non-null values th
 
 Vespa stores decimal model properties as doubles. Comparisons on those fields follow that stored precision. Comparisons that promote an integer document field to decimal, such as `p.Quantity > 0m`, are rejected because native evaluation could round a decimal threshold and change the result; use an integer threshold instead. Evaluate decimal comparisons between captured values in C# and capture the resulting boolean.
 
-Feed operation factories accept typed predicates directly. To reuse a rendered native condition in a feed operation, pass it through `rawCondition:`:
+The SDK renders a typed condition on every call. In a client-only .NET 10 benchmark, rendering a fixed predicate took roughly two orders of magnitude longer than reusing its string. In a per-document loop, render a shared condition once and pass it through `rawCondition:`. If only the value varies, build the native string with `DocumentCondition.FormatLiteral(value)` and pass that to `rawCondition:`. Formatting only the threshold took about one twentieth as long as rendering the full predicate in the same benchmark. [Feed conditions](feed.md#conditions)
+
+Feed operation factories accept the rendered condition through `rawCondition:`:
 
 ```csharp
 using Vespa.Feed;
