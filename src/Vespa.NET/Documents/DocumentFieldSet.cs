@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using Vespa.Models;
 using Vespa.Models.Attributes;
 
 namespace Vespa.Documents;
@@ -30,7 +31,7 @@ public static class DocumentFieldSet
     private static string Render<
         [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, object?>>[] fields)
     {
-        if (!IsIdentifier(documentType))
+        if (!IdentifierSyntax.IsSimple(documentType))
             throw new ArgumentException($"'{documentType}' is not a valid document type name for a field set.", nameof(documentType));
 
         List<string> names = [];
@@ -41,7 +42,7 @@ public static class DocumentFieldSet
             if (field is null)
                 throw new ArgumentNullException(nameof(fields), $"Field selector at index {index} must not be null.");
             var name = DocumentFieldSelector.FieldName(field);
-            if (!IsIdentifier(name))
+            if (!IdentifierSyntax.IsSimple(name))
                 throw new ArgumentException($"'{name}' is not a valid top-level document field name for a field set.", nameof(fields));
             if (seen.Add(name))
                 names.Add(name);
@@ -55,8 +56,4 @@ public static class DocumentFieldSet
         if (fields.Length == 0)
             throw new ArgumentException("Specify at least one document field.", nameof(fields));
     }
-
-    private static bool IsIdentifier(string name) =>
-        name.Length > 0 && (char.IsAsciiLetter(name[0]) || name[0] == '_') &&
-        name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.VectorData;
+using Vespa.Models;
 
 namespace Vespa.VectorData;
 
@@ -220,8 +221,7 @@ internal static class VespaVectorValidation
     internal static void Identifier(string value, string parameterName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
-        if (!(char.IsAsciiLetter(value[0]) || value[0] == '_') ||
-            value.Any(c => !(char.IsAsciiLetterOrDigit(c) || c == '_')))
+        if (!IdentifierSyntax.IsSimple(value))
             throw new ArgumentException("Expected a simple Vespa identifier containing letters, digits or underscores.", parameterName);
     }
 

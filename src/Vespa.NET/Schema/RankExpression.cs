@@ -79,19 +79,15 @@ public sealed class RankExpression
 
     internal static string ValidateIdentifier(string name, string paramName)
     {
-        if (!IsIdentifier(name))
+        if (!IdentifierSyntax.IsSimple(name))
             throw new ArgumentException($"'{name}' is not a valid ranking identifier.", paramName);
         return name;
     }
 
     private static string ValidatePath(string name, string paramName)
     {
-        if (name is null || !name.Split('.').All(IsIdentifier))
+        if (name is null || !name.Split('.').All(segment => IdentifierSyntax.IsSimple(segment)))
             throw new ArgumentException($"'{name}' is not a valid ranking field or input name.", paramName);
         return name;
     }
-
-    private static bool IsIdentifier(string? name) =>
-        !string.IsNullOrEmpty(name) && (char.IsAsciiLetter(name[0]) || name[0] == '_') &&
-        name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
 }

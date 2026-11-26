@@ -18,15 +18,15 @@ internal abstract class YqlPredicate
             if (annotations is not null && BuildTermAnnotations(annotations) is { Count: > 0 } termAnnotations)
             {
                 var prefix = $"{{{string.Join(", ", termAnnotations)}}}";
-                return $"{field} contains ({prefix}\"{EscapeYqlStringContent(value)}\")";
+                return $"{field} contains ({prefix}\"{QuotedQueryString.EscapeContent(value)}\")";
             }
-            return $"""{field} contains "{EscapeYqlStringContent(value)}" """.TrimEnd();
+            return $"""{field} contains "{QuotedQueryString.EscapeContent(value)}" """.TrimEnd();
         }
     }
 
     internal sealed class Matches(string field, string regex) : YqlPredicate
     {
-        public override string Build() => $"""{field} matches "{EscapeYqlStringContent(regex)}" """.TrimEnd();
+        public override string Build() => $"""{field} matches "{QuotedQueryString.EscapeContent(regex)}" """.TrimEnd();
     }
 
     internal sealed class Comparison(string field, string op, object value) : YqlPredicate
@@ -40,7 +40,7 @@ internal abstract class YqlPredicate
         {
             var annotations = new List<string>();
             if (hitLimit.HasValue) annotations.Add($"hitLimit:{hitLimit.Value}");
-            if (bounds is not null) annotations.Add($"bounds:\"{EscapeYqlStringContent(bounds)}\"");
+            if (bounds is not null) annotations.Add($"bounds:\"{QuotedQueryString.EscapeContent(bounds)}\"");
             var prefix = annotations.Count > 0 ? $"{{{string.Join(", ", annotations)}}}" : "";
             return $"{prefix}range({field}, {FormatValue(from)}, {FormatValue(to)})";
         }
@@ -61,7 +61,7 @@ internal abstract class YqlPredicate
                 totalTargetHits.HasValue ? $"totalTargetHits:{totalTargetHits.Value}" : $"targetHits:{targetHits}"
             };
             if (minTargetHits.HasValue) annotations.Add($"minTargetHits:{minTargetHits.Value}");
-            if (label is not null) annotations.Add($"label:\"{EscapeYqlStringContent(label)}\"");
+            if (label is not null) annotations.Add($"label:\"{QuotedQueryString.EscapeContent(label)}\"");
             if (approximate.HasValue) annotations.Add($"approximate:{(approximate.Value ? "true" : "false")}");
             if (distanceThreshold.HasValue) annotations.Add($"distanceThreshold:{distanceThreshold.Value.ToString(CultureInfo.InvariantCulture)}");
             if (hnswExploreAdditionalHits.HasValue) annotations.Add($"hnsw.exploreAdditionalHits:{hnswExploreAdditionalHits.Value}");
@@ -97,7 +97,7 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            var quoted = string.Join(", ", terms.Select(t => $"\"{EscapeYqlStringContent(t)}\""));
+            var quoted = string.Join(", ", terms.Select(t => $"\"{QuotedQueryString.EscapeContent(t)}\""));
             return $"""{field} contains phrase({quoted})""";
         }
     }
@@ -116,7 +116,7 @@ internal abstract class YqlPredicate
                 if (opts.Length > 0) opts.Append(',');
                 opts.Append(System.Globalization.CultureInfo.InvariantCulture, $"prefixLength:{prefixLength}");
             }
-            var annotation = opts.Length > 0 ? $"({{{opts}}}fuzzy(\"{EscapeYqlStringContent(term)}\"))" : $"fuzzy(\"{EscapeYqlStringContent(term)}\")";
+            var annotation = opts.Length > 0 ? $"({{{opts}}}fuzzy(\"{QuotedQueryString.EscapeContent(term)}\"))" : $"fuzzy(\"{QuotedQueryString.EscapeContent(term)}\")";
             return $"""{field} contains {annotation}""";
         }
     }
@@ -147,9 +147,9 @@ internal abstract class YqlPredicate
         public override string Build()
         {
             var annotations = new List<string>();
-            if (grammar is not null) annotations.Add($"grammar: \"{EscapeYqlStringContent(grammar)}\"");
-            if (defaultIndex is not null) annotations.Add($"defaultIndex: \"{EscapeYqlStringContent(defaultIndex)}\"");
-            if (language is not null) annotations.Add($"language: \"{EscapeYqlStringContent(language)}\"");
+            if (grammar is not null) annotations.Add($"grammar: \"{QuotedQueryString.EscapeContent(grammar)}\"");
+            if (defaultIndex is not null) annotations.Add($"defaultIndex: \"{QuotedQueryString.EscapeContent(defaultIndex)}\"");
+            if (language is not null) annotations.Add($"language: \"{QuotedQueryString.EscapeContent(language)}\"");
             if (allowEmpty.HasValue) annotations.Add($"allowEmpty: {(allowEmpty.Value ? "true" : "false")}");
             var prefix = annotations.Count > 0 ? $"{{{string.Join(", ", annotations)}}}" : "";
             return $"{prefix}userInput(@{paramName})";
@@ -191,8 +191,8 @@ internal abstract class YqlPredicate
         public override string Build()
         {
             // Negative terms (!"term") must come after all positive terms
-            var args = terms.Select(t => $"\"{EscapeYqlStringContent(t)}\"")
-                .Concat((excludedTerms ?? []).Select(t => $"!\"{EscapeYqlStringContent(t)}\""));
+            var args = terms.Select(t => $"\"{QuotedQueryString.EscapeContent(t)}\"")
+                .Concat((excludedTerms ?? []).Select(t => $"!\"{QuotedQueryString.EscapeContent(t)}\""));
             var name = ordered ? "onear" : "near";
             var call = $"{name}({string.Join(", ", args)})";
 
@@ -208,7 +208,7 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            var quoted = string.Join(", ", terms.Select(t => $"\"{EscapeYqlStringContent(t)}\""));
+            var quoted = string.Join(", ", terms.Select(t => $"\"{QuotedQueryString.EscapeContent(t)}\""));
             return $"{field} contains equiv({quoted})";
         }
     }
@@ -219,7 +219,7 @@ internal abstract class YqlPredicate
     /// </summary>
     internal sealed class BareTerm(string value, bool negated = false) : YqlPredicate
     {
-        public override string Build() => $"{(negated ? "!" : "")}\"{EscapeYqlStringContent(value)}\"";
+        public override string Build() => $"{(negated ? "!" : "")}\"{QuotedQueryString.EscapeContent(value)}\"";
     }
 
     internal sealed class SameElement(string field, IReadOnlyList<YqlPredicate> conditions, IReadOnlyList<int>? elementFilter = null) : YqlPredicate
@@ -241,7 +241,7 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            var entries = string.Join(", ", tokens.Select(kv => $"\"{EscapeYqlStringContent(kv.Key)}\": {kv.Value}"));
+            var entries = string.Join(", ", tokens.Select(kv => $"\"{QuotedQueryString.EscapeContent(kv.Key)}\": {kv.Value}"));
             return $"weightedSet({field}, {{{entries}}})";
         }
     }
@@ -290,7 +290,7 @@ internal abstract class YqlPredicate
             if (startAnchor.HasValue) annotations.Add($"startAnchor: {(startAnchor.Value ? "true" : "false")}");
             if (endAnchor.HasValue) annotations.Add($"endAnchor: {(endAnchor.Value ? "true" : "false")}");
             var prefix = annotations.Count > 0 ? $"({{{string.Join(", ", annotations)}}}" : "(";
-            return $"{field} contains {prefix}uri(\"{EscapeYqlStringContent(value)}\"))";
+            return $"{field} contains {prefix}uri(\"{QuotedQueryString.EscapeContent(value)}\"))";
         }
     }
 
@@ -300,10 +300,10 @@ internal abstract class YqlPredicate
         {
             // YQL cannot parse an empty map — the documented placeholder is the number 0
             var attrMap = attributes.Count > 0
-                ? $"{{{string.Join(", ", attributes.Select(kv => $"\"{EscapeYqlStringContent(kv.Key)}\": \"{EscapeYqlStringContent(kv.Value)}\""))}}}"
+                ? $"{{{string.Join(", ", attributes.Select(kv => $"\"{QuotedQueryString.EscapeContent(kv.Key)}\": \"{QuotedQueryString.EscapeContent(kv.Value)}\""))}}}"
                 : "0";
             var rangeMap = rangeAttributes is { Count: > 0 }
-                ? $"{{{string.Join(", ", rangeAttributes.Select(kv => $"\"{EscapeYqlStringContent(kv.Key)}\": {kv.Value}L"))}}}"
+                ? $"{{{string.Join(", ", rangeAttributes.Select(kv => $"\"{QuotedQueryString.EscapeContent(kv.Key)}\": {kv.Value}L"))}}}"
                 : "0";
             return $"predicate({field}, {attrMap}, {rangeMap})";
         }
@@ -337,7 +337,7 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            var entries = string.Join(", ", terms.Select(kv => $"\"{EscapeYqlStringContent(kv.Key)}\": {kv.Value}"));
+            var entries = string.Join(", ", terms.Select(kv => $"\"{QuotedQueryString.EscapeContent(kv.Key)}\": {kv.Value}"));
             var annotations = new List<string>
             {
                 totalTargetHits.HasValue ? $"totalTargetHits:{totalTargetHits.Value}" : $"targetHits:{targetHits}"
@@ -356,7 +356,7 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            var entries = string.Join(", ", terms.Select(kv => $"\"{EscapeYqlStringContent(kv.Key)}\": {kv.Value}"));
+            var entries = string.Join(", ", terms.Select(kv => $"\"{QuotedQueryString.EscapeContent(kv.Key)}\": {kv.Value}"));
             return $"dotProduct({field}, {{{entries}}})";
         }
     }
@@ -390,22 +390,20 @@ internal abstract class YqlPredicate
     {
         public override string Build()
         {
-            var call = $"text(\"{EscapeYqlStringContent(value)}\")";
+            var call = $"text(\"{QuotedQueryString.EscapeContent(value)}\")";
             return language is not null
-                ? $"{field} contains ({{language: \"{EscapeYqlStringContent(language)}\"}}{call})"
+                ? $"{field} contains ({{language: \"{QuotedQueryString.EscapeContent(language)}\"}}{call})"
                 : $"{field} contains {call}";
         }
     }
 
     // --- Helpers ---
 
-    private static string EscapeYqlStringContent(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
-
     private static string FormatValue(object value) => value switch
     {
-        string s => $"\"{EscapeYqlStringContent(s)}\"",
+        string s => $"\"{QuotedQueryString.EscapeContent(s)}\"",
         bool b => b ? "true" : "false",
-        char c => $"\"{EscapeYqlStringContent(c.ToString())}\"",
+        char c => $"\"{QuotedQueryString.EscapeContent(c.ToString())}\"",
         float f => f.ToString(CultureInfo.InvariantCulture),
         double d => d.ToString(CultureInfo.InvariantCulture),
         decimal m => m.ToString(CultureInfo.InvariantCulture),
@@ -442,7 +440,7 @@ internal abstract class YqlPredicate
         if (a.Substring.HasValue) annotations.Add($"substring: {Bool(a.Substring.Value)}");
         if (a.Significance.HasValue) annotations.Add($"significance: {a.Significance.Value.ToString(CultureInfo.InvariantCulture)}");
         if (a.Ranked.HasValue) annotations.Add($"ranked: {Bool(a.Ranked.Value)}");
-        if (a.Language is not null) annotations.Add($"language: \"{EscapeYqlStringContent(a.Language)}\"");
+        if (a.Language is not null) annotations.Add($"language: \"{QuotedQueryString.EscapeContent(a.Language)}\"");
         if (a.Nfkc.HasValue) annotations.Add($"nfkc: {Bool(a.Nfkc.Value)}");
         if (a.ImplicitTransforms.HasValue) annotations.Add($"implicitTransforms: {Bool(a.ImplicitTransforms.Value)}");
         return annotations;

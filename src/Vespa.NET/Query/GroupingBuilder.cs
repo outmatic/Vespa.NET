@@ -370,12 +370,11 @@ public sealed class GroupingBucket
     /// </summary>
     public static GroupingBucket Text(string? from, string? to, bool fromInclusive = true, bool toInclusive = false)
         => new(
-            from is null ? "-inf" : $"\"{EscapeGroupingStringContent(from)}\"",
-            to is null ? "inf" : $"\"{EscapeGroupingStringContent(to)}\"",
+            from is null ? "-inf" : $"\"{QuotedQueryString.EscapeContent(from)}\"",
+            to is null ? "inf" : $"\"{QuotedQueryString.EscapeContent(to)}\"",
             fromInclusive, toInclusive);
 
     internal string Build() =>
         $"bucket{(_fromInclusive ? '[' : '<')}{_from},{_to}{(_toInclusive ? ']' : ')')}";
 
-    private static string EscapeGroupingStringContent(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 }

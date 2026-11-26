@@ -18,6 +18,7 @@
     <!-- The schema builder shares runtime rank profile definitions with package options. -->
     <InternalsVisibleTo Include="Vespa.NET" />
     <InternalsVisibleTo Include="Vespa.NET.AgentFramework" />
+    <InternalsVisibleTo Include="Vespa.NET.VectorData" />
     <InternalsVisibleTo Include="Vespa.NET.Tests" />
   </ItemGroup>
 

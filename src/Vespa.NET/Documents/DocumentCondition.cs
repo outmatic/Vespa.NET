@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Xml;
+using Vespa.Models;
 using Vespa.Models.Attributes;
 using Vespa.Models.Schema;
 
@@ -394,11 +395,7 @@ public static class DocumentCondition
             VespaIdentifier.ValidateDocumentType(name);
             return;
         }
-        var valid = name.Length > 0 && (char.IsAsciiLetter(name[0]) || name[0] == '_') &&
-            name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
-        if (name.ToLowerInvariant() is "true" or "false" or "and" or "or" or "not" or "null")
-            valid = false;
-        if (!valid)
+        if (!IdentifierSyntax.IsSimple(name) || name.ToLowerInvariant() is "true" or "false" or "and" or "or" or "not" or "null")
             throw new ArgumentException($"'{name}' is not a valid document condition field name.");
     }
 
