@@ -210,22 +210,11 @@ public sealed partial class FeedOperations(
             {
                 await foreach (var doc in channel.Reader.ReadAllAsync(pipelineToken))
                 {
-                    try
+                    if (await ExecuteFeedItemAsync(doc, doc.Id, operation, accumulator, pipelineToken,
+                        (doc.ExpectedDocumentType, documentType)) is { } error)
                     {
-                        FeedEntryCondition.ValidateTarget(doc.Id, doc.ExpectedDocumentType, documentType);
-                        var response = await ExecuteWithRetryAsync(doc, doc.Id, operation, pipelineToken);
-                        if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger != null)
-                            LogIgnoredFields(_logger, doc.Id);
-                        accumulator.IncrementSuccess();
-                    }
-                    catch (OperationCanceledException) when (pipelineToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
-                    {
-                        accumulator.RecordFailure(doc.Id, ex);
-                        onError(doc.Id, ex);
+                        accumulator.RecordFailure(doc.Id, error);
+                        onError(doc.Id, error);
                     }
 
                     // Single shared counter incremented once per outcome; success/failure are

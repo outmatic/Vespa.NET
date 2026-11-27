@@ -103,22 +103,11 @@ public sealed partial class FeedOperations
                     slots.Release();
                     var operation = item.Operation;
                     var ns = operation.Namespace ?? _options.DefaultNamespace;
-                    try
+                    if (await ExecuteFeedItemAsync(operation, operation.Id, executeOperation, accumulator, pipelineToken) is { } error)
                     {
-                        var response = await ExecuteWithRetryAsync(operation, operation.Id, executeOperation, pipelineToken);
-                        if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger is not null)
-                            LogIgnoredFields(_logger, operation.Id);
-                        accumulator.IncrementSuccess();
-                    }
-                    catch (OperationCanceledException) when (pipelineToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
-                    {
-                        accumulator.RecordFailure(operation.Id, ex, operation.Kind, operation.DocumentType, ns, item.Index);
+                        accumulator.RecordFailure(operation.Id, error, operation.Kind, operation.DocumentType, ns, item.Index);
                         if (_logger is not null)
-                            LogMixedOperationFailed(_logger, operation.Kind, operation.Id, operation.DocumentType, ns, ex);
+                            LogMixedOperationFailed(_logger, operation.Kind, operation.Id, operation.DocumentType, ns, error);
                     }
 
                     var processed = Interlocked.Increment(ref processedCount);

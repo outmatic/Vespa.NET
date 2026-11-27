@@ -7,29 +7,52 @@ public sealed partial class FeedOperations
 {
     private static readonly TimeSpan MaxRetryBackoff = TimeSpan.FromSeconds(30);
 
-    // The DI HTTP handler retries first; this loop resends an operation only after
-    // that handler has given up on Vespa's transient backpressure signals.
-    private async Task<VespaResponse> ExecuteWithRetryAsync<TItem>(
+    // Returns a per-item failure for the caller to record with its own feed metadata.
+    private async Task<Exception?> ExecuteFeedItemAsync<TItem>(
         TItem item,
         string documentId,
         Func<TItem, CancellationToken, Task<VespaResponse>> operation,
-        CancellationToken cancellationToken)
+        FeedResultAccumulator accumulator,
+        CancellationToken cancellationToken,
+        (string? ExpectedType, string DocumentType)? batchTarget = null)
     {
-        for (var attempt = 0; ; attempt++)
+        try
         {
-            try
+            if (batchTarget is { } target)
+                FeedEntryCondition.ValidateTarget(documentId, target.ExpectedType, target.DocumentType);
+
+            // The DI HTTP handler retries first. Resend only after it has given up on backpressure.
+            VespaResponse response;
+            for (var attempt = 0; ; attempt++)
             {
-                return await operation(item, cancellationToken);
+                try
+                {
+                    response = await operation(item, cancellationToken);
+                    break;
+                }
+                catch (VespaException ex) when (
+                    _options.EnableRetry && attempt < _options.MaxRetryAttempts && IsRetryableFeedError(ex))
+                {
+                    var delay = ComputeRetryDelay(_options.FeedRetryBaseDelay, attempt,
+                        (ex as VespaTooManyRequestsException)?.RetryAfter);
+                    if (_logger is not null)
+                        LogDocumentFeedRetry(_logger, documentId, attempt + 1, delay.TotalMilliseconds, ex);
+                    await Task.Delay(delay, cancellationToken);
+                }
             }
-            catch (VespaException ex) when (
-                _options.EnableRetry && attempt < _options.MaxRetryAttempts && IsRetryableFeedError(ex))
-            {
-                var delay = ComputeRetryDelay(_options.FeedRetryBaseDelay, attempt,
-                    (ex as VespaTooManyRequestsException)?.RetryAfter);
-                if (_logger is not null)
-                    LogDocumentFeedRetry(_logger, documentId, attempt + 1, delay.TotalMilliseconds, ex);
-                await Task.Delay(delay, cancellationToken);
-            }
+
+            if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger is not null)
+                LogIgnoredFields(_logger, documentId);
+            accumulator.IncrementSuccess();
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+            return ex;
         }
     }
 
