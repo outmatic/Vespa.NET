@@ -22,6 +22,13 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
         string? MapValueType = null,
         Type? MapValueStructType = null);
 
+    private readonly record struct FieldIndexing(
+        string? Indexing,
+        IReadOnlyList<(string Path, string Indexing)>? StructFields = null,
+        int? PredicateArity = null,
+        long? PredicateLowerBound = null,
+        long? PredicateUpperBound = null);
+
     public static SchemaModel Build(
         Type type, Func<Type, PropertyInfo[]> getProperties, IReadOnlyList<RankProfileDefinition>? rankProfiles = null)
     {
@@ -94,67 +101,12 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
             resolved.VespaType is not ("string" or "array<string>" or "weightedset<string>")))
             throw new InvalidOperationException($"EnableBm25 requires an indexed string field ({context}).");
 
-        string? indexing = null;
-        IReadOnlyList<(string, string)> structFields = [];
-        int? predicateArity = null;
-        long? predicateLower = null;
-        long? predicateUpper = null;
-
-        if (resolved.Shape is not FieldShape.Simple)
+        var indexing = resolved.Shape switch
         {
-            // Struct, array-of-struct and map fields: attribute/index are invalid on the
-            // outer field; Summary maps to `indexing: summary`, Attribute to struct-field blocks.
-            var kind = resolved.Shape is FieldShape.Map ? "map" : "struct";
-            if ((mode & IndexingMode.Index) != 0)
-                throw new InvalidOperationException(
-                    $"IndexingMode.Index is not supported for {kind} fields in indexed search ({context}). " +
-                    "Use IndexingMode.Summary, optionally combined with IndexingMode.Attribute to generate " +
-                    "struct-field attribute blocks for primitive-typed struct members.");
-            if (fieldAttr.FastSearch)
-                throw new InvalidOperationException(
-                    $"FastSearch cannot be set on a {kind} field ({context}): fast-search applies to " +
-                    "attribute fields only, and the outer field of a struct/map cannot be an attribute.");
-
-            // Vespa's ComplexFieldsWithStructFieldAttributesValidator only accepts
-            // struct-field attributes on array-of-struct and map fields; a single
-            // struct field with attributed members fails deployment.
-            if ((mode & IndexingMode.Attribute) != 0 && resolved.Shape is FieldShape.Struct)
-                throw new InvalidOperationException(
-                    $"IndexingMode.Attribute is not supported for single struct fields in indexed search ({context}): " +
-                    "Vespa allows struct-field attributes only on array-of-struct and map fields. " +
-                    "Set IndexingMode = IndexingMode.Summary explicitly (the default AttributeSummary includes Attribute).");
-
-            if ((mode & IndexingMode.Summary) != 0)
-                indexing = "summary";
-            if ((mode & IndexingMode.Attribute) != 0)
-                structFields = BuildStructFieldEntries(resolved);
-        }
-        else if (resolved.VespaType == "predicate")
-        {
-            if (fieldAttr.PredicateArity < 1)
-                throw new InvalidOperationException(
-                    $"Predicate field '{name}' ({context}) requires PredicateArity >= 1 — " +
-                    "Vespa mandates `index { arity: N }` on predicate fields.");
-            if ((mode & IndexingMode.Index) != 0)
-                throw new InvalidOperationException(
-                    $"IndexingMode.Index is not supported for predicate fields ({context}); " +
-                    "predicates use an implicit attribute-backed index configured via PredicateArity.");
-            if ((mode & IndexingMode.Attribute) == 0)
-                throw new InvalidOperationException(
-                    $"Predicate field '{name}' ({context}) must include IndexingMode.Attribute — " +
-                    "predicate fields are stored as attributes.");
-
-            indexing = BuildIndexingString(mode);
-            predicateArity = fieldAttr.PredicateArity;
-            if (fieldAttr.PredicateLowerBound != long.MinValue)
-                predicateLower = fieldAttr.PredicateLowerBound;
-            if (fieldAttr.PredicateUpperBound != long.MaxValue)
-                predicateUpper = fieldAttr.PredicateUpperBound;
-        }
-        else if (mode != IndexingMode.None)
-        {
-            indexing = BuildIndexingString(mode);
-        }
+            not FieldShape.Simple => BuildComplexFieldIndexing(resolved, fieldAttr, context),
+            _ when resolved.VespaType == "predicate" => BuildPredicateFieldIndexing(fieldAttr, name, context),
+            _ => new FieldIndexing(mode == IndexingMode.None ? null : BuildIndexingString(mode))
+        };
 
         if (fieldAttr.PredicateArity != 0 && resolved.VespaType != "predicate")
             throw new InvalidOperationException(
@@ -176,7 +128,7 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
         {
             Name = name,
             VespaType = resolved.VespaType,
-            Indexing = indexing,
+            Indexing = indexing.Indexing,
             Match = ToVespaMatchName(fieldAttr.MatchMode),
             Stemming = ToVespaStemmingName(fieldAttr.Stemming),
             Bolding = fieldAttr.Bolding,
@@ -185,11 +137,65 @@ internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getPropertie
             Normalizing = fieldAttr.Normalizing,
             Rank = rank,
             RankTypeName = rankTypeName,
-            StructFields = structFields,
-            PredicateArity = predicateArity,
-            PredicateLowerBound = predicateLower,
-            PredicateUpperBound = predicateUpper
+            StructFields = indexing.StructFields ?? [],
+            PredicateArity = indexing.PredicateArity,
+            PredicateLowerBound = indexing.PredicateLowerBound,
+            PredicateUpperBound = indexing.PredicateUpperBound
         };
+    }
+
+    private FieldIndexing BuildComplexFieldIndexing(
+        ResolvedFieldType resolved, VespaFieldAttribute fieldAttr, string context)
+    {
+        // Struct, array-of-struct and map fields: attribute/index are invalid on the
+        // outer field; Summary maps to `indexing: summary`, Attribute to struct-field blocks.
+        var mode = fieldAttr.IndexingMode;
+        var kind = resolved.Shape is FieldShape.Map ? "map" : "struct";
+        if ((mode & IndexingMode.Index) != 0)
+            throw new InvalidOperationException(
+                $"IndexingMode.Index is not supported for {kind} fields in indexed search ({context}). " +
+                "Use IndexingMode.Summary, optionally combined with IndexingMode.Attribute to generate " +
+                "struct-field attribute blocks for primitive-typed struct members.");
+        if (fieldAttr.FastSearch)
+            throw new InvalidOperationException(
+                $"FastSearch cannot be set on a {kind} field ({context}): fast-search applies to " +
+                "attribute fields only, and the outer field of a struct/map cannot be an attribute.");
+
+        // Vespa's ComplexFieldsWithStructFieldAttributesValidator only accepts
+        // struct-field attributes on array-of-struct and map fields; a single
+        // struct field with attributed members fails deployment.
+        var hasAttributes = (mode & IndexingMode.Attribute) != 0;
+        if (hasAttributes && resolved.Shape is FieldShape.Struct)
+            throw new InvalidOperationException(
+                $"IndexingMode.Attribute is not supported for single struct fields in indexed search ({context}): " +
+                "Vespa allows struct-field attributes only on array-of-struct and map fields. " +
+                "Set IndexingMode = IndexingMode.Summary explicitly (the default AttributeSummary includes Attribute).");
+
+        return new FieldIndexing(
+            (mode & IndexingMode.Summary) != 0 ? "summary" : null,
+            hasAttributes ? BuildStructFieldEntries(resolved) : null);
+    }
+
+    private static FieldIndexing BuildPredicateFieldIndexing(VespaFieldAttribute fieldAttr, string name, string context)
+    {
+        var mode = fieldAttr.IndexingMode;
+        if (fieldAttr.PredicateArity < 1)
+            throw new InvalidOperationException(
+                $"Predicate field '{name}' ({context}) requires PredicateArity >= 1 — " +
+                "Vespa mandates `index { arity: N }` on predicate fields.");
+        if ((mode & IndexingMode.Index) != 0)
+            throw new InvalidOperationException(
+                $"IndexingMode.Index is not supported for predicate fields ({context}); " +
+                "predicates use an implicit attribute-backed index configured via PredicateArity.");
+        if ((mode & IndexingMode.Attribute) == 0)
+            throw new InvalidOperationException(
+                $"Predicate field '{name}' ({context}) must include IndexingMode.Attribute — " +
+                "predicate fields are stored as attributes.");
+
+        return new FieldIndexing(BuildIndexingString(mode),
+            PredicateArity: fieldAttr.PredicateArity,
+            PredicateLowerBound: fieldAttr.PredicateLowerBound != long.MinValue ? fieldAttr.PredicateLowerBound : null,
+            PredicateUpperBound: fieldAttr.PredicateUpperBound != long.MaxValue ? fieldAttr.PredicateUpperBound : null);
     }
 
     private static SchemaFieldModel BuildTensorField(
