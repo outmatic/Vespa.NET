@@ -56,6 +56,18 @@ public static class DocumentCondition
         }
     }
 
+    // Write conditions use the native selector. Visitor selections also pass
+    // through a Java lexer. Package selections are used by Java routing and C++ GC.
+    //
+    // Rule                 Write         Visitor       Package
+    // String encoding      UTF-8 bytes   UTF-8 bytes   Printable ASCII and escaped whitespace
+    // Backslash escape     \\            \x5C          \\ except at the end of a string
+    // Field null checks    Direct        Direct        Preserve INVALID for ID-only routing
+    // Field checks         Shared        Shared        Matching native scalar types
+    // Ordering             Shared        Shared        Forbid ordering two fields
+    // Integer comparisons  Shared        Shared        Require one bounded operand
+    // Minimum Int64 hex    Allowed       Allowed       Rejected
+    // Output validation    —             —             Verify XML characters
     private enum RenderContext { Write, Visitor, Package }
 
     private static string Render<

@@ -117,6 +117,8 @@ Use `VespaSchemaMetadata` for code-first packages and `WithFieldMaps()` when the
 
 With JSON reflection disabled, chat-history snapshots can serialize `bool`, `int`, `long`, `float`, `double`, `decimal`, `string`, `Guid`, `DateTime`, and their one-dimensional arrays as tool results. For other result types, such as enums, dictionaries or custom objects, enable JSON reflection where supported or pass a `JsonElement` created with `JsonSerializer.SerializeToElement(value, typeInfo)`.
 
+The warning inventory lists the fallback paths, the guards they rely on, and the changes that would remove each suppression. [Trim and AOT warning inventory](trimming.md)
+
 ## DI Integration
 
 ```csharp
