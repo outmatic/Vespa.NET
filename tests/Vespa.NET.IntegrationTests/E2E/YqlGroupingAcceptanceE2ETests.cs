@@ -252,7 +252,8 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                 GroupingRequest(tag, GroupingBuilder.All()
                     .Group("category")
                     .Keep(GroupingFilter.Regex(".*-beta", "category"))
-                    .Each(e => e.Output(GroupingAgg.Count()))));
+                    .Each(e => e.Output(GroupingAgg.Count())))
+                    .WithTimeout(TimeSpan.FromSeconds(10)));
 
             Assert.Empty(result.Errors ?? []);
             Assert.True(result.Coverage is not { Full: false }, $"Grouping coverage: {result.Coverage}");
