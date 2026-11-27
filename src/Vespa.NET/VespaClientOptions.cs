@@ -95,17 +95,7 @@ public sealed class VespaClientOptions
         // PFX / P12 — bundle contains both cert and private key
         if (CertificatePath.EndsWith(".pfx", StringComparison.OrdinalIgnoreCase) ||
             CertificatePath.EndsWith(".p12", StringComparison.OrdinalIgnoreCase))
-#if NET9_0_OR_GREATER
-            return X509CertificateLoader.LoadPkcs12FromFile(
-                CertificatePath,
-                CertificatePassword);
-#else
-#pragma warning disable SYSLIB0057
-            return CertificatePassword is not null
-                ? new X509Certificate2(CertificatePath, CertificatePassword)
-                : new X509Certificate2(CertificatePath);
-#pragma warning restore SYSLIB0057
-#endif
+            return ClientCertificateLoader.LoadPkcs12FromFile(CertificatePath, CertificatePassword);
 
         // PEM cert + separate PEM key (Vespa Cloud style)
         if (ClientKeyPath is not null)
@@ -117,23 +107,11 @@ public sealed class VespaClientOptions
             // Windows SChannel cannot use the ephemeral private key produced by
             // CreateFromPemFile for TLS client authentication — round-trip through PKCS#12.
             using (pemCert)
-#if NET9_0_OR_GREATER
-                return X509CertificateLoader.LoadPkcs12(pemCert.Export(X509ContentType.Pkcs12), null);
-#else
-#pragma warning disable SYSLIB0057
-                return new X509Certificate2(pemCert.Export(X509ContentType.Pkcs12));
-#pragma warning restore SYSLIB0057
-#endif
+                return ClientCertificateLoader.LoadPkcs12(pemCert.Export(X509ContentType.Pkcs12));
         }
 
         // PEM cert only (public cert, no private key — unusual but allowed)
-#if NET9_0_OR_GREATER
-        return X509CertificateLoader.LoadCertificateFromFile(CertificatePath);
-#else
-#pragma warning disable SYSLIB0057
-        return new X509Certificate2(CertificatePath);
-#pragma warning restore SYSLIB0057
-#endif
+        return ClientCertificateLoader.LoadCertificateFromFile(CertificatePath);
     }
 
     /// <summary>
