@@ -124,6 +124,13 @@ internal static class NativeRetrieval
             "semantic" => nearest,
             _ => $"({nearest} or {lexical})"
         };
+        var input = new Dictionary<string, object?>
+        {
+            ["query(vector_weight)"] = settings.VectorWeight,
+            ["query(title_weight)"] = settings.TitleWeight
+        };
+        if (settings.Mode != "lexical")
+            input["query(query_embedding)"] = VespaTensor.FromDenseValues(vector!);
         var request = new VespaSearchRequest
         {
             Yql = $"select {string.Join(", ", new[] { "documentid" }.Concat(settings.ResultFields).Distinct(StringComparer.Ordinal))} from sources {schema} where ({filter}) and ({retrieval})",
@@ -136,21 +143,15 @@ internal static class NativeRetrieval
                 GlobalPhaseRerankCount = settings.Mode.StartsWith("hybrid_", StringComparison.Ordinal)
                     ? settings.GlobalPhaseRerankCount ?? settings.VectorCandidates + settings.KeywordCandidates : null
             },
-            Input = new()
-            {
-                ["query(vector_weight)"] = settings.VectorWeight,
-                ["query(title_weight)"] = settings.TitleWeight
-            }
+            Input = input
         }.WithTimeout(TimeSpan.FromSeconds(30));
-        if (settings.Mode != "lexical")
-            request.Input!["query(query_embedding)"] = VespaTensor.FromDenseValues(vector!);
         if (settings.Mode != "semantic")
         {
-            request.CustomParameters = new() { ["lexical_query"] = query };
+            request = request.WithParameter("lexical_query", query);
             if (settings.WeakAndStopwordLimit is { } stopwordLimit)
-                request.CustomParameters["ranking.matching.weakand.stopwordLimit"] = stopwordLimit;
+                request = request.WithParameter("ranking.matching.weakand.stopwordLimit", stopwordLimit);
             if (settings.WeakAndAdjustTarget is { } adjustTarget)
-                request.CustomParameters["ranking.matching.weakand.adjustTarget"] = adjustTarget;
+                request = request.WithParameter("ranking.matching.weakand.adjustTarget", adjustTarget);
         }
         return request;
     }

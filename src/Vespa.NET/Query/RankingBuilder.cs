@@ -197,12 +197,12 @@ public sealed class RankingBuilder
     public RankingConfig Build() => new()
     {
         Profile = _profile,
-        Features = _features.Count > 0 ? new Dictionary<string, object>(_features) : null,
+        Features = _features.Count > 0 ? _features : null,
         RerankCount = _rerankCount,
         TotalRerankCount = _totalRerankCount,
         SecondPhaseRankScoreDropLimit = _secondPhaseRankScoreDropLimit,
         ListFeatures = _listFeatures,
-        Properties = _properties.Count > 0 ? new Dictionary<string, object>(_properties) : null,
+        Properties = _properties.Count > 0 ? _properties : null,
         Sorting = _sorting,
         SoftTimeoutEnable = _softTimeoutEnable,
         SoftTimeoutFactor = _softTimeoutFactor,

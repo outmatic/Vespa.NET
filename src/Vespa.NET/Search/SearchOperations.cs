@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -117,7 +118,8 @@ public sealed partial class SearchOperations(
             Yql = yql,
             Hits = hits,
             Offset = offset,
-            CustomParameters = parameters
+            CustomParameters = parameters?.ToImmutableDictionary(
+                static pair => pair.Key, static pair => (object?)pair.Value, parameters.Comparer)
         };
 
         return await SearchAsync<T>(request, cancellationToken);
@@ -243,7 +245,7 @@ public sealed partial class SearchOperations(
             Ranking = !string.IsNullOrWhiteSpace(rankProfile)
                 ? new RankingConfig { Profile = rankProfile }
                 : null,
-            Input = new Dictionary<string, object>
+            Input = new Dictionary<string, object?>
             {
                 [$"query({queryTensorName})"] = new Dictionary<string, object>
                 {

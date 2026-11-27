@@ -35,10 +35,7 @@ public static class SearchOperationsExtensions
         IReadOnlyList<string>? tokens = null;
         while (true)
         {
-            // Attach each page's continuation to a fresh copy of the caller's request.
-            var pageRequest = request.ShallowClone();
-            if (tokens is not null)
-                GroupingContinuations.ApplyToRequest(pageRequest, tokens);
+            var pageRequest = tokens is null ? request : GroupingContinuations.ApplyToRequest(request, tokens);
 
             var page = await ops.GroupByAsync<T>(pageRequest, cancellationToken);
             yield return page;
@@ -76,11 +73,7 @@ public static class SearchOperationsExtensions
         int returned;
         do
         {
-            // Clone per page — mutating the caller's request would make a second
-            // enumeration silently start past the last page.
-            var pageRequest = request.ShallowClone();
-            pageRequest.Hits = pageSize;
-            pageRequest.Offset = offset;
+            var pageRequest = request with { Hits = pageSize, Offset = offset };
             var page = await ops.SearchAsync<T>(pageRequest, cancellationToken);
             yield return page;
             returned = page.Root.Children.Count;

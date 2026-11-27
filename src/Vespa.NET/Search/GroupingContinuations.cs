@@ -36,17 +36,16 @@ public static class GroupingContinuations
         return yql.Insert(insertAt, annotation);
     }
 
-    internal static void ApplyToRequest(VespaSearchRequest request, IReadOnlyList<string> tokens)
+    internal static VespaSearchRequest ApplyToRequest(VespaSearchRequest request, IReadOnlyList<string> tokens)
     {
         if (!string.IsNullOrWhiteSpace(request.Select) && !string.IsNullOrWhiteSpace(request.Yql)
             && FindPipeOutsideStringLiterals(request.Yql) < 0)
         {
             ArgumentOutOfRangeException.ThrowIfZero(tokens.Count, nameof(tokens));
             ValidateTokenValues(tokens);
-            request.WithParameter("continue", string.Join(' ', tokens));
+            return request.WithParameter("continue", string.Join(' ', tokens));
         }
-        else
-            request.Yql = Apply(request.Yql, tokens);
+        return request with { Yql = Apply(request.Yql, tokens) };
     }
 
     private static void ValidateTokenValues(IReadOnlyList<string> tokens)

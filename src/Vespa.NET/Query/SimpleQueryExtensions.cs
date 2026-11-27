@@ -10,8 +10,7 @@ public static class SimpleQueryExtensions
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(recall);
-        request.Recall = recall.BuildRecall();
-        return request;
+        return request with { Recall = recall.BuildRecall() };
     }
 
     /// <summary>Sets a model filter combining required, excluded, and ranking terms with the model query.</summary>
@@ -19,8 +18,7 @@ public static class SimpleQueryExtensions
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(filter);
-        request.ModelFilter = filter.Build();
-        return request;
+        return request with { ModelFilter = filter.Build() };
     }
 
     /// <summary>Sets a composed model query with Vespa's <c>any</c> parser type to support signed terms.</summary>
@@ -28,9 +26,7 @@ public static class SimpleQueryExtensions
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(query);
-        request.ModelQueryString = query.Build();
-        request.ModelType = "any";
-        return request;
+        return request with { ModelQueryString = query.Build(), ModelType = "any" };
     }
 
     /// <summary>Sets user text and selects Vespa's <c>tokenize</c> parser type to ignore simple-query syntax.</summary>
@@ -38,8 +34,6 @@ public static class SimpleQueryExtensions
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
-        request.ModelQueryString = text;
-        request.ModelType = "tokenize";
-        return request;
+        return request with { ModelQueryString = text, ModelType = "tokenize" };
     }
 }

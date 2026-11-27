@@ -98,12 +98,13 @@ internal static class AnnEvaluation
             var request = NativeRetrieval.CreateRequest(query.Text, query.Vector, "retrieval_evaluation",
                 EvaluationScope.Filter(corpusHash, scope, query), settings, k, approximate);
             if (trace)
-            {
-                request.TraceLevel = 3;
-                request.TraceExplainLevel = 2;
-                request.TraceProfileDepth = 4;
-                request.TraceQuery = false;
-            }
+                request = request with
+                {
+                    TraceLevel = 3,
+                    TraceExplainLevel = 2,
+                    TraceProfileDepth = 4,
+                    TraceQuery = false
+                };
             var start = Stopwatch.GetTimestamp();
             var response = await client.Search.SearchAsync<Dictionary<string, JsonElement>>(request, ct);
             if (response.Root.Errors is { Count: > 0 } errors)

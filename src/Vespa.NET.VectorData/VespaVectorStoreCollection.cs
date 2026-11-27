@@ -243,8 +243,10 @@ public sealed class VespaVectorStoreCollection<TKey, [DynamicallyAccessedMembers
         ArgumentNullException.ThrowIfNull(filter);
         ValidateWindow(top, options?.Skip ?? 0);
         var translator = new VespaVectorFilter<TRecord>(_mapper);
-        var request = Request(translator.Translate(filter), top, options?.Skip ?? 0, options?.IncludeVectors == true);
-        request.Ranking = new RankingConfig { Profile = "unranked" };
+        var request = Request(translator.Translate(filter), top, options?.Skip ?? 0, options?.IncludeVectors == true) with
+        {
+            Ranking = new RankingConfig { Profile = "unranked" }
+        };
         if (options?.OrderBy is { } orderBy)
         {
             var sort = orderBy(new()).Values.Select(item =>
@@ -256,7 +258,7 @@ public sealed class VespaVectorStoreCollection<TKey, [DynamicallyAccessedMembers
             }).ToArray();
             if (sort.Length > 0)
             {
-                request.Yql += " order by " + string.Join(", ", sort);
+                request = request with { Yql = request.Yql + " order by " + string.Join(", ", sort) };
             }
         }
         foreach (var hit in await QueryAsync(request, nameof(GetAsync), cancellationToken))
@@ -303,9 +305,14 @@ public sealed class VespaVectorStoreCollection<TKey, [DynamicallyAccessedMembers
         var predicate = hybridPredicate ?? ApplyFilter(filterPredicate,
             Nearest(property, binding.QueryTensorName!, top + skip,
                 VespaVectorMetric.DistanceThreshold(property.DistanceFunction, options?.ScoreThreshold)));
-        var request = Request(predicate, top, skip, (hybridOptions?.IncludeVectors ?? options?.IncludeVectors) == true);
-        request.Ranking = new RankingConfig { Profile = rankProfile };
-        request.Input = new() { [$"query({binding.QueryTensorName})"] = VespaVectorRecordMapper<TRecord>.Tensor(vector) };
+        var request = Request(predicate, top, skip, (hybridOptions?.IncludeVectors ?? options?.IncludeVectors) == true) with
+        {
+            Ranking = new RankingConfig { Profile = rankProfile },
+            Input = new Dictionary<string, object?>
+            {
+                [$"query({binding.QueryTensorName})"] = VespaVectorRecordMapper<TRecord>.Tensor(vector)
+            }
+        };
 
         var previousDistance = double.NegativeInfinity;
         foreach (var hit in await QueryAsync(request, operation, cancellationToken))

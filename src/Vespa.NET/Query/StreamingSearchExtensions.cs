@@ -19,9 +19,7 @@ public static class StreamingSearchExtensions
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(selection);
         ValidateStreamingLocation(request);
-        var selector = DocumentSelection.For(selection);
-        request.StreamingSelection = selector;
-        return request;
+        return request with { StreamingSelection = DocumentSelection.For(selection) };
     }
 
     /// <summary>Selects streaming groups using a native disjunction of exact id.group comparisons.</summary>
@@ -60,8 +58,7 @@ public static class StreamingSearchExtensions
         // terminal backslash. Keep that clause last without changing the group set.
         if (terminalBackslashClause is not null)
             clauses.Add(terminalBackslashClause);
-        request.StreamingSelection = string.Join(" or ", clauses);
-        return request;
+        return request with { StreamingSelection = string.Join(" or ", clauses) };
     }
 
     private static string QuoteStreamingGroupName(string groupName)
