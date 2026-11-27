@@ -9,6 +9,7 @@ namespace Vespa.Models;
 public sealed record VespaSearchRequest
 {
     private readonly ImmutableDictionary<string, object?>? _input;
+    private readonly ImmutableDictionary<string, object?>? _customParameters;
 
     /// <summary>
     /// YQL query string
@@ -292,12 +293,16 @@ public sealed record VespaSearchRequest
     /// or any other arbitrary Vespa request parameter.
     /// </summary>
     [JsonIgnore]
-    public ImmutableDictionary<string, object?>? CustomParameters { get; init; }
+    public IReadOnlyDictionary<string, object?>? CustomParameters
+    {
+        get => _customParameters;
+        init => _customParameters = SearchParameterMap.Freeze(value);
+    }
 
     // Source-generated metadata requires extension data outside the constructor contract.
     [JsonInclude]
     [JsonExtensionData]
-    internal ImmutableDictionary<string, object?>? ExtensionData => CustomParameters;
+    internal ImmutableDictionary<string, object?>? ExtensionData => _customParameters;
 
     // ── Fluent helpers ─────────────────────────────────────────────────────────
 
@@ -324,7 +329,7 @@ public sealed record VespaSearchRequest
     /// or any other Vespa parameter not covered by typed properties.
     /// </summary>
     public VespaSearchRequest WithParameter(string key, object value) =>
-        this with { CustomParameters = (CustomParameters ?? ImmutableDictionary<string, object?>.Empty).SetItem(key, value) };
+        this with { CustomParameters = (_customParameters ?? ImmutableDictionary<string, object?>.Empty).SetItem(key, value) };
 }
 
 /// <summary>

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text.Json;
 using Vespa.Models;
 using Vespa.Query;
@@ -487,18 +486,24 @@ public class SearchRequestSerializationTests
     {
         var rankingValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["weight"] = 2.0 };
         var input = new Dictionary<string, object?> { ["query(embedding)"] = 1.0 };
+        var parameters = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["term"] = "original" };
         var request = new VespaSearchRequest
         {
             Input = input,
+            CustomParameters = parameters,
             Ranking = new RankingConfig { Features = rankingValues, Properties = rankingValues }
         };
 
         input["query(embedding)"] = 4.0;
         rankingValues["weight"] = 5.0;
+        parameters["term"] = "changed";
+        var refined = request.WithParameter("TERM", "refined");
 
         Assert.Equal(1.0, request.Input!["query(embedding)"]);
         Assert.Equal(2.0, request.Ranking.Features!["WEIGHT"]);
         Assert.Equal(2.0, request.Ranking.Properties!["WEIGHT"]);
+        Assert.Equal("original", Assert.Single(request.CustomParameters!).Value);
+        Assert.Equal("refined", Assert.Single(refined.CustomParameters!).Value);
     }
 
     [Fact]
@@ -573,9 +578,9 @@ public class SearchRequestSerializationTests
     [Fact]
     public void GeneratedSearchRequestJson_MatchesReflectionAndFlattensCustomParameters()
     {
-        var (request, _) = EquivalentSearchRequests();
-        var json = JsonSerializer.SerializeToUtf8Bytes(request, VespaProtocolJsonContext.Default.VespaSearchRequest);
-        Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(request, VespaJsonOptions.Default), json);
+        var (fluent, initializer) = EquivalentSearchRequests();
+        var json = JsonSerializer.SerializeToUtf8Bytes(initializer, VespaProtocolJsonContext.Default.VespaSearchRequest);
+        Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(fluent, VespaJsonOptions.Default), json);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -605,9 +610,11 @@ public class SearchRequestSerializationTests
                 Profile = "default",
                 Features = new Dictionary<string, object> { ["query(weight)"] = 1 }
             },
-            CustomParameters = ImmutableDictionary<string, object?>.Empty
-                .Add("continue", "AAAA")
-                .Add("input.query(q)", 0.5)
+            CustomParameters = new Dictionary<string, object?>
+            {
+                ["continue"] = "AAAA",
+                ["input.query(q)"] = 0.5
+            }
         };
         return (fluent, initializer);
     }

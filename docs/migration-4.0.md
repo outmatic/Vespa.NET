@@ -201,7 +201,7 @@ var firstPage = new VespaSearchRequest { Yql = yql, Hits = 10 }
 var refinedPage = firstPage.WithRankProfile("refined") with { Offset = 10 };
 ```
 
-Set input and ranking dictionaries in an initializer or use `WithQueryTensor` and `WithRankFeature`. The request snapshots the dictionaries and shares their stored values. Use `WithParameter` for top-level parameters or initialize `CustomParameters` with an `ImmutableDictionary<string, object?>`.
+Set input, ranking and custom parameters in an initializer or use `WithQueryTensor`, `WithRankFeature` and `WithParameter`. All four dictionary properties accept read-only dictionaries, including ordinary `Dictionary` instances, and snapshot their entries. The stored values are shared.
 
 ## Streaming-search selections
 

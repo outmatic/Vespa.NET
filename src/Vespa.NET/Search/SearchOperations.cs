@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -118,8 +117,7 @@ public sealed partial class SearchOperations(
             Yql = yql,
             Hits = hits,
             Offset = offset,
-            CustomParameters = parameters?.ToImmutableDictionary(
-                static pair => pair.Key, static pair => (object?)pair.Value, parameters.Comparer)
+            CustomParameters = (IReadOnlyDictionary<string, object?>?)parameters
         };
 
         return await SearchAsync<T>(request, cancellationToken);
