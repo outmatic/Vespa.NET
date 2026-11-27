@@ -42,33 +42,31 @@ public sealed class TypedStreamingSelectionE2ETests(VespaFixture fixture)
                 .Where(w => w.Field("event_name").Contains(marker))
                 .ToSearchRequest()
                 .WithTimeout(TimeSpan.FromSeconds(10));
-            var baseline = query.ShallowClone();
-            baseline.StreamingSelection = "true";
+            var baseline = query with { StreamingSelection = "true" };
             await AssertHits(baseline, "a-keep", "a-drop", "b-keep", "c-keep");
 
             var left = "é";
             var right = "xC3xA9";
-            var byConstants = query.ShallowClone().WithStreamingSelection<TestEvent>(e => left != right);
+            var byConstants = query.WithStreamingSelection<TestEvent>(e => left != right);
             await AssertHits(byConstants, "a-keep", "a-drop", "b-keep", "c-keep");
 
             var wanted = "keep";
-            var byField = query.ShallowClone().WithStreamingSelection<TestEvent>(
+            var byField = query.WithStreamingSelection<TestEvent>(
                 e => e.Payload == wanted || e.Payload == trailingPayload);
             wanted = "drop";
             await AssertHits(byField, "a-keep", "b-keep", "c-keep");
 
-            var trailingFirst = query.ShallowClone().WithStreamingSelection<TestEvent>(
+            var trailingFirst = query.WithStreamingSelection<TestEvent>(
                 e => e.Payload == trailingPayload || e.Payload == "drop");
             await AssertHits(trailingFirst, "a-keep", "a-drop");
 
-            var byGroups = query.ShallowClone().WithStreamingGroups(groupA, groupB);
+            var byGroups = query.WithStreamingGroups(groupA, groupB);
             await AssertHits(byGroups, "a-keep", "a-drop", "b-keep");
 
-            await AssertHits(query.ShallowClone().WithStreamingGroups(groupB, groupC), "b-keep", "c-keep");
-            await AssertHits(query.ShallowClone().WithStreamingGroups(groupC, groupB), "b-keep", "c-keep");
+            await AssertHits(query.WithStreamingGroups(groupB, groupC), "b-keep", "c-keep");
+            await AssertHits(query.WithStreamingGroups(groupC, groupB), "b-keep", "c-keep");
 
-            var singleGroup = query.ShallowClone();
-            singleGroup.StreamingGroupName = groupA;
+            var singleGroup = query with { StreamingGroupName = groupA };
             await AssertHits(singleGroup, "a-keep", "a-drop");
         }
         finally

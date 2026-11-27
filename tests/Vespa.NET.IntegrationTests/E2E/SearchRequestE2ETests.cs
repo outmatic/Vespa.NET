@@ -326,18 +326,18 @@ public class SearchRequestE2ETests(VespaFixture fixture)
             var attributes = new SortingBuilder().OrderBy<TestProduct>(p => p.Price)
                 .OrderBy<TestProduct>(p => p.Quantity, SortDirection.Descending);
             var rank = RankingBuilder.WithProfile("unranked").Sorting(attributes.Build());
-            request.WithRanking(rank);
+            request = request.WithRanking(rank);
             var sorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
             Assert.Equal([3, 1, 0, 2], Quantities(sorted));
 
-            request.WithYql(query.OrderBy(p => p.Quantity));
+            request = request.WithYql(query.OrderBy(p => p.Quantity));
             var yqlSorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
             Assert.Equal([0, 1, 2, 3], Quantities(yqlSorted));
             Assert.Equal("+price -quantity", request.Ranking?.Sorting);
 
-            request.WithYql(YqlBuilder<TestProduct>.Select().Where(w => w.Field(p => p.Tag).Contains(tag)));
             var byRelevance = new SortingBuilder().OrderByRelevance().OrderBy<TestProduct>(p => p.Quantity);
-            request.WithRanking(RankingBuilder.WithProfile("features_profile").Sorting(byRelevance.Build()));
+            request = request.WithYql(YqlBuilder<TestProduct>.Select().Where(w => w.Field(p => p.Tag).Contains(tag)))
+                .WithRanking(RankingBuilder.WithProfile("features_profile").Sorting(byRelevance.Build()));
             var relevanceSorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
             Assert.Equal([2, 0, 1, 3], Quantities(relevanceSorted));
         }
@@ -394,12 +394,8 @@ public class SearchRequestE2ETests(VespaFixture fixture)
             var request = new VespaSearchRequest
             {
                 Yql = YqlBuilder<TestProduct>.Select().Where(w => w.True()).Build(),
-                Hits = 5,
-                CustomParameters = new Dictionary<string, object>
-                {
-                    ["ranking.softtimeout.enable"] = true
-                }
-            };
+                Hits = 5
+            }.WithParameter("ranking.softtimeout.enable", true);
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
             Assert.NotNull(result.Root);

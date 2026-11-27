@@ -191,11 +191,23 @@ Typed visit filters are rendered when the method is called and stay fixed during
 
 Root visits can filter one model and return another through `VisitAllAsync<Result, Product>(cluster, selection: p => p.Price > 100)` or `VisitAllPageAsync<Result, Product>`. The result type needs no document attribute. Typed selectors restrict the entire predicate to the exact document type across namespaces; this also applies to `true` and negations and excludes derived document types. Existing native root methods keep their string `selection` argument and can still visit all types. [Visit examples](document-operations.md#visit--iterate) cover saved selectors and explicit targets.
 
+## Search requests and ranking
+
+`VespaSearchRequest` and `RankingConfig` are records with init-only properties. Replace assignments after construction and calls to `ShallowClone()` with `with` expressions. Keep the request returned by every `With*` method.
+
+```csharp
+var firstPage = new VespaSearchRequest { Yql = yql, Hits = 10 }
+    .WithRankProfile("default");
+var refinedPage = firstPage.WithRankProfile("refined") with { Offset = 10 };
+```
+
+Set input and ranking dictionaries in an initializer or use `WithQueryTensor` and `WithRankFeature`. The request snapshots the dictionaries and shares their stored values. Use `WithParameter` for top-level parameters or initialize `CustomParameters` with an `ImmutableDictionary<string, object?>`.
+
 ## Streaming-search selections
 
 `WithStreamingGroups("tenant-a", "tenant-b")` sets a native disjunction of `id.group` equalities, allowing Vespa to restrict visiting to those groups. Keep content filters in YQL. `WithStreamingSelection<Product>(p => p.Price > 100)` builds a document selector scoped to the model's exact document type, but can scan all groups. It does not change the YQL source, namespace or result model.
 
-These helpers require `using Vespa.Query;`, return the same request and replace only `StreamingSelection`. Values are frozen when called. They reject an existing `StreamingGroupName` and conflicting streaming location keys in `CustomParameters` before changing the request. The native `StreamingSelection` setter remains available.
+These helpers require `using Vespa.Query;` and return a request with only `StreamingSelection` replaced. Values are frozen when called. They reject an existing `StreamingGroupName` and conflicting streaming location keys in `CustomParameters`. Use an initializer or a `with` expression to set a native selection string.
 
 The group helper removes ordinal duplicates and escapes the names. It rejects more than one distinct group name ending in a backslash because Vespa's selector parser cannot safely combine them; use separate requests. `StreamingMaxBucketsPerVisit` retains its name and JSON binding, with corrected documentation: it controls backend bucket concurrency, not a total bucket or coverage limit. See [Native streaming search](search.md#native-streaming-search) for examples and input rules.
 

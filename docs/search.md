@@ -70,8 +70,7 @@ var request = YqlBuilder<Product>.Select()
     .Where(w => w.UserQuery())
     .ToSearchRequest()
     .WithModelQueryText(userText)
-    .WithModelFilter(filter);
-request.ModelDefaultIndex = "product_name";
+    .WithModelFilter(filter) with { ModelDefaultIndex = "product_name" };
 ```
 
 The example sends `+category:books -description:outdated` in `model.filter`. A term with no sign in that parameter contributes to ranking. `Word` accepts letters, combining marks and digits. Use `Phrase` for a sequence of those words or set `ModelFilter` directly for native syntax such as ranges and grouped terms. [Vespa query parameters](https://docs.vespa.ai/en/reference/api/query.html#model.filter)
@@ -195,8 +194,7 @@ using Vespa.Query;
 
 var request = YqlBuilder.Select().From("product")
     .Where(w => w.Field("price").GreaterThan(100))
-    .ToSearchRequest();
-request.StreamingGroupName = "tenant-a";
+    .ToSearchRequest() with { StreamingGroupName = "tenant-a" };
 
 var results = await client.Search.SearchAsync<Product>(request);
 ```
@@ -226,15 +224,17 @@ var request = new VespaSearchRequest
 
 This uses the model's document type and mapped fields and restricts the entire predicate to that exact document type. It can scan all groups. The filter model does not choose the YQL source, namespace or result type; `SearchAsync<Summary>` can return a separate summary model. A document selector is not a namespace or authorization boundary.
 
-Both helpers set only `StreamingSelection`, return the same request and freeze captured values when called. They replace an existing selection. A null predicate or unsupported expression throws before replacement. An existing `StreamingGroupName`, or `streaming.selection`, `streaming.groupname` or `streaming.userid` in `CustomParameters`, causes `InvalidOperationException`; clear the conflicting property first. Later changes made through raw properties are the caller's responsibility.
+Both helpers return a request with a new `StreamingSelection` and freeze captured values when called. A null predicate or unsupported expression throws. An existing `StreamingGroupName`, or `streaming.selection`, `streaming.groupname` or `streaming.userid` in `CustomParameters`, causes `InvalidOperationException`. Derive a request without those settings before applying a typed selector.
 
 The native string property remains available, including for models without `[VespaDocument]`:
 
 ```csharp
 using Vespa.Documents;
 
-request.StreamingSelection = DocumentSelection.For<PlainProduct>(
-    "product", p => p.Price > minimumPrice);
+var nativeRequest = request with
+{
+    StreamingSelection = DocumentSelection.For<PlainProduct>("product", p => p.Price > minimumPrice)
+};
 ```
 
 `StreamingMaxBucketsPerVisit` maps to `streaming.maxbucketspervisitor` and controls backend bucket concurrency. It does not limit the total buckets visited or prevent a scan across all groups. The public property name and wire format are unchanged.
@@ -243,13 +243,15 @@ request.StreamingSelection = DocumentSelection.For<PlainProduct>(
 
 ## Search Request Options
 
+Build a request with an initializer and keep the value returned by each fluent helper. Use the original request again to derive independent queries. Input and ranking dictionaries are snapshotted at initialization. Treat values stored in those dictionaries as read-only when reusing a request.
+
 ```csharp
 var request = new VespaSearchRequest
 {
     Yql = yql,
     Hits = 10,
     Ranking = new RankingConfig { Profile = "semantic" },
-    Input = new() { ["query(embedding)"] = queryTensor },
+    Input = new Dictionary<string, object?> { ["query(embedding)"] = queryTensor },
 
     // Collapse / deduplication
     CollapseField = "product_id",
@@ -265,13 +267,8 @@ var request = new VespaSearchRequest
 
     // Trace / diagnostics
     TraceLevel = 3,
-    TraceTimestamps = true,
-
-    // Custom parameters (for userInput(@param))
-    CustomParameters = new() { ["text"] = "search query" }
-};
-
-// Fluent helpers
-request.WithTimeout(TimeSpan.FromSeconds(5))
-       .WithCollapse("category", size: 2);
+    TraceTimestamps = true
+}.WithParameter("text", "search query")
+    .WithTimeout(TimeSpan.FromSeconds(5))
+    .WithCollapse("category", size: 2);
 ```

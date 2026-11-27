@@ -183,8 +183,10 @@ var grouping = GroupingBuilder.All()
     .Max(5)
     .Each(e => e.Output(GroupingAgg.Count()));
 
-var request = YqlBuilder<Product>.Select().Limit(0).ToSearchRequest();
-request.Select = grouping.Build();
+var request = YqlBuilder<Product>.Select().Limit(0).ToSearchRequest() with
+{
+    Select = grouping.Build()
+};
 ```
 
 `Select` carries a grouping expression string. Vespa also has a separate JSON query language with its own request shape. [Query API](https://docs.vespa.ai/en/reference/api/query.html#grouping-and-aggregation) · [JSON query language](https://docs.vespa.ai/en/reference/querying/json-query-language.html)
@@ -197,7 +199,7 @@ await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
 
 Use `page.AsTyped()` for pages whose summary hits you need. The typed result carries the same continuation tokens.
 
-For manual paging with a YQL pipe, use `GroupingContinuations.Apply(yql, tokens)`. With `Select`, keep the expression and use `request.ShallowClone().WithParameter("continue", string.Join(' ', tokens))`. Pass the tokens in the order returned by `ContinuationTokens`.
+For manual paging with a YQL pipe, use `request with { Yql = GroupingContinuations.Apply(request.Yql, tokens) }`. With `Select`, keep the expression and pass the request returned by `request.WithParameter("continue", string.Join(' ', tokens))`. Pass the tokens in the order returned by `ContinuationTokens`.
 
 ---
 

@@ -537,17 +537,14 @@ public class YqlBuilderTests
         }
 
         var request = new VespaSearchRequest { Hits = 20, Offset = 5, ModelQueryString = "existing text" };
-        var typedRequest = new VespaSearchRequest { Hits = 20, Offset = 5, ModelQueryString = "existing text" };
-        Assert.Same(request, request.WithYql(untyped));
-        Assert.Same(typedRequest, typedRequest.WithYql(typed));
-
-        foreach (var result in new[] { request, typedRequest })
+        foreach (var result in new[] { request.WithYql(untyped), request.WithYql(typed) })
         {
             Assert.Equal("select * from music where true", result.Yql);
             Assert.Equal(expectedHits, result.Hits);
             Assert.Equal(expectedOffset, result.Offset);
             Assert.Equal("existing text", result.ModelQueryString);
         }
+        Assert.Equal((20, 5), (request.Hits, request.Offset));
     }
 
     [Fact]
@@ -562,7 +559,7 @@ public class YqlBuilderTests
             .Limit(0)
             .GroupBy(GroupingBuilder.All().Group("genre").Each(e => e.Output(GroupingAgg.Count())));
 
-        request.WithYql(builder);
+        request = request.WithYql(builder);
 
         Assert.Equal("select * from music where userQuery() | all(group(genre) each(output(count())))", request.Yql);
         Assert.Equal("jazz classics", request.ModelQueryString);

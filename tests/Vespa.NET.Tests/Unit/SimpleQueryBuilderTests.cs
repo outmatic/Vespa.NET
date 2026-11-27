@@ -54,8 +54,8 @@ public class SimpleQueryBuilderTests
     [Fact]
     public void UserQuery_WithoutArgumentUsesExistingTextAndParserType()
     {
-        var request = new VespaSearchRequest().WithModelQueryText(" title:vespa -java \"query languages\" ");
-        request.WithYql(YqlBuilder.Select().From("indexed_article").Where(w => w.UserQuery()));
+        var request = new VespaSearchRequest().WithModelQueryText(" title:vespa -java \"query languages\" ")
+            .WithYql(YqlBuilder.Select().From("indexed_article").Where(w => w.UserQuery()));
         Assert.Equal("select * from indexed_article where userQuery()", request.Yql);
         Assert.Equal(" title:vespa -java \"query languages\" ", request.ModelQueryString);
         Assert.Equal("tokenize", request.ModelType);
@@ -73,14 +73,15 @@ public class SimpleQueryBuilderTests
             .Phrase<Article>(article => article.Title, "space opera", SimpleQueryOccurrence.Required)
             .Word("outdated", SimpleQueryOccurrence.Excluded);
 
-        Assert.Same(request, request.WithRecall(recall));
-        Assert.Equal("+article_title:\"space opera\" -outdated", request.Recall);
-        Assert.Equal("search", request.ModelQueryString);
-        Assert.Equal("tokenize", request.ModelType);
-        Assert.Equal(3, request.Offset);
+        var updated = request.WithRecall(recall);
+        Assert.Null(request.Recall);
+        Assert.Equal("+article_title:\"space opera\" -outdated", updated.Recall);
+        Assert.Equal("search", updated.ModelQueryString);
+        Assert.Equal("tokenize", updated.ModelType);
+        Assert.Equal(3, updated.Offset);
 
-        request.WithRecall(new SimpleQueryBuilder().Word("outdated", SimpleQueryOccurrence.Excluded));
-        Assert.Equal("-outdated", request.Recall);
+        var replaced = updated.WithRecall(new SimpleQueryBuilder().Word("outdated", SimpleQueryOccurrence.Excluded));
+        Assert.Equal("-outdated", replaced.Recall);
     }
 
     [Fact]

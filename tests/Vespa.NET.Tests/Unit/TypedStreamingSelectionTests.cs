@@ -17,7 +17,7 @@ public sealed class TypedStreamingSelectionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void HelpersReplaceOnlyTheSelectionAndReturnTheOriginalRequest(bool groups)
+    public void HelpersReturnARequestWithOnlyTheSelectionReplaced(bool groups)
     {
         var request = new VespaSearchRequest
         {
@@ -25,12 +25,11 @@ public sealed class TypedStreamingSelectionTests
             Hits = 4,
             Offset = 3,
             Ranking = new() { Profile = "semantic" },
-            Input = new() { ["query(vector)"] = new[] { 0.25, 0.75 } },
+            Input = new Dictionary<string, object?> { ["query(vector)"] = new[] { 0.25, 0.75 } },
             ModelQueryString = "keep this text",
-            CustomParameters = new() { ["myParameter"] = 21 },
             StreamingMaxBucketsPerVisit = 2,
             StreamingSelection = "old raw selector"
-        };
+        }.WithParameter("myParameter", 21);
         var before = JsonSerializer.SerializeToNode(request, VespaJsonOptions.Default)!.AsObject();
         var originalInput = request.Input;
         var originalRanking = request.Ranking;
@@ -42,18 +41,12 @@ public sealed class TypedStreamingSelectionTests
         names[1] = "changed";
 
         var expected = groups ? "id.group == \"one\" or id.group == \"two\"" : "(inventory and ((inventory.unit_price > 8)))";
-        Assert.Same(request, returned);
+        Assert.Equal("old raw selector", request.StreamingSelection);
         Assert.Equal(expected, returned.StreamingSelection);
         Assert.Same(originalInput, returned.Input);
         Assert.Same(originalRanking, returned.Ranking);
-        var clone = request.ShallowClone();
-        Assert.Equal(expected, clone.StreamingSelection);
         before["streaming.selection"] = expected;
-        Assert.True(JsonNode.DeepEquals(before, JsonSerializer.SerializeToNode(clone, VespaJsonOptions.Default)));
-
-        // The native setter is still available and a previously created clone has its own string slot.
-        request.StreamingSelection = "id.group == \"raw\"";
-        Assert.Equal(expected, clone.StreamingSelection);
+        Assert.True(JsonNode.DeepEquals(before, JsonSerializer.SerializeToNode(returned, VespaJsonOptions.Default)));
     }
 
     [Fact]
@@ -168,11 +161,11 @@ public sealed class TypedStreamingSelectionTests
     [InlineData("streaming.userid")]
     public void ReservedCustomParametersConflictBeforeTheSelectionIsReplaced(string key)
     {
-        var request = new VespaSearchRequest { StreamingSelection = "original", CustomParameters = new() { [key] = "existing" } };
+        var request = new VespaSearchRequest { StreamingSelection = "original" }.WithParameter(key, "existing");
         Assert.Throws<InvalidOperationException>(() => request.WithStreamingGroups("one"));
         Assert.Throws<InvalidOperationException>(() => request.WithStreamingSelection<Inventory>(p => true));
         Assert.Equal("original", request.StreamingSelection);
-        Assert.Equal("existing", Assert.Single(request.CustomParameters).Value);
+        Assert.Equal("existing", Assert.Single(request.CustomParameters!).Value);
     }
 
     [Theory]
@@ -185,7 +178,7 @@ public sealed class TypedStreamingSelectionTests
         var search = new SearchOperations(http, new());
         var minimumPrice = 8;
         var request = new VespaSearchRequest { Yql = "select * from inventory where true", Hits = 9, Offset = 2 };
-        request.WithStreamingSelection<Inventory>(p => p.Price > minimumPrice);
+        request = request.WithStreamingSelection<Inventory>(p => p.Price > minimumPrice);
         const string first = """{"root":{"id":"toplevel","fields":{"totalCount":1},"children":[{"id":"id:n:inventory::a","fields":{"title":"first"}}]}}""";
         const string last = """{"root":{"id":"toplevel","fields":{"totalCount":1},"children":[]}}""";
         handler.QueueResponses(new(HttpStatusCode.OK) { Content = new StringContent(first) }, new(HttpStatusCode.OK) { Content = new StringContent(last) });

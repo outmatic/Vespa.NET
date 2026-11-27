@@ -183,8 +183,8 @@ public class RankingBuilderTests
     [Fact]
     public void WithRanking_SetsRankingOnRequest()
     {
-        var request = new VespaSearchRequest { Yql = "select * from music;" };
-        request.WithRanking(RankingBuilder.WithProfile("semantic").RerankCount(50));
+        var request = new VespaSearchRequest { Yql = "select * from music;" }
+            .WithRanking(RankingBuilder.WithProfile("semantic").RerankCount(50));
 
         Assert.NotNull(request.Ranking);
         Assert.Equal("semantic", request.Ranking!.Profile);
@@ -192,11 +192,13 @@ public class RankingBuilderTests
     }
 
     [Fact]
-    public void WithRanking_ReturnsRequest_ForChaining()
+    public void WithRanking_ReturnsNewRequest_ForChaining()
     {
         var request = new VespaSearchRequest { Yql = "select * from music;" };
         var returned = request.WithRanking(RankingBuilder.WithProfile("p"));
-        Assert.Same(request, returned);
+        Assert.Null(request.Ranking);
+        Assert.Equal("p", returned.Ranking!.Profile);
+        Assert.Equal(request.Yql, returned.Yql);
     }
 
     // --- WithRankFeature normalization (symmetry with RankingBuilder.Feature) ---
@@ -204,8 +206,7 @@ public class RankingBuilderTests
     [Fact]
     public void WithRankFeature_BareName_WrapsInQuery()
     {
-        var request = new VespaSearchRequest { Yql = "select * from music;" };
-        request.WithRankFeature("threshold", 0.8);
+        var request = new VespaSearchRequest { Yql = "select * from music;" }.WithRankFeature("threshold", 0.8);
 
         Assert.True(request.Ranking!.Features!.ContainsKey("query(threshold)"));
     }
@@ -214,8 +215,7 @@ public class RankingBuilderTests
     public void WithRankFeature_FullFeatureReference_UsedAsIs()
     {
         // "query(x)" must not become "query(query(x))"
-        var request = new VespaSearchRequest { Yql = "select * from music;" };
-        request.WithRankFeature("query(threshold)", 0.8);
+        var request = new VespaSearchRequest { Yql = "select * from music;" }.WithRankFeature("query(threshold)", 0.8);
 
         Assert.True(request.Ranking!.Features!.ContainsKey("query(threshold)"));
         Assert.Single(request.Ranking.Features);

@@ -58,13 +58,13 @@ public class GroupingPaginationE2ETests(VespaFixture fixture)
             var request = useSelect ? builder.ToSearchRequest() : builder.GroupBy(grouping).ToSearchRequest();
             if (useSelect)
             {
-                request.Select = grouping.Build();
+                request = request with { Select = grouping.Build() };
                 var first = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
                 Assert.Equal(groupCount, first.TotalCount);
                 Assert.NotNull(first.Coverage);
                 var firstGroups = Assert.Single(first.GroupingResults).Groups;
                 var tokens = Assert.IsAssignableFrom<IReadOnlyList<string>>(first.ContinuationTokens);
-                var resume = request.ShallowClone().WithParameter("continue", string.Join(' ', tokens));
+                var resume = request.WithParameter("continue", string.Join(' ', tokens));
                 var second = await fixture.Client.Search.GroupByAsync<TestProduct>(resume);
                 var secondGroups = Assert.Single(second.GroupingResults).Groups;
                 Assert.Equal(5, firstGroups.Count);

@@ -305,10 +305,9 @@ public class YqlCompositionE2ETests(VespaFixture fixture)
             {
                 Yql = yql,
                 Hits = 5,
-                Ranking = new RankingConfig { Profile = "closeness_profile" },
-                Input = new() { ["query(query_embedding)"] = VespaTensor.FromDenseValues([5f, 1f, 0f, 0.1f]) },
-                CustomParameters = new() { ["userQuery"] = "laptop" }
-            };
+                Ranking = new RankingConfig { Profile = "closeness_profile" }
+            }.WithQueryTensor("query_embedding", VespaTensor.FromDenseValues([5f, 1f, 0f, 0.1f]))
+                .WithParameter("userQuery", "laptop");
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
             foreach (var hit in result.Root.Children)

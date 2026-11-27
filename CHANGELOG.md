@@ -18,6 +18,7 @@ The client targets .NET 8 and .NET 10. The core client and VectorData use Vespa 
 
 #### Search, deployment and adapters
 
+- Derive search requests and ranking configurations with `with`. Fluent request helpers return a new request, so pagination and ranking overrides can share a base request. [Migration guide](docs/migration-4.0.md#search-requests-and-ranking)
 - Choose sort direction, nearest-neighbor execution mode and tensor update operations with enums. Use `YqlTermAnnotations` to set term options by name. Grouping supports continuation with an inline expression or the request's `Select` property. [Search](docs/search.md) · [Grouping](docs/grouping.md)
 - Generated application packages report conflicting schema struct names before deployment. Set the minimum Vespa version for a package when it uses features that need a newer server. [Schema generation](docs/schema.md)
 - Use `WithFieldMaps()` when sharing a client between VectorData and Agent Framework. Typed VectorData records can use `BindCollection` in trimmed applications. Agent Framework history preserves numeric tool results with JSON reflection disabled. Both adapters keep independent package versions. [VectorData](src/Vespa.NET.VectorData/README.md) · [Agent Framework](src/Vespa.NET.AgentFramework/README.md)

@@ -494,8 +494,7 @@ public class SearchE2ETests(VespaFixture fixture)
             Assert.Equal(ids.Count, next);
             Assert.Equal((2, 2), (request.Hits, request.Offset));
 
-            request.Hits = 1;
-            request.Offset = 3;
+            request = request with { Hits = 1, Offset = 3 };
             var changed = await search.SearchAsync<TestProduct>(request, cancellationToken);
             Assert.Equal([3], Quantities(changed));
 

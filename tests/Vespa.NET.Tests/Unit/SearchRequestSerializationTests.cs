@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using Vespa.Models;
 using Vespa.Query;
@@ -472,93 +473,142 @@ public class SearchRequestSerializationTests
         var request = new VespaSearchRequest { Yql = "select * from music where userInput(@text)" }
             .WithParameter("text", 42)
             .WithParameter("clientTag", "original");
-        var parameters = request.CustomParameters;
+        var updated = request.WithUserInput(paramName: "text", value: text);
+        Assert.Equal(42, request.CustomParameters!["text"]);
 
-        Assert.Same(request, request.WithUserInput(paramName: "text", value: text));
-        Assert.Same(parameters, request.CustomParameters);
-
-        var json = JsonSerializer.SerializeToElement(request, JsonOpts);
+        var json = JsonSerializer.SerializeToElement(updated, JsonOpts);
         Assert.Equal(text, json.GetProperty("text").GetString());
         Assert.Equal("original", json.GetProperty("clientTag").GetString());
         Assert.False(json.TryGetProperty("input", out _));
     }
 
     [Fact]
-    public void ShallowClone_CopiesCustomParametersAndInputDictionaries()
+    public void SearchRequest_SnapshotsCallerOwnedDictionaries()
     {
-        // Page clones must not share dictionaries: mutating one page's parameters
-        // would bleed into every other page of a paged/streaming search.
-        var original = new VespaSearchRequest
+        var rankingValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["weight"] = 2.0 };
+        var input = new Dictionary<string, object?> { ["query(embedding)"] = 1.0 };
+        var request = new VespaSearchRequest
         {
-            Yql = "select * from doc",
-            CustomParameters = new Dictionary<string, object> { ["text"] = "query" },
-            Input = new Dictionary<string, object> { ["query(embedding)"] = new[] { 1.0, 2.0 } }
+            Input = input,
+            Ranking = new RankingConfig { Features = rankingValues, Properties = rankingValues }
         };
 
-        var clone = original.ShallowClone();
+        input["query(embedding)"] = 4.0;
+        rankingValues["weight"] = 5.0;
 
-        Assert.NotSame(original.CustomParameters, clone.CustomParameters);
-        Assert.NotSame(original.Input, clone.Input);
-        Assert.Equal(original.CustomParameters, clone.CustomParameters);
-        Assert.Equal(original.Input, clone.Input);
-
-        clone.CustomParameters!["text"] = "changed";
-        clone.Input!["query(other)"] = 42;
-
-        Assert.Equal("query", original.CustomParameters!["text"]);
-        Assert.False(original.Input!.ContainsKey("query(other)"));
+        Assert.Equal(1.0, request.Input!["query(embedding)"]);
+        Assert.Equal(2.0, request.Ranking.Features!["WEIGHT"]);
+        Assert.Equal(2.0, request.Ranking.Properties!["WEIGHT"]);
     }
 
     [Fact]
-    public void ShallowClone_RankProfileChangesDoNotAffectOriginal()
+    public void WithRankProfile_LeavesOriginalRequestUnchanged()
     {
-        var original = new VespaSearchRequest
+        var request = new VespaSearchRequest
         {
-            Ranking = new RankingConfig { Profile = "original_profile", TotalRerankCount = 25 }
+            Ranking = new RankingConfig { TotalRerankCount = 25 }
         };
+        var original = request.WithRankProfile("original_profile");
 
-        var clone = original.ShallowClone().WithRankProfile("clone_profile");
+        var refined = original.WithRankProfile("refined_profile");
 
-        Assert.Equal("original_profile", original.Ranking.Profile);
-        Assert.Equal("clone_profile", clone.Ranking!.Profile);
-        Assert.Equal(25, clone.Ranking.TotalRerankCount);
-        Assert.Null(clone.Ranking.Features);
-        Assert.Null(clone.Ranking.Properties);
+        Assert.Equal("original_profile", original.Ranking!.Profile);
+        Assert.Equal("refined_profile", refined.Ranking!.Profile);
+        Assert.Equal(25, refined.Ranking.TotalRerankCount);
+        Assert.Null(refined.Ranking.Features);
+        Assert.Null(refined.Ranking.Properties);
     }
 
     [Fact]
-    public void ShallowClone_RankingDictionaryChangesDoNotAffectOriginal()
+    public void WithRankFeatureAndQueryTensor_LeaveOriginalDictionariesUnchanged()
     {
         var original = new VespaSearchRequest
         {
             Ranking = new RankingConfig
             {
-                Features = new(StringComparer.OrdinalIgnoreCase) { ["query(weight)"] = 2.0 },
-                Properties = new(StringComparer.OrdinalIgnoreCase) { ["scale"] = 1 }
+                Features = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["query(weight)"] = 2.0 },
+                Properties = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["scale"] = 1 }
             }
+        }.WithQueryTensor("original", 1.0);
+
+        var refined = original.WithRankFeature("threshold", 0.5).WithQueryTensor("refined", 2.0);
+
+        Assert.Single(original.Ranking!.Features!);
+        Assert.Single(original.Input!);
+        Assert.Equal(2.0, refined.Ranking!.Features!["query(WEIGHT)"]);
+        Assert.Equal(0.5, refined.Ranking.Features["query(threshold)"]);
+        Assert.Equal(1, refined.Ranking.Properties!["SCALE"]);
+        Assert.Equal(1.0, refined.Input!["query(original)"]);
+        Assert.Equal(2.0, refined.Input["query(refined)"]);
+
+        var withPropertyOverride = refined with
+        {
+            Ranking = refined.Ranking with { Properties = new Dictionary<string, object> { ["scale"] = 5 } }
         };
-
-        var clone = original.ShallowClone().WithRankFeature("threshold", 0.5);
-        clone.Ranking!.Properties!["SCALE"] = 5;
-
-        Assert.Single(original.Ranking.Features);
-        Assert.Equal(1, original.Ranking.Properties["scale"]);
-        Assert.Equal(2.0, clone.Ranking.Features!["query(WEIGHT)"]);
-        Assert.Equal(0.5, clone.Ranking.Features["query(threshold)"]);
-        Assert.Single(clone.Ranking.Properties);
-        Assert.Equal(5, clone.Ranking.Properties["scale"]);
+        Assert.Equal(1, original.Ranking.Properties!["scale"]);
+        Assert.Equal(5, withPropertyOverride.Ranking.Properties!["scale"]);
     }
 
     [Fact]
-    public void ShallowClone_WithNullDictionaries_LeavesThemNull()
+    public void WithExpression_PreservesUnsetDictionaries()
     {
         var original = new VespaSearchRequest { Yql = "select * from doc" };
 
-        var clone = original.ShallowClone();
+        var refined = original with { Hits = 5 };
 
-        Assert.Null(clone.CustomParameters);
-        Assert.Null(clone.Input);
-        Assert.Null(clone.Ranking);
-        Assert.Equal(original.Yql, clone.Yql);
+        Assert.Null(refined.CustomParameters);
+        Assert.Null(refined.Input);
+        Assert.Null(refined.Ranking);
+        Assert.Equal(original.Yql, refined.Yql);
+    }
+
+    [Fact]
+    public void FluentSearchRequest_UsesTheSameReflectionJsonAsAnInitializer()
+    {
+        var (fluent, initializer) = EquivalentSearchRequests();
+        Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(initializer, VespaJsonOptions.Default),
+            JsonSerializer.SerializeToUtf8Bytes(fluent, VespaJsonOptions.Default));
+    }
+
+    [Fact]
+    public void GeneratedSearchRequestJson_MatchesReflectionAndFlattensCustomParameters()
+    {
+        var (request, _) = EquivalentSearchRequests();
+        var json = JsonSerializer.SerializeToUtf8Bytes(request, VespaProtocolJsonContext.Default.VespaSearchRequest);
+        Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(request, VespaJsonOptions.Default), json);
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.True(root.TryGetProperty("continue", out var continuation), "Expected a top-level continuation key.");
+        Assert.Equal("AAAA", continuation.GetString());
+        Assert.Equal(0.5, root.GetProperty("input.query(q)").GetDouble());
+        Assert.Equal(1, root.GetProperty("ranking").GetProperty("features").GetProperty("query(weight)").GetInt32());
+        Assert.False(root.TryGetProperty("custom_parameters", out _));
+    }
+
+    private static (VespaSearchRequest Fluent, VespaSearchRequest Initializer) EquivalentSearchRequests()
+    {
+        var builder = YqlBuilder.Select().From("music").Limit(3).Offset(1);
+        var fluent = new VespaSearchRequest()
+            .WithYql(builder)
+            .WithRankProfile("default")
+            .WithRankFeature("weight", 1)
+            .WithParameter("continue", "AAAA")
+            .WithParameter("input.query(q)", 0.5);
+        var initializer = new VespaSearchRequest
+        {
+            Yql = builder.Build(includeLimitOffset: false),
+            Hits = 3,
+            Offset = 1,
+            Ranking = new RankingConfig
+            {
+                Profile = "default",
+                Features = new Dictionary<string, object> { ["query(weight)"] = 1 }
+            },
+            CustomParameters = ImmutableDictionary<string, object?>.Empty
+                .Add("continue", "AAAA")
+                .Add("input.query(q)", 0.5)
+        };
+        return (fluent, initializer);
     }
 }

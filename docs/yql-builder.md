@@ -175,7 +175,7 @@ Each callback builds one predicate, all are OR'd:
 
 ## Fluent Request Builder
 
-`ToSearchRequest()` creates a request from the builder. Use `request.WithYql(builder)` to apply the builder to an existing request. Chain helpers for ranking and tensors:
+`ToSearchRequest()` creates a request from the builder. Use the value returned by `request.WithYql(builder)` to carry the builder's query into a derived request. Chain helpers for ranking and tensors:
 
 ```csharp
 var request = YqlBuilder<Product>

@@ -281,8 +281,8 @@ public class SchemaMatrixE2ETests(VespaFixture fixture)
             var request = YqlBuilder.Select().From("event")
                 .Where(w => w.Field("event_name").Contains(marker))
                 .ToSearchRequest()
-                .WithTimeout(TimeSpan.FromSeconds(10));
-            request.StreamingGroupName = group;
+                .WithTimeout(TimeSpan.FromSeconds(10)) with
+            { StreamingGroupName = group };
 
             var result = await fixture.Client.Search.SearchAsync<TestEvent>(request);
             var hit = Assert.Single(result.Root.Children);

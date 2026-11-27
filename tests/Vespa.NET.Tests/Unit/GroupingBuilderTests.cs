@@ -934,7 +934,7 @@ public class GroupingBuilderTests : IDisposable
             Select = useSelect ? grouping : null,
         }.WithParameter("clientTag", "original");
         if (useSelect)
-            request.WithParameter("continue", "saved-token");
+            request = request.WithParameter("continue", "saved-token");
         var originalYql = request.Yql;
         var pages = new List<GroupingSearchResponse<MusicDoc>>();
         await foreach (var page in _searchOps.GroupByStreamAsync<MusicDoc>(request))
@@ -1196,9 +1196,8 @@ public class GroupingBuilderTests : IDisposable
     {
         var req = new VespaSearchRequest
         {
-            Yql = "select * from music where userInput(@text);",
-            CustomParameters = new() { ["text"] = "rock and roll" }
-        };
+            Yql = "select * from music where userInput(@text);"
+        }.WithParameter("text", "rock and roll");
         var json = JsonSerializer.Serialize(req, JsonOpts);
         Assert.Contains("\"text\":\"rock and roll\"", json);
     }
@@ -1208,13 +1207,9 @@ public class GroupingBuilderTests : IDisposable
     {
         var req = new VespaSearchRequest
         {
-            Yql = "select * from music where title contains @term and year > @minYear;",
-            CustomParameters = new()
-            {
-                ["term"] = "jazz",
-                ["minYear"] = 2000
-            }
-        };
+            Yql = "select * from music where title contains @term and year > @minYear;"
+        }.WithParameter("term", "jazz")
+            .WithParameter("minYear", 2000);
         var json = JsonSerializer.Serialize(req, JsonOpts);
         Assert.Contains("\"term\":\"jazz\"", json);
         Assert.Contains("\"minYear\":2000", json);

@@ -400,8 +400,8 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                     .NearestNeighbor("embedding", "query_embedding", totalTargetHits: 5))
                 .ToSearchRequest()
                 .WithRankProfile("closeness_profile")
-                .WithQueryTensor("query_embedding", new float[] { 1, 0, 0, 0 });
-            request.TraceLevel = 5;
+                .WithQueryTensor("query_embedding", new float[] { 1, 0, 0, 0 }) with
+            { TraceLevel = 5 };
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
             Assert.NotEmpty(result.Root.Children);
@@ -616,16 +616,16 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             var suffixRequest = YqlBuilder.Select().From("event")
                 .Where(w => w.Field("event_name").ContainsAnnotated("suffixdoc", new() { Suffix = true }))
                 .ToSearchRequest()
-                .WithTimeout(TimeSpan.FromSeconds(10));
-            suffixRequest.StreamingGroupName = group;
+                .WithTimeout(TimeSpan.FromSeconds(10)) with
+            { StreamingGroupName = group };
             var suffixResult = await fixture.Client.Search.SearchAsync<TestEvent>(suffixRequest);
             Assert.NotNull(suffixResult.Root);
 
             var substringRequest = YqlBuilder.Select().From("event")
                 .Where(w => w.Field("event_name").ContainsAnnotated("ingsuffix", new() { Substring = true }))
                 .ToSearchRequest()
-                .WithTimeout(TimeSpan.FromSeconds(10));
-            substringRequest.StreamingGroupName = group;
+                .WithTimeout(TimeSpan.FromSeconds(10)) with
+            { StreamingGroupName = group };
             var substringResult = await fixture.Client.Search.SearchAsync<TestEvent>(substringRequest);
             Assert.NotNull(substringResult.Root);
         }
@@ -823,8 +823,8 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             var request = GroupingRequest(tag, GroupingBuilder.All()
                 .Group("category")
                 .MaxAll()
-                .Each(e => e.Output(GroupingAgg.Count())));
-            request.QueryProfile = "unbounded-grouping";
+                .Each(e => e.Output(GroupingAgg.Count()))) with
+            { QueryProfile = "unbounded-grouping" };
 
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
 
