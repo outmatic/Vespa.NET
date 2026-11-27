@@ -31,7 +31,7 @@ public sealed class VisitPageTests : IDisposable
              "continuation":"opaque+/= &?"}
             """);
 
-        var page = await _documents.VisitPageAsync<Inventory>(selection: "inventory.name == \"First\"", cluster: "content");
+        var page = await _documents.VisitPageAsync<Inventory>(rawSelection: "inventory.name == \"First\"", cluster: "content");
 
         Assert.Single(_handler.Requests);
         Assert.Equal(1, page.DocumentCount);
@@ -54,12 +54,12 @@ public sealed class VisitPageTests : IDisposable
         var options = new VisitOptions { WantedDocumentCount = 5, Slices = 2, SliceId = 1 };
         const string selection = "inventory.name != null";
 
-        var first = await _documents.VisitPageAsync<Inventory>(selection: selection, cluster: "content", options: options);
+        var first = await _documents.VisitPageAsync<Inventory>(rawSelection: selection, cluster: "content", options: options);
         Assert.Empty(first.Documents);
         Assert.False(first.IsComplete);
         Assert.Single(_handler.Requests);
 
-        var last = await _documents.VisitPageAsync<Inventory>(selection: selection, cluster: "content", continuation: first.Continuation, options: options);
+        var last = await _documents.VisitPageAsync<Inventory>(rawSelection: selection, cluster: "content", continuation: first.Continuation, options: options);
 
         Assert.True(last.IsComplete);
         Assert.Equal("last", Assert.Single(last.Documents).Id);

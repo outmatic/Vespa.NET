@@ -18,11 +18,25 @@ var ranking = RankingBuilder
     .MatchPhase("popularity", maxHits: 10000)
     .MatchPhaseDiversity("category", minGroups: 5)
     .GlobalPhaseRerankCount(100)
-    .Matching(numThreadsPerSearch: 4)
-    .Build();  // RankingConfig
+    .Matching(numThreadsPerSearch: 4);
 
 var request = new VespaSearchRequest { Yql = yql }.WithRanking(ranking);
 ```
+
+## Sort specification
+
+Use `SortingBuilder` to set `ranking.sorting` independently of the YQL. Put the primary key first and append tie-breakers in order. The model selectors resolve the attribute names from the same mappings as `YqlBuilder`.
+
+```csharp
+var sorting = new SortingBuilder()
+    .OrderBy<Product>(p => p.Price)
+    .OrderBy<Product>(p => p.ProductId, SortDirection.Descending);
+
+var request = new VespaSearchRequest { Yql = yql }
+    .WithRanking(RankingBuilder.WithProfile("unranked").Sorting(sorting.Build()));
+```
+
+Sort keys use ascending order by default. Use `OrderByRelevance()` to sort by rank score, highest first by default. Pass functions such as `uca(...)` as a native expression to `RankingBuilder.Sorting(string)`. Vespa applies the YQL `order by` when both forms are present. [Sort grammar](https://docs.vespa.ai/en/reference/querying/sorting-language.html) · [YQL order by](https://docs.vespa.ai/en/reference/querying/yql.html#order-by)
 
 ---
 
@@ -41,10 +55,29 @@ Define rank profiles directly on your model with `[VespaRankProfile]`:
 public record Product { ... }
 ```
 
-Functions are declared with one `[VespaRankFunction(signature, expression)]` per
-function. `Profile` may be omitted when the type declares a single rank profile.
-(The legacy semicolon-separated `Functions` string property still works but is
-obsolete — it cannot express expressions containing `:` or `;`.)
+Declare one `[VespaRankFunction(signature, expression)]` per function. Set `Profile` to target a named profile. If you omit it, there must be exactly one profile, counting the `default` profile that the schema generator can add for tensor inputs.
+
+### Build a rank profile at runtime
+
+Use `WithRankProfile<T>` when the formula depends on application configuration or when you want field references checked by C#. For BM25, set `EnableBm25 = true` on the indexed string field's `[VespaField]` attribute. In this example, `Popularity` is an attribute field.
+
+```csharp
+using Vespa.Models.Schema;
+
+var options = new ApplicationPackageOptions()
+    .WithRankProfile<Product>("hybrid", profile => profile
+        .Inherits("default")
+        .QueryInput("vector_weight", defaultValue: 0.3)
+        .FirstPhase(0.7 * profile.Bm25(p => p.Title) + RankExpression.Query("vector_weight") * profile.Closeness(p => p.Embedding))
+        .Function("weighted_popularity", profile.Attribute(p => p.Popularity) * RankExpression.Reference("weight"), "weight")
+        .SecondPhase(RankExpression.Call("weighted_popularity", 2), rerankCount: 100));
+
+await client.Admin.DeploySchemaAsync<Product>(options);
+```
+
+Select the deployed profile with `WithRankProfile("hybrid")` on the search request. Use `GlobalPhase` for reranking after Vespa merges the hits from the content nodes. Pass native ranking syntax to `RankExpression.Raw` for formulas such as tensor reductions or cross-hit normalization. Use `VespaSchemaBuilder.GenerateSchema<Product>(options)` to inspect the schema before deployment. [Ranking expressions](https://docs.vespa.ai/en/reference/ranking/ranking-expressions.html) · [Phased ranking](https://docs.vespa.ai/en/ranking/phased-ranking.html)
+
+`QueryInput` declares a scalar default in the rank profile. To override it for one request, use `request.WithParameter("input.query(vector_weight)", 0.5)`. The schema generator reserves names such as `query_embedding` for the corresponding tensor fields. [Rank profile inputs](https://docs.vespa.ai/en/reference/schemas/schemas.html#inputs)
 
 ### Rank Profile Options
 
@@ -60,7 +93,6 @@ obsolete — it cannot express expressions containing `:` or `;`.)
 | `SummaryFeatures` | Features included in search results |
 | `DiversityAttribute` | Attribute field for result diversity |
 | `DiversityMinGroups` | Minimum number of diverse groups |
-| `Functions` | *(obsolete)* Custom ranking functions — use `[VespaRankFunction]` instead |
 
 ---
 
@@ -75,7 +107,7 @@ obsolete — it cannot express expressions containing `:` or `;`.)
 | `.SecondPhaseRankScoreDropLimit(x)` | Second-phase score drop limit |
 | `.KeepRankCount(n)` / `.TotalKeepRankCount(n)` | Hits keeping their rank score after first phase |
 | `.SoftTimeout(enable, factor)` | Soft timeout with coverage factor |
-| `.MatchPhase(field, maxHits, ascending, totalMaxHits)` | Match-phase early termination (prefer `totalMaxHits`) |
+| `.MatchPhase(field, maxHits, direction, totalMaxHits)` | Match-phase early termination. Prefer `totalMaxHits` and omit `direction` to use Vespa's configured order. |
 | `.MatchPhaseDiversity(field, minGroups)` | Diversity on match-phase |
 | `.GlobalPhaseRerankCount(n)` | Global-phase rerank count |
 | `.GlobalPhaseRankScoreDropLimit(x)` | Global-phase score drop limit |

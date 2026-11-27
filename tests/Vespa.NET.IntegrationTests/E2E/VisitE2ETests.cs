@@ -147,7 +147,7 @@ public class VisitE2ETests(VespaFixture fixture)
         {
             var visited = new List<VespaDocument<TestProduct>>();
             await foreach (var doc in fixture.Client.Documents.VisitAsync<TestProduct>(
-                selection: $"product.category == \"{category}\"",
+                rawSelection: $"product.category == \"{category}\"",
                 options: new VisitOptions { WantedDocumentCount = 100 }))
                 visited.Add(doc);
 

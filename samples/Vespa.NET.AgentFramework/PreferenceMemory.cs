@@ -48,11 +48,14 @@ public sealed class PreferenceMemory(
         return "Preference saved.";
     }
 
-    public async Task<string> RecallAsync(CancellationToken cancellationToken = default)
+    public async Task<string> RecallAsync(CancellationToken cancellationToken = default) =>
+        await FindSavedPreferenceAsync(cancellationToken) ?? "No saved preference found.";
+
+    internal async Task<string?> FindSavedPreferenceAsync(CancellationToken cancellationToken)
     {
         var saved = await _collection.GetAsync($"{_userId}:{Topic}", cancellationToken: cancellationToken);
         if (saved is null)
-            return "No saved preference found.";
+            return null;
         if (saved.UserId != _userId || saved.Topic != Topic)
             throw new InvalidOperationException("The saved preference does not match the requested user and topic.");
         return saved.Text;

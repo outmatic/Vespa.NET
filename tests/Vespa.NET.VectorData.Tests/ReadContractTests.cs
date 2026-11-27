@@ -86,7 +86,9 @@ public sealed class ReadContractTests
         await Assert.ThrowsAsync<VectorStoreException>(() => missing.Store.GetCollection<string, RequiredRecord>("article").GetAsync("a"));
         await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new RequiredRecord
         {
-            Id = "a", Title = null!, Embedding = new float[] { 1, 0, 0 }
+            Id = "a",
+            Title = null!,
+            Embedding = new float[] { 1, 0, 0 }
         }));
     }
 

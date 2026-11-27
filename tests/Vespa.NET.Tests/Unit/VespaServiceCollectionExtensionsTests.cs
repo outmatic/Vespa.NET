@@ -1,11 +1,13 @@
 using System.Net;
 using System.Reflection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Polly;
+using Polly.CircuitBreaker;
 using Vespa;
 using Vespa.Tests.Helpers;
 using Xunit;
@@ -329,6 +331,105 @@ public class VespaServiceCollectionExtensionsTests
 
     #region Repeated registration / options collision Tests
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AddVespaClient_DefaultHttpName_IsRejectedBeforeChangingTheCollection(bool registerDefaultFirst)
+    {
+        var services = new ServiceCollection();
+        var named = new VespaClientOptions { Endpoint = "http://named:8080" };
+        var unnamed = new VespaClientOptions { Endpoint = "http://unnamed:8080" };
+        void RegisterUnnamed() => services.AddVespaClient(unnamed,
+            client => client.DefaultRequestHeaders.Add("X-Unnamed", "unnamed"));
+        if (registerDefaultFirst)
+            RegisterUnnamed();
+
+        var before = services.ToArray();
+        Assert.Throws<ArgumentException>("name", () => services.AddVespaClient("Vespa.NET", named));
+        Assert.Equal(before, services.ToArray());
+
+        if (!registerDefaultFirst)
+            RegisterUnnamed();
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Null(provider.GetKeyedService<IVespaClient>("Vespa.NET"));
+        using var http = GetUnderlyingHttpClient(provider.GetRequiredService<IVespaClient>());
+        Assert.Equal(new Uri(unnamed.Endpoint), http.BaseAddress);
+        Assert.Equal("unnamed", Assert.Single(http.DefaultRequestHeaders.GetValues("X-Unnamed")));
+        AssertSingleVespaHandlerChain(provider, "Vespa.NET");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AddVespaClient_CaseVariant_KeepsTransportAndRetryIndependent(bool registerDefaultFirst)
+    {
+        const string namedKey = "vespa.net";
+        var services = new ServiceCollection();
+        var unnamedOptions = new VespaClientOptions { Endpoint = "http://unnamed:8080" };
+        var namedOptions = new VespaClientOptions { Endpoint = "http://named:8080", EnableRetry = false };
+        using var unnamedHandler = new MockHttpMessageHandler();
+        using var namedHandler = new MockHttpMessageHandler();
+        unnamedHandler.QueueResponses(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable), new HttpResponseMessage(HttpStatusCode.OK));
+        namedHandler.QueueResponse(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        void RegisterUnnamed() => services.AddVespaClientWithResilienceStrategy(unnamedOptions,
+            (pipeline, _) => pipeline.AddRetry(new HttpRetryStrategyOptions { MaxRetryAttempts = 1, Delay = TimeSpan.Zero }),
+            client => client.DefaultRequestHeaders.Add("X-Client", "unnamed"))
+            .ConfigurePrimaryHttpMessageHandler(() => unnamedHandler);
+
+        void RegisterNamed() => Assert.Equal(namedKey, services.AddVespaClient(namedKey, namedOptions,
+            client => client.DefaultRequestHeaders.Add("X-Client", "named"))
+            .ConfigurePrimaryHttpMessageHandler(() => namedHandler).Name);
+
+        if (registerDefaultFirst)
+        {
+            RegisterUnnamed();
+            RegisterNamed();
+        }
+        else
+        {
+            RegisterNamed();
+            RegisterUnnamed();
+        }
+
+        using var provider = services.BuildServiceProvider();
+        var unnamed = provider.GetRequiredService<IVespaClient>();
+        var named = provider.GetRequiredKeyedService<IVespaClient>(namedKey);
+        using var unnamedHttp = GetUnderlyingHttpClient(unnamed);
+        using var namedHttp = GetUnderlyingHttpClient(named);
+        using var factoryHttp = provider.GetRequiredService<IHttpClientFactory>().CreateClient(namedKey);
+
+        Assert.True(await unnamed.HealthCheckAsync());
+        Assert.False(await named.HealthCheckAsync());
+        Assert.Equal(2, unnamedHandler.Requests.Count);
+        Assert.All(unnamedHandler.Requests, request =>
+        {
+            Assert.Equal("unnamed", request.RequestUri!.Host);
+            Assert.Equal("unnamed", Assert.Single(request.Headers.GetValues("X-Client")));
+        });
+        var namedRequest = Assert.Single(namedHandler.Requests);
+        Assert.Equal("named", namedRequest.RequestUri!.Host);
+        Assert.Equal("named", Assert.Single(namedRequest.Headers.GetValues("X-Client")));
+        Assert.Equal(new Uri(namedOptions.Endpoint), factoryHttp.BaseAddress);
+        Assert.Equal("named", Assert.Single(factoryHttp.DefaultRequestHeaders.GetValues("X-Client")));
+        AssertSingleVespaHandlerChain(provider, "Vespa.NET");
+        AssertSingleVespaHandlerChain(provider, namedKey);
+    }
+
+    private static void AssertSingleVespaHandlerChain(IServiceProvider provider, string name)
+    {
+        var handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(name);
+        var chain = new List<DelegatingHandler>();
+        while (handler is DelegatingHandler next)
+        {
+            chain.Add(next);
+            handler = next.InnerHandler!;
+        }
+        Assert.Single(chain.OfType<VespaMetricsHandler>());
+        Assert.Single(chain.OfType<ResilienceHandler>());
+    }
+
     [Fact]
     public void AddVespaClient_CalledRepeatedly_UsesOnlyTheLastConfiguration()
     {
@@ -410,6 +511,69 @@ public class VespaServiceCollectionExtensionsTests
         using var response = await httpClient.GetAsync("/state/v1/health");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, 4)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, 4)]
+    [InlineData(HttpStatusCode.InternalServerError, 2)]
+    [InlineData(HttpStatusCode.BadRequest, 1)]
+    public async Task AddVespaClient_BulkPut_RetriesAtTheHttpAndFeedLevels(HttpStatusCode status, int expectedRequests)
+    {
+        var handler = new MockHttpMessageHandler();
+        for (var i = 0; i < expectedRequests; i++)
+            handler.QueueResponse(new HttpResponseMessage(status));
+
+        var services = new ServiceCollection();
+        services.AddVespaClient(new VespaClientOptions
+        {
+            Endpoint = "http://localhost:8080",
+            MaxRetryAttempts = 1,
+            FeedRetryBaseDelay = TimeSpan.FromMilliseconds(1),
+            EnableCircuitBreaker = false
+        }).ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<IVespaClient>();
+
+        var result = await client.Feed.BulkPutAsync(
+            [TestDataFactory.CreateFeedDocument("doc-1", new { name = "Test" })], "testdoc");
+
+        Assert.Equal(0, result.SuccessCount);
+        Assert.Equal(1, result.FailureCount);
+        Assert.Equal((int)status, Assert.Single(result.Errors).StatusCode);
+        Assert.Equal(expectedRequests, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AddVespaClient_UsesConfiguredCircuitBreakerThroughput()
+    {
+        using var configuration = new ConfigurationManager
+        {
+            ["Endpoint"] = "http://localhost:8080",
+            ["EnableRetry"] = "false",
+            ["CircuitBreakerMinimumThroughput"] = "4"
+        };
+        var options = configuration.Get<VespaClientOptions>(binder => binder.ErrorOnUnknownConfiguration = true)!;
+        var handler = new MockHttpMessageHandler();
+        HttpStatusCode[] sampledStatuses =
+        [
+            HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable,
+            HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable
+        ];
+        handler.QueueResponses(sampledStatuses.Select(status => new HttpResponseMessage(status)).ToArray());
+        var services = new ServiceCollection();
+        var registration = services.AddVespaClient(options).ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        using var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient(registration.Name);
+
+        foreach (var status in sampledStatuses)
+        {
+            using var response = await client.GetAsync("/state/v1/health");
+            Assert.Equal(status, response.StatusCode);
+        }
+
+        await Assert.ThrowsAnyAsync<BrokenCircuitException>(() => client.GetAsync("/state/v1/health"));
+        Assert.Equal(4, handler.Requests.Count);
     }
 
     [Fact]

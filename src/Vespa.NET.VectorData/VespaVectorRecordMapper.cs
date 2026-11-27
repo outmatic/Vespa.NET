@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -6,7 +7,7 @@ using MappedProperty = Vespa.VectorData.VespaCollectionModel.MappedProperty;
 
 namespace Vespa.VectorData;
 
-internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
+internal sealed class VespaVectorRecordMapper<[DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord> where TRecord : class
 {
     internal VespaVectorRecordMapper(VectorStoreCollectionDefinition? definition, IReadOnlyCollection<string> requiredDataFields,
         IEmbeddingGenerator? defaultEmbeddingGenerator = null) =>
@@ -18,18 +19,12 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
     internal IReadOnlyList<MappedProperty> Properties => Model.Properties;
     internal IReadOnlyList<MappedProperty> VectorProperties => Model.VectorProperties;
 
-    internal MappedProperty ResolveVector(string? name = null)
+    internal MappedProperty ResolveVector() => VectorProperties.Count switch
     {
-        if (name is not null)
-            return VectorProperties.SingleOrDefault(p => p.Name == name)
-                ?? throw new NotSupportedException($"Vector property '{name}' is not mapped.");
-        return VectorProperties.Count switch
-        {
-            0 => throw new NotSupportedException("This collection has no vector properties; only document operations are available."),
-            1 => VectorProperties[0],
-            _ => throw new NotSupportedException("Select a VectorProperty when the collection has multiple vector fields.")
-        };
-    }
+        0 => throw new NotSupportedException("This collection has no vector properties; only document operations are available."),
+        1 => VectorProperties[0],
+        _ => throw new NotSupportedException("Select a VectorProperty when the collection has multiple vector fields.")
+    };
 
     internal string Projection(bool includeVectors) => string.Join(", ",
         ReadProperties(includeVectors).Select(p => p.StorageName).Prepend("documentid"));
@@ -144,7 +139,7 @@ internal sealed class VespaVectorRecordMapper<TRecord> where TRecord : class
                 }
                 if (tensor.ValueKind == JsonValueKind.Object && !tensor.TryGetProperty("values", out tensor))
                     throw new VectorStoreException($"Expected a dense tensor values array for '{property.StorageName}'.");
-                var vector = tensor.Deserialize<float[]>()
+                var vector = tensor.Deserialize(VectorDataJsonContext.Default.SingleArray)
                     ?? throw new VectorStoreException($"Missing dense tensor values for '{property.StorageName}'.");
                 try
                 {

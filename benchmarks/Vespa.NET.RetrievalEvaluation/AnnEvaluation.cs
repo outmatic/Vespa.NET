@@ -49,8 +49,17 @@ internal static class AnnEvaluation
                 foreach (var query in corpus.Queries)
                 {
                     var (hits, milliseconds, _) = await SearchAsync(scenario.Configuration, query, scenario.Scope, approximate, scenario.Explore);
-                    results.Add(new { mode = scenario.Configuration.Name, scopePercent = scenario.Scope,
-                        approximate, explore = scenario.Explore, repeat, queryId = query.Id, milliseconds, hits });
+                    results.Add(new
+                    {
+                        mode = scenario.Configuration.Name,
+                        scopePercent = scenario.Scope,
+                        approximate,
+                        explore = scenario.Explore,
+                        repeat,
+                        queryId = query.Id,
+                        milliseconds,
+                        hits
+                    });
                 }
             // Profiling requests are separate from latency measurements and excluded from them.
             if (approximate)
@@ -63,10 +72,21 @@ internal static class AnnEvaluation
         }
         await File.WriteAllTextAsync(Path.Combine(output, tracesOnly ? "ann-traces.json" : "ann-results.json"), JsonSerializer.Serialize(new
         {
-            datasetSha256 = datasetHash, corpusSha256 = corpusHash, completedAtUtc = DateTimeOffset.UtcNow,
-            k, scopes, explorations, repeats, warmup, configurations = selected, baselines, results, traces,
+            datasetSha256 = datasetHash,
+            corpusSha256 = corpusHash,
+            completedAtUtc = DateTimeOffset.UtcNow,
+            k,
+            scopes,
+            explorations,
+            repeats,
+            warmup,
+            configurations = selected,
+            baselines,
+            results,
+            traces,
             bucketDefinition = "first four SHA-256(id) bytes as unsigned big-endian integer, modulo 100",
-            serverLabel, schemaSha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(schemaText))),
+            serverLabel,
+            schemaSha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(schemaText))),
             runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
             note = "approximate=true requests ANN; selective filters can cause Vespa to use exact search. Inspect recorded query traces."
         }, EvaluationCorpus.Json), ct);
@@ -78,12 +98,13 @@ internal static class AnnEvaluation
             var request = NativeRetrieval.CreateRequest(query.Text, query.Vector, "retrieval_evaluation",
                 EvaluationScope.Filter(corpusHash, scope, query), settings, k, approximate);
             if (trace)
-            {
-                request.TraceLevel = 3;
-                request.TraceExplainLevel = 2;
-                request.TraceProfileDepth = 4;
-                request.TraceQuery = false;
-            }
+                request = request with
+                {
+                    TraceLevel = 3,
+                    TraceExplainLevel = 2,
+                    TraceProfileDepth = 4,
+                    TraceQuery = false
+                };
             var start = Stopwatch.GetTimestamp();
             var response = await client.Search.SearchAsync<Dictionary<string, JsonElement>>(request, ct);
             if (response.Root.Errors is { Count: > 0 } errors)

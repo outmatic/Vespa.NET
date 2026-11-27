@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -10,6 +11,9 @@ namespace Vespa.VectorData;
 /// <summary>The validated, immutable mapping shared by document and query operations.</summary>
 internal sealed class VespaCollectionModel
 {
+    internal const DynamicallyAccessedMemberTypes RecordMembers =
+        DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties;
+
     private VespaCollectionModel(bool isDynamic, ConstructorInfo? constructor, MappedProperty key,
         MappedProperty[] properties, HashSet<string> requiredDataFields)
     {
@@ -28,7 +32,8 @@ internal sealed class VespaCollectionModel
     internal IReadOnlyList<MappedProperty> VectorProperties { get; }
     internal IReadOnlySet<string> RequiredDataFields { get; }
 
-    internal static VespaCollectionModel Build(Type recordType, VectorStoreCollectionDefinition? definition,
+    internal static VespaCollectionModel Build([DynamicallyAccessedMembers(RecordMembers)] Type recordType,
+        VectorStoreCollectionDefinition? definition,
         IReadOnlyCollection<string> requiredDataFields, IEmbeddingGenerator? defaultEmbeddingGenerator = null)
     {
         var isDynamic = recordType == typeof(Dictionary<string, object?>);
@@ -48,8 +53,11 @@ internal sealed class VespaCollectionModel
         if (key.Type != typeof(string) && key.Type != typeof(Guid) && key.Type != typeof(int) &&
             key.Type != typeof(long) && key.Type != typeof(ulong))
             throw new NotSupportedException("Keys must be string, Guid, int, long or ulong.");
-        var properties = definitions.Where(p => p is not VectorStoreKeyProperty).Select(p =>
+        var properties = new List<MappedProperty>(definitions.Length - 1);
+        foreach (var p in definitions)
         {
+            if (p is VectorStoreKeyProperty)
+                continue;
             if (p is not VectorStoreDataProperty and not VectorStoreVectorProperty)
                 throw new NotSupportedException($"Unsupported property definition '{p.GetType().Name}'.");
             var property = ResolveProperty(recordType, isDynamic, p, generator, nullability);
@@ -60,9 +68,9 @@ internal sealed class VespaCollectionModel
                 ValidateVectorProperty(property, (VectorStoreVectorProperty)p, isDynamic);
             else if (!IsSupportedDataType(property.Type))
                 throw new NotSupportedException($"Data property '{p.Name}' must be a supported scalar, scalar array or List<T>; nested object mapping is not implemented.");
-            return property;
-        }).ToArray();
-        if (properties.Select(p => p.StorageName).Distinct(StringComparer.Ordinal).Count() != properties.Length)
+            properties.Add(property);
+        }
+        if (properties.Select(p => p.StorageName).Distinct(StringComparer.Ordinal).Count() != properties.Count)
             throw new ArgumentException("Mapped storage field names must be unique.", nameof(definition));
         var required = requiredDataFields.ToHashSet(StringComparer.Ordinal);
         foreach (var property in properties.Where(p => !p.IsVector && p.Property?.IsDefined(typeof(RequiredMemberAttribute)) == true))
@@ -70,7 +78,7 @@ internal sealed class VespaCollectionModel
         foreach (var name in required)
             if (!properties.Any(p => !p.IsVector && p.StorageName == name))
                 throw new ArgumentException($"Required data field '{name}' must be a mapped data storage field.", nameof(requiredDataFields));
-        return new(isDynamic, constructor, key, properties, required);
+        return new(isDynamic, constructor, key, properties.ToArray(), required);
     }
 
     private static void ValidateVectorProperty(MappedProperty property, VectorStoreVectorProperty definition, bool isDynamic)
@@ -93,7 +101,9 @@ internal sealed class VespaCollectionModel
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(property.Dimensions);
     }
 
-    private static MappedProperty ResolveProperty(Type recordType, bool isDynamic, VectorStoreProperty definition,
+    private static MappedProperty ResolveProperty(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type recordType,
+        bool isDynamic, VectorStoreProperty definition,
         IEmbeddingGenerator? defaultGenerator, NullabilityInfoContext nullability)
     {
         PropertyInfo? property = null;
@@ -121,7 +131,6 @@ internal sealed class VespaCollectionModel
             Dimensions = vector?.Dimensions ?? 0,
             DistanceFunction = vector?.DistanceFunction ?? DistanceFunction.CosineSimilarity,
             IndexKind = vector?.IndexKind,
-            EmbeddingType = vector?.EmbeddingType,
             EmbeddingGenerator = vector is null ? null : vector.EmbeddingGenerator ?? defaultGenerator
         };
     }
@@ -158,11 +167,17 @@ internal sealed class VespaCollectionModel
                     dates[index++] = (long)ToStorageValue(elementType, element!);
                 return dates;
             }
-            if (value is Array array)
-                return array.Clone();
-            var snapshot = Array.CreateInstance(elementType, collection.Count);
-            collection.CopyTo(snapshot, 0);
-            return snapshot;
+            return value switch
+            {
+                Array array => array.Clone(),
+                List<string> list => list.ToArray(),
+                List<bool> list => list.ToArray(),
+                List<int> list => list.ToArray(),
+                List<long> list => list.ToArray(),
+                List<float> list => list.ToArray(),
+                List<double> list => list.ToArray(),
+                _ => throw new NotSupportedException($"'{type}' is not a supported data collection.")
+            };
         }
         return value switch
         {
@@ -178,24 +193,24 @@ internal sealed class VespaCollectionModel
     {
         var target = Nullable.GetUnderlyingType(type) ?? type;
         if (value.ValueKind == JsonValueKind.Null)
-            return value.Deserialize(type);
+        {
+            if (type == target && type.IsValueType)
+                throw new JsonException($"Cannot read null into '{type}'.");
+            return null;
+        }
         if (CollectionElementType(target) is { } elementType && IsDateType(elementType))
         {
             if (value.ValueKind != JsonValueKind.Array)
                 throw new JsonException($"Expected an array for '{type}'.");
-            var array = Array.CreateInstance(elementType, value.GetArrayLength());
-            var index = 0;
-            foreach (var element in value.EnumerateArray())
-                array.SetValue(FromStorageValue(elementType, element), index++);
-            if (target.IsArray)
-                return array;
-            var list = (IList)Activator.CreateInstance(target)!;
-            foreach (var element in array)
-                list.Add(element);
-            return list;
+            if (elementType == typeof(DateTime))
+                return ReadDates<DateTime>(value, target.IsArray);
+            if (elementType == typeof(DateTimeOffset))
+                return ReadDates<DateTimeOffset>(value, target.IsArray);
+            return ReadDates<DateOnly>(value, target.IsArray);
         }
         if (!IsDateType(target))
-            return value.Deserialize(type);
+            return value.Deserialize(VectorDataJsonContext.Default.GetTypeInfo(target)
+                ?? throw new NotSupportedException($"'{type}' is not a supported data type."));
         try
         {
             var number = value.GetInt64();
@@ -210,9 +225,19 @@ internal sealed class VespaCollectionModel
         }
     }
 
+    private static object ReadDates<T>(JsonElement value, bool asArray) where T : struct
+    {
+        var dates = new T[value.GetArrayLength()];
+        var index = 0;
+        foreach (var element in value.EnumerateArray())
+            dates[index++] = (T)FromStorageValue(typeof(T), element)!;
+        return asArray ? dates : new List<T>(dates);
+    }
+
     private static bool IsDateType(Type type) => type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(DateOnly);
 
-    private static List<VectorStoreProperty> DiscoverProperties(Type recordType)
+    private static List<VectorStoreProperty> DiscoverProperties(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type recordType)
     {
         List<VectorStoreProperty> result = [];
         foreach (var property in recordType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
@@ -248,7 +273,6 @@ internal sealed class VespaCollectionModel
         internal int Dimensions { get; init; }
         internal string DistanceFunction { get; init; } = Microsoft.Extensions.VectorData.DistanceFunction.CosineSimilarity;
         internal string? IndexKind { get; init; }
-        internal Type? EmbeddingType { get; init; }
         internal IEmbeddingGenerator? EmbeddingGenerator { get; init; }
         internal bool GeneratesVectors => IsVector && Type == typeof(string);
     }

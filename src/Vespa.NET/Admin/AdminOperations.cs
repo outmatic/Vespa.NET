@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using Vespa.Models;
@@ -58,9 +59,11 @@ public sealed partial class AdminOperations(
             LogDeployed(logger);
     }
 
+    [RequiresUnreferencedCode(VespaSchemaBuilder.RuntimeTypesRequireReflection)]
     public Task DeploySchemaAsync<T>(ApplicationPackageOptions? options = null, string? tenant = null, CancellationToken cancellationToken = default) where T : class =>
         DeployViaTemporaryFileAsync(fs => VespaSchemaBuilder.GenerateApplicationPackage<T>(fs, options), tenant, cancellationToken);
 
+    [RequiresUnreferencedCode(VespaSchemaBuilder.RuntimeTypesRequireReflection)]
     public Task DeploySchemaAsync(IEnumerable<Type> documentTypes, ApplicationPackageOptions? options = null, string? tenant = null, CancellationToken cancellationToken = default) =>
         DeployViaTemporaryFileAsync(fs => VespaSchemaBuilder.GenerateApplicationPackage(fs, documentTypes, options), tenant, cancellationToken);
 
@@ -95,8 +98,8 @@ public sealed partial class AdminOperations(
             if (!response.IsSuccessStatusCode)
                 return null;
 
-            return await response.Content.ReadFromJsonAsync<VespaApplicationStatus>(
-                VespaJsonOptions.Default, cancellationToken);
+            return await response.Content.ReadFromJsonAsync(
+                VespaProtocolJsonContext.Default.VespaApplicationStatus, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

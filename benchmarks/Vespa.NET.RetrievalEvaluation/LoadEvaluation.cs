@@ -26,8 +26,17 @@ internal static class LoadEvaluation
                         throw new InvalidOperationException("Profiling failed: " + result.Error);
                     traces.Add(new { mode = configuration.Name, scopePercent = scope, queryId = query.Id, trace });
                 }
-        await WriteAsync("load-traces.json", new { datasetSha256 = datasetHash, schemaSha256 = schemaHash,
-            configurationSha256 = configurationHash, configurations, scopes, k, traces, serverLabel });
+        await WriteAsync("load-traces.json", new
+        {
+            datasetSha256 = datasetHash,
+            schemaSha256 = schemaHash,
+            configurationSha256 = configurationHash,
+            configurations,
+            scopes,
+            k,
+            traces,
+            serverLabel
+        });
         if (tracesOnly)
             return;
 
@@ -39,7 +48,9 @@ internal static class LoadEvaluation
             random.Shuffle(queries);
             jobs.AddRange(queries.Select(q => (q, repeat)));
         }
-        var scenarios = (from configuration in configurations from scope in scopes from concurrency in concurrencies
+        var scenarios = (from configuration in configurations
+                         from scope in scopes
+                         from concurrency in concurrencies
                          select new Scenario(configuration, scope, concurrency)).ToArray();
         new Random(1730).Shuffle(scenarios);
         List<object> results = [];
@@ -65,21 +76,51 @@ internal static class LoadEvaluation
             for (var index = 0; index < jobs.Count; index++)
             {
                 var attempt = measurements[index];
-                results.Add(new { mode = scenario.Configuration.Name, scopePercent = scenario.Scope,
-                    concurrency = scenario.Concurrency, queryId = jobs[index].Query.Id, repeat = jobs[index].Repeat,
-                    attempt.Success, attempt.ErrorCode, attempt.Error, attempt.Milliseconds, attempt.Hits });
+                results.Add(new
+                {
+                    mode = scenario.Configuration.Name,
+                    scopePercent = scenario.Scope,
+                    concurrency = scenario.Concurrency,
+                    queryId = jobs[index].Query.Id,
+                    repeat = jobs[index].Repeat,
+                    attempt.Success,
+                    attempt.ErrorCode,
+                    attempt.Error,
+                    attempt.Milliseconds,
+                    attempt.Hits
+                });
             }
             var failures = measurements.Count(m => !m.Success);
-            cases.Add(new { mode = scenario.Configuration.Name, scopePercent = scenario.Scope, concurrency = scenario.Concurrency,
-                elapsedMilliseconds, attempts = jobs.Count, successful = jobs.Count - failures, warmupFailures });
+            cases.Add(new
+            {
+                mode = scenario.Configuration.Name,
+                scopePercent = scenario.Scope,
+                concurrency = scenario.Concurrency,
+                elapsedMilliseconds,
+                attempts = jobs.Count,
+                successful = jobs.Count - failures,
+                warmupFailures
+            });
             Console.WriteLine($"Load: {scenario.Configuration.Name}, scope={scenario.Scope}, concurrency={scenario.Concurrency}: {jobs.Count} attempts, {failures} failures.");
         }
         await WriteAsync("load-results.json", new
         {
-            datasetSha256 = datasetHash, corpusSha256 = corpusHash, schemaSha256 = schemaHash,
-            configurationSha256 = configurationHash, configurationSource, configurations, scopes, concurrencies,
-            k, repeats, warmup, serverLabel, runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
-            completedAtUtc = DateTimeOffset.UtcNow, cases, results,
+            datasetSha256 = datasetHash,
+            corpusSha256 = corpusHash,
+            schemaSha256 = schemaHash,
+            configurationSha256 = configurationHash,
+            configurationSource,
+            configurations,
+            scopes,
+            concurrencies,
+            k,
+            repeats,
+            warmup,
+            serverLabel,
+            runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+            completedAtUtc = DateTimeOffset.UtcNow,
+            cases,
+            results,
             note = "Closed-loop active-request concurrency; no fixed arrival rate or external queue. Timers include native request construction, summaries and response validation, excluding embeddings, warmups, profiling and pre-slot scheduling. Failures stay in denominators with empty hits; caller cancellation and identity/scope violations abort."
         });
 
@@ -94,12 +135,13 @@ internal static class LoadEvaluation
                 var request = NativeRetrieval.CreateRequest(query.Text, query.Vector, "retrieval_evaluation",
                     EvaluationScope.Filter(corpusHash, scope, query), configuration, k);
                 if (profile)
-                {
-                    request.TraceLevel = 3;
-                    request.TraceExplainLevel = 2;
-                    request.TraceProfileDepth = 4;
-                    request.TraceQuery = false;
-                }
+                    request = request with
+                    {
+                        TraceLevel = 3,
+                        TraceExplainLevel = 2,
+                        TraceProfileDepth = 4,
+                        TraceQuery = false
+                    };
                 var response = await client.Search.SearchAsync<Dictionary<string, JsonElement>>(request, ct);
                 if (response.Root.Errors is { Count: > 0 } errors)
                     return Failed("backend", string.Join("; ", errors.Select(e => e.Message)));

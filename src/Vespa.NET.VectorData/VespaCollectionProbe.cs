@@ -6,7 +6,8 @@ namespace Vespa.VectorData;
 
 internal static class VespaCollectionProbe
 {
-    internal static async Task<bool> ExistsAsync(string name, IVespaCollectionCatalog? catalog, CancellationToken cancellationToken)
+    internal static async Task<bool> ExistsAsync(string name, IVespaCollectionCatalog? catalog, string operation,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         VespaVectorValidation.Identifier(name, nameof(name));
@@ -16,13 +17,9 @@ internal static class VespaCollectionProbe
         {
             return await catalog.CollectionExistsAsync(name, cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (VespaVectorErrors.IsOperational(exception, cancellationToken))
         {
-            throw;
-        }
-        catch (Exception exception) when (exception is VespaException or HttpRequestException or JsonException or OperationCanceledException)
-        {
-            throw Failure(name, nameof(VectorStore.CollectionExistsAsync), exception.Message, exception);
+            throw VespaVectorErrors.Create(name, operation, exception.Message, exception);
         }
     }
 
@@ -40,28 +37,32 @@ internal static class VespaCollectionProbe
                 Ranking = new RankingConfig { Profile = "unranked" }
             }.WithTimeout(timeout), cancellationToken);
             if (response.Root.Errors is { Count: > 0 } errors)
-                throw Failure(name, operation, string.Join("; ", errors.Select(Describe)));
+                throw VespaVectorErrors.Create(name, operation, string.Join("; ", errors.Select(Describe)));
             if (response.Root.Coverage is { Full: false })
-                throw Failure(name, operation, "Vespa returned incomplete search coverage.");
+                throw VespaVectorErrors.Create(name, operation, "Vespa returned incomplete search coverage.");
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is VespaException or HttpRequestException or JsonException or OperationCanceledException)
+        catch (Exception exception) when (VespaVectorErrors.IsOperational(exception, cancellationToken))
         {
             var message = exception is VespaException { Error: { } error } ? Describe(error) : exception.Message;
-            throw Failure(name, operation, message, exception);
+            throw VespaVectorErrors.Create(name, operation, message, exception);
         }
     }
 
     private static string Describe(VespaError error) => string.IsNullOrWhiteSpace(error.Details)
         ? error.Message : $"{error.Message}: {error.Details}";
+}
 
-    internal static VectorStoreException Failure(string name, string operation, string message, Exception? inner = null) => new(message, inner)
-    {
-        VectorStoreSystemName = "vespa",
-        CollectionName = name,
-        OperationName = operation
-    };
+internal static class VespaVectorErrors
+{
+    internal static bool IsOperational(Exception exception, CancellationToken cancellationToken) =>
+        exception is VespaException or HttpRequestException or JsonException ||
+        exception is OperationCanceledException && !cancellationToken.IsCancellationRequested;
+
+    internal static VectorStoreException Create(string? collectionName, string operation, string message,
+        Exception? innerException = null) => new(message, innerException)
+        {
+            VectorStoreSystemName = "vespa",
+            CollectionName = collectionName,
+            OperationName = operation
+        };
 }

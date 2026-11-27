@@ -11,7 +11,8 @@ namespace Vespa.VectorData;
 
 /// <summary>A record binding to an existing Vespa schema, with dense vector and keyword hybrid search.</summary>
 [SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "Matches the VectorData VectorStoreCollection abstraction.")]
-public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreCollection<TKey, TRecord>, IKeywordHybridSearchable<TRecord> where TKey : notnull where TRecord : class
+public sealed class VespaVectorStoreCollection<TKey, [DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord>
+    : VectorStoreCollection<TKey, TRecord>, IKeywordHybridSearchable<TRecord> where TKey : notnull where TRecord : class
 {
     private readonly IVespaClient _client;
     private readonly VespaVectorStoreOptions _options;
@@ -38,16 +39,16 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
     public override Task<bool> CollectionExistsAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return VespaCollectionProbe.ExistsAsync(Name, _options.CollectionCatalog, cancellationToken);
+        return VespaCollectionProbe.ExistsAsync(Name, _options.CollectionCatalog, nameof(CollectionExistsAsync), cancellationToken);
     }
 
     public override async Task EnsureCollectionExistsAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
-        if (_options.CollectionCatalog is not null)
+        if (_options.CollectionCatalog is { } catalog)
         {
-            if (!await CollectionExistsAsync(cancellationToken))
+            if (!await VespaCollectionProbe.ExistsAsync(Name, catalog, nameof(EnsureCollectionExistsAsync), cancellationToken))
                 throw Failure(nameof(EnsureCollectionExistsAsync),
                     $"Schema '{Name}' is not deployed. Deploy the Vespa application separately before using this collection; automatic schema deployment is not enabled by this provider.");
         }
@@ -242,8 +243,10 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         ArgumentNullException.ThrowIfNull(filter);
         ValidateWindow(top, options?.Skip ?? 0);
         var translator = new VespaVectorFilter<TRecord>(_mapper);
-        var request = Request(translator.Translate(filter), top, options?.Skip ?? 0, options?.IncludeVectors == true);
-        request.Ranking = new RankingConfig { Profile = "unranked" };
+        var request = Request(translator.Translate(filter), top, options?.Skip ?? 0, options?.IncludeVectors == true) with
+        {
+            Ranking = new RankingConfig { Profile = "unranked" }
+        };
         if (options?.OrderBy is { } orderBy)
         {
             var sort = orderBy(new()).Values.Select(item =>
@@ -255,7 +258,7 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
             }).ToArray();
             if (sort.Length > 0)
             {
-                request.Yql += " order by " + string.Join(", ", sort);
+                request = request with { Yql = request.Yql + " order by " + string.Join(", ", sort) };
             }
         }
         foreach (var hit in await QueryAsync(request, nameof(GetAsync), cancellationToken))
@@ -265,63 +268,70 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         }
     }
 
-    public override async IAsyncEnumerable<VectorSearchResult<TRecord>> SearchAsync<TInput>(TInput searchValue, int top,
-        VectorSearchOptions<TRecord>? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override IAsyncEnumerable<VectorSearchResult<TRecord>> SearchAsync<TInput>(TInput searchValue, int top,
+        VectorSearchOptions<TRecord>? options = null, CancellationToken cancellationToken = default) =>
+        ExecuteVectorSearchAsync(searchValue, top, options, null, cancellationToken);
+
+    /// <summary>Combines dense and lexical candidates using a separately deployed hybrid ranking profile.</summary>
+    public IAsyncEnumerable<VectorSearchResult<TRecord>> HybridSearchAsync<TInput>(TInput searchValue,
+        ICollection<string> keywords, int top, HybridSearchOptions<TRecord>? options = null,
+        CancellationToken cancellationToken = default) where TInput : notnull =>
+        ExecuteVectorSearchAsync(searchValue, top, null, (keywords, options), cancellationToken);
+
+    private async IAsyncEnumerable<VectorSearchResult<TRecord>> ExecuteVectorSearchAsync<TInput>(TInput searchValue, int top,
+        VectorSearchOptions<TRecord>? options, (ICollection<string> Keywords, HybridSearchOptions<TRecord>? Options)? hybridSearch,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(searchValue);
-        ValidateWindow(top, options?.Skip ?? 0);
-        ValidateThreshold(options?.ScoreThreshold);
-        var property = SelectVector(options?.VectorProperty);
-        var binding = Binding(property, hybrid: false);
+        var hybrid = hybridSearch.HasValue;
+        var keywords = hybridSearch?.Keywords;
+        var hybridOptions = hybridSearch?.Options;
+        if (hybrid)
+            ArgumentNullException.ThrowIfNull(keywords);
+        ValidateWindow(top, hybridOptions?.Skip ?? options?.Skip ?? 0);
+        ValidateThreshold(hybridOptions?.ScoreThreshold ?? options?.ScoreThreshold);
+        var property = SelectVector(hybridOptions?.VectorProperty ?? options?.VectorProperty);
+        var binding = Binding(property, hybrid);
+        var rankProfile = hybrid ? binding.HybridRankProfile : binding.RankProfile;
+        var operation = hybrid ? nameof(HybridSearchAsync) : nameof(SearchAsync);
+
         var filterPredicate = options?.Filter is { } filter
             ? new VespaVectorFilter<TRecord>(_mapper).Translate(filter) : null;
+        var hybridPredicate = keywords is not null ? HybridPredicate(keywords, top, hybridOptions, property, binding) : null;
         var vector = await QueryVectorAsync(searchValue, property, cancellationToken);
-        var nearest = Nearest(property, binding.QueryTensorName!, top + (options?.Skip ?? 0),
-            VespaVectorMetric.DistanceThreshold(property.DistanceFunction, options?.ScoreThreshold));
-        var predicate = filterPredicate is not null ? $"({filterPredicate}) and {nearest}" : nearest;
-        var request = Request(predicate, top, options?.Skip ?? 0, options?.IncludeVectors == true);
-        request.Ranking = new RankingConfig { Profile = binding.RankProfile };
-        request.Input = new() { [$"query({binding.QueryTensorName})"] = VespaVectorRecordMapper<TRecord>.Tensor(vector) };
+        var skip = hybridOptions?.Skip ?? options?.Skip ?? 0;
+        var predicate = hybridPredicate ?? ApplyFilter(filterPredicate,
+            Nearest(property, binding.QueryTensorName!, top + skip,
+                VespaVectorMetric.DistanceThreshold(property.DistanceFunction, options?.ScoreThreshold)));
+        var request = Request(predicate, top, skip, (hybridOptions?.IncludeVectors ?? options?.IncludeVectors) == true) with
+        {
+            Ranking = new RankingConfig { Profile = rankProfile },
+            Input = new Dictionary<string, object?>
+            {
+                [$"query({binding.QueryTensorName})"] = VespaVectorRecordMapper<TRecord>.Tensor(vector)
+            }
+        };
+
         var previousDistance = double.NegativeInfinity;
-        foreach (var hit in await QueryAsync(request, nameof(SearchAsync), cancellationToken))
+        foreach (var hit in await QueryAsync(request, operation, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var feature = $"distance(field,{property.StorageName})";
-            if (hit.GetMatchFeature(feature) is not { } distance)
-                throw Failure(nameof(SearchAsync), $"Rank profile '{binding.RankProfile}' must return match-feature '{feature}'.");
-            double score;
-            try
-            {
-                score = VespaVectorMetric.Score(property.DistanceFunction, distance);
-            }
-            catch (ArgumentException exception)
-            {
-                throw Failure(nameof(SearchAsync), $"Rank profile '{binding.RankProfile}' returned an invalid distance for '{property.Name}'.", exception);
-            }
-            if (distance < previousDistance)
-                throw Failure(nameof(SearchAsync), $"Rank profile '{binding.RankProfile}' must order results by increasing distance for '{property.Name}', without unrelated reranking.");
-            previousDistance = distance;
-            if (options?.ScoreThreshold is { } threshold && !VespaVectorMetric.PassesThreshold(property.DistanceFunction, score, threshold))
+            if (hybrid && !double.IsFinite(hit.Relevance))
+                throw Failure(operation, "The hybrid ranking profile must return a finite combined relevance score.");
+            var score = hybrid ? hit.Relevance : VectorScore(hit, property, rankProfile, ref previousDistance);
+            if ((hybridOptions?.ScoreThreshold ?? options?.ScoreThreshold) is { } threshold &&
+                (hybrid ? score < threshold : !VespaVectorMetric.PassesThreshold(property.DistanceFunction, score, threshold)))
                 continue;
-            yield return new VectorSearchResult<TRecord>(MapHit(hit, options?.IncludeVectors == true, nameof(SearchAsync)), score);
+            yield return new VectorSearchResult<TRecord>(
+                MapHit(hit, (hybridOptions?.IncludeVectors ?? options?.IncludeVectors) == true, operation), score);
         }
     }
 
-    /// <summary>Combines dense and lexical candidates using a separately deployed hybrid ranking profile.</summary>
-    public async IAsyncEnumerable<VectorSearchResult<TRecord>> HybridSearchAsync<TInput>(TInput searchValue,
-        ICollection<string> keywords, int top, HybridSearchOptions<TRecord>? options = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default) where TInput : notnull
+    private string HybridPredicate(ICollection<string> keywords, int top, HybridSearchOptions<TRecord>? options,
+        VespaCollectionModel.MappedProperty property, VespaVectorFieldOptions binding)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
-        ArgumentNullException.ThrowIfNull(searchValue);
-        ArgumentNullException.ThrowIfNull(keywords);
-        ValidateWindow(top, options?.Skip ?? 0);
-        ValidateThreshold(options?.ScoreThreshold);
-        var property = SelectVector(options?.VectorProperty);
-        var binding = Binding(property, hybrid: true);
         var translator = new VespaVectorFilter<TRecord>(_mapper);
         var textProperties = _mapper.Properties.Where(p => p.IsFullTextIndexed).ToArray();
         var textProperty = options?.AdditionalProperty is { } selector ? translator.ResolvePropertySelector(selector)
@@ -340,23 +350,32 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         // JSON quoting keeps every keyword inside a YQL string literal; full-text
         // analysis is performed by the selected field, without accepting query syntax.
         var lexical = "({totalTargetHits:" + keywordTarget.ToString(CultureInfo.InvariantCulture) + "}weakAnd(" +
-            string.Join(", ", terms.Select(term => $"{textProperty.StorageName} contains {JsonSerializer.Serialize(term)}")) + "))";
-        var predicate = $"({nearest} or {lexical})";
-        if (filterPredicate is not null)
-            predicate = $"({filterPredicate}) and {predicate}";
-        var vector = await QueryVectorAsync(searchValue, property, cancellationToken);
-        var request = Request(predicate, top, options?.Skip ?? 0, options?.IncludeVectors == true);
-        request.Ranking = new RankingConfig { Profile = binding.HybridRankProfile };
-        request.Input = new() { [$"query({binding.QueryTensorName})"] = VespaVectorRecordMapper<TRecord>.Tensor(vector) };
-        foreach (var hit in await QueryAsync(request, nameof(HybridSearchAsync), cancellationToken))
+            string.Join(", ", terms.Select(term => $"{textProperty.StorageName} contains {JsonSerializer.Serialize(term, VectorDataJsonContext.Default.String)}")) + "))";
+        return ApplyFilter(filterPredicate, $"({nearest} or {lexical})");
+    }
+
+    private static string ApplyFilter(string? filter, string predicate) =>
+        filter is not null ? $"({filter}) and {predicate}" : predicate;
+
+    private double VectorScore(SearchHit<Dictionary<string, JsonElement>> hit,
+        VespaCollectionModel.MappedProperty property, string? rankProfile, ref double previousDistance)
+    {
+        var feature = $"distance(field,{property.StorageName})";
+        if (hit.GetMatchFeature(feature) is not { } distance)
+            throw Failure(nameof(SearchAsync), $"Rank profile '{rankProfile}' must return match-feature '{feature}'.");
+        double score;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!double.IsFinite(hit.Relevance))
-                throw Failure(nameof(HybridSearchAsync), "The hybrid ranking profile must return a finite combined relevance score.");
-            if (options?.ScoreThreshold is { } minimum && hit.Relevance < minimum)
-                continue;
-            yield return new VectorSearchResult<TRecord>(MapHit(hit, options?.IncludeVectors == true, nameof(HybridSearchAsync)), hit.Relevance);
+            score = VespaVectorMetric.Score(property.DistanceFunction, distance);
         }
+        catch (ArgumentException exception)
+        {
+            throw Failure(nameof(SearchAsync), $"Rank profile '{rankProfile}' returned an invalid distance for '{property.Name}'.", exception);
+        }
+        if (distance < previousDistance)
+            throw Failure(nameof(SearchAsync), $"Rank profile '{rankProfile}' must order results by increasing distance for '{property.Name}', without unrelated reranking.");
+        previousDistance = distance;
+        return score;
     }
 
     private VespaCollectionModel.MappedProperty SelectVector(LambdaExpression? selector)
@@ -495,22 +514,14 @@ public sealed class VespaVectorStoreCollection<TKey, TRecord> : VectorStoreColle
         {
             return await action();
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is VespaException or HttpRequestException or JsonException or OperationCanceledException)
+        catch (Exception exception) when (VespaVectorErrors.IsOperational(exception, cancellationToken))
         {
             throw Failure(operation, exception.Message, exception);
         }
     }
 
-    private VectorStoreException Failure(string operation, string message, Exception? innerException = null) => new(message, innerException)
-    {
-        VectorStoreSystemName = "vespa",
-        CollectionName = Name,
-        OperationName = operation
-    };
+    private VectorStoreException Failure(string operation, string message, Exception? innerException = null) =>
+        VespaVectorErrors.Create(Name, operation, message, innerException);
 
     private void ValidateWindow(int top, int skip)
     {

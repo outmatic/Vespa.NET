@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -86,14 +88,21 @@ public sealed partial class DocumentOperations
         string? continuation,
         CancellationToken cancellationToken) where T : class
     {
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "document visits");
         var url = BuildVisitUrl(basePath, selection, cluster, options, continuation, stream: false);
         using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
             throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
-        return await VespaIdInjector.DeserializeVisitAndInjectAsync<T>(response.Content, cancellationToken)
+        if (VespaJsonReflection.IsEnabled && model is null)
+            return await VespaIdInjector.DeserializeVisitAndInjectAsync<T>(response.Content, cancellationToken)
+                ?? throw new VespaException("The visit response did not contain a page.");
+
+        var page = await response.Content.ReadFromJsonAsync(VespaProtocolJsonContext.Default.VisitPageWire, cancellationToken)
             ?? throw new VespaException("The visit response did not contain a page.");
+        var documents = page.Documents?.ConvertAll(document => document.ToDocument(model!));
+        return new VespaVisitResponse<T>(documents, page.Continuation, page.DocumentCount, page.PathId);
     }
 
     private async IAsyncEnumerable<VespaDocument<T>> VisitPagedCoreAsync<T>(
@@ -129,12 +138,17 @@ public sealed partial class DocumentOperations
         VisitOptions? options,
         [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
     {
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "JSONL document visits");
         string? continuation = null;
         do
         {
             var url = BuildVisitUrl(basePath, selection, cluster, options, continuation, stream: true);
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url)
+            {
+                Version = _httpClient.DefaultRequestVersion,
+                VersionPolicy = _httpClient.DefaultVersionPolicy
+            };
             request.Headers.Accept.Clear();
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(JsonlMediaType));
 
@@ -191,7 +205,7 @@ public sealed partial class DocumentOperations
                         continue;
                     }
 
-                    var doc = ParseJsonlDocument<T>(root);
+                    var doc = ParseJsonlDocument(root, model);
                     if (doc is not null)
                         yield return doc;
                 }
@@ -253,7 +267,11 @@ public sealed partial class DocumentOperations
     /// <c>IncludeRemoves = true</c>) are <c>{"remove":"id:..."}</c> and yield a document
     /// with <see langword="null"/> <c>Fields</c>; other metadata returns <see langword="null"/>.
     /// </summary>
-    private static VespaDocument<T>? ParseJsonlDocument<T>(JsonElement root) where T : class
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "The visit resolves model metadata before reading the lines when reflection JSON is disabled.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path deserializes the fields with the registered JsonTypeInfo.")]
+    private static VespaDocument<T>? ParseJsonlDocument<T>(JsonElement root, ModelJson<T>? model) where T : class
     {
         if (root.TryGetProperty("remove", out var removeElem))
             return new VespaDocument<T>
@@ -270,15 +288,19 @@ public sealed partial class DocumentOperations
         if (id is null)
             return null;
 
-        var doc = new VespaDocument<T>
+        root.TryGetProperty("fields", out var fields);
+        if (VespaJsonReflection.IsEnabled && model is null)
         {
-            FullId = id,
-            Fields = root.TryGetProperty("fields", out var fieldsElem)
-                ? fieldsElem.Deserialize<T>(VespaJsonOptions.Default)
-                : null
-        };
-        VespaIdInjector.Inject(doc);
-        return doc;
+            var doc = new VespaDocument<T>
+            {
+                FullId = id,
+                Fields = fields.ValueKind == JsonValueKind.Undefined ? null : fields.Deserialize<T>(VespaJsonOptions.Default)
+            };
+            VespaIdInjector.Inject(doc);
+            return doc;
+        }
+
+        return new VespaDocument<T> { FullId = id, Fields = model!.ReadFields(fields, id) };
     }
 
     /// <summary>

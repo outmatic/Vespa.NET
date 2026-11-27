@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Vespa.Models;
 using Vespa.Models.Attributes;
@@ -6,10 +7,11 @@ namespace Vespa.Documents;
 
 /// <summary>
 /// Fluent builder for typed field-level update operations.
-/// Field names are resolved via <see cref="VespaDocumentMeta.FieldName{T}"/>,
-/// honouring <c>[VespaField(Name = "...")]</c> and falling back to the C# property name.
+/// Field names use <see cref="VespaFieldAttribute.Name"/> when supplied, otherwise the snake_case property name.
+/// Each selected property must have its own document JSON binding with the same name.
 /// </summary>
-public sealed class TypedFieldUpdateBuilder<T> where T : class
+public sealed class TypedFieldUpdateBuilder<
+    [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T> where T : class
 {
     private readonly Dictionary<string, FieldOperation> _fields = [];
 
@@ -22,7 +24,7 @@ public sealed class TypedFieldUpdateBuilder<T> where T : class
         Expression<Func<T, object?>> selector,
         FieldOperation operation)
     {
-        _fields[VespaDocumentMeta.FieldName(selector)] = operation;
+        _fields[DocumentFieldSelector.FieldName(selector)] = operation;
         return this;
     }
 

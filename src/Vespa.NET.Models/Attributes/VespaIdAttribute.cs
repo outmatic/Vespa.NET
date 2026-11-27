@@ -5,5 +5,5 @@ namespace Vespa.Models.Attributes;
 /// serialization (it is sent in the URL, not the document body) and is not
 /// included in the generated schema.
 /// </summary>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
 public sealed class VespaIdAttribute : Attribute;

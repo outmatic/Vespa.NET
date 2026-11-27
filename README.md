@@ -31,17 +31,17 @@ The [SciFact and FiQA results](docs/retrieval-transfer.md) compare the same froz
 | **Models** | Attribute-based field names, tensor formats and [`[VespaExtraFields]`](https://github.com/outmatic/Vespa.NET/blob/main/docs/schema.md#dynamic-fields-with-vespaextrafields) for fields outside the C# model |
 | **Cloud** | mTLS (PEM, PFX, in-memory cert), Bearer token auth |
 | **Ops** | OpenTelemetry traces + metrics, ASP.NET Core health checks, Testcontainers |
-| **Performance** | HTTP/2 multiplexing, connection pooling, GZip/Deflate, `ResponseHeadersRead` |
+| **Performance** | HTTP/2 multiplexing, connection pooling, gzip/deflate response decompression, `ResponseHeadersRead` |
 | **Resilience** | HTTP retry + circuit breaker through DI, feed-level retry and source-generated logging |
 
 ---
 
 ## Quick Start
 
-The example targets a local Vespa 8 instance with the document/query endpoint on port `8080` and the config server on port `19071`. It deploys a generated application package; use a separate development instance for this example.
+Vespa.NET 4.0 and VectorData use Vespa 8.640.27 as their server baseline. The quickstart uses a tested Vespa 8.788.13 image and deploys a generated application package. Run it against a dedicated development instance with the document and query API on port `8080` and the config server on port `19071`. [Server compatibility](docs/migration-4.0.md#vespa-server-compatibility)
 
 ```bash
-docker run --detach --name vespa --publish 8080:8080 --publish 19071:19071 vespaengine/vespa:8
+docker run --detach --name vespa --publish 8080:8080 --publish 19071:19071 vespaengine/vespa:8.788.13
 ```
 
 Wait for the config server at `http://localhost:19071/ApplicationStatus` to respond before deploying. If your application is already deployed, configure `Endpoint` and skip the deployment call.
@@ -55,6 +55,10 @@ dotnet add package Vespa.NET
 ```
 
 Use `--framework net8.0` to target .NET 8.
+
+Use generated JSON metadata when publishing a Vespa.NET 4.0 app with trimming or Native AOT. The support notes list the paths and platforms tested from installed packages. [Trimming and Native AOT](docs/configuration.md#trimming-and-native-aot)
+
+The library projects run the trim and AOT analyzers during build. Native AOT support covers the documented operations with registered metadata. Reflection-based JSON, runtime schema discovery and direct deserialization of `SearchHit<T>` still require runtime capabilities, so the packages do not declare blanket AOT compatibility.
 
 | Package | Use |
 |---|---|
@@ -155,6 +159,8 @@ The options-only constructor configures its HTTP handler and owns its lifetime. 
 
 The following examples are independent and reuse the model and client above. Document extensions infer the schema and namespace from `[VespaDocument]`; search extensions infer the schema. `[VespaField(Name)]` drives both schema generation and JSON serialization.
 
+These examples use the 4.0 API. [Migration guide](docs/migration-4.0.md)
+
 ```csharp
 // CRUD — no documentType needed
 await client.Documents.PutAsync(product.Id, product);
@@ -162,7 +168,7 @@ var doc = await client.Documents.GetAsync<Product>(product.Id);
 
 // Request options with model-inferred schema and namespace
 var readOptions = new DocumentRequestOptions { Cluster = "content", Timeout = TimeSpan.FromSeconds(5) };
-var routedDoc = await client.Documents.GetAsync<Product>(readOptions, product.Id);
+var routedDoc = await client.Documents.GetAsync<Product>(product.Id, requestOptions: readOptions);
 
 // Field-level update with typed lambda builder
 await client.Documents.UpdateFieldsAsync<Product>(product.Id, ops => ops
@@ -174,7 +180,7 @@ var results = await client.Search.NearestNeighborSearchAsync<Product>(
     queryEmbedding, p => p.Embedding, topK: 10, rankProfile: "semantic");
 
 // Visit
-await foreach (var d in client.Documents.VisitAsync<Product>(selection: "product.price > 100"))
+await foreach (var d in client.Documents.VisitAsync<Product>(selection: p => p.Price > 100))
     Console.WriteLine(d.Fields?.Name);
 
 // One visit page; persist Continuation after processing to resume later
@@ -188,8 +194,8 @@ if (!page.IsComplete)
 
 // Selection-based bulk ops — typed builder, auto-loops on Vespa's continuation token
 var resp = await client.Documents.UpdateBySelectionAsync<Product>(
-    "product.price > 100",
     ops => ops.Field(p => p.Price, FieldOp.Multiply(0.9)),
+    selection: p => p.Price > 100,
     cluster: "content");
 // resp.DocumentCount is the total across all chunks
 
@@ -197,6 +203,8 @@ await client.Documents.DeleteAsync<Product>(product.Id);
 ```
 
 Persist a visit continuation **after processing that page**. An empty page may still have a continuation; use `IsComplete` to decide whether visiting has ended.
+
+For selected document fields, build `DocumentFieldSet.For<Product>(p => p.Name, p => p.Price)` and pass it as the named `fieldSet:` argument on GET, or assign it to `VisitOptions.FieldSet`. See [Document field sets](docs/document-operations.md#document-field-sets).
 
 Pass a bare ID such as `"p-1"` or a full ID such as `"id:myapp:product::p-1"`. Full IDs retain their namespace, type and group/number addressing; incompatible targets throw. Returned documents expose `FullId` as well as the user-specified `Id`.
 
@@ -214,7 +222,7 @@ var yql = YqlBuilder<Product>
         w.Field(p => p.Price).GreaterThan(10);
         w.Field(p => p.Name).Contains("laptop");
     })
-    .OrderBy(p => p.Price, descending: true)
+    .OrderBy(p => p.Price, SortDirection.Descending)
     .Limit(20)
     .Build();
 ```
@@ -238,7 +246,7 @@ var results = await client.Search.SearchAsync<Product>(request);
 
 Additional query parameters can be sent with `request.WithParameter(name, value)`. For example, `request.WithParameter("ranking.matching.anntimebudget", "25ms")` sets an ANN time budget on Vespa 8.684.9 or newer.
 
-`SearchStreamAsync` paginates ordinary search results lazily and is subject to Vespa's `maxHits`/`maxOffset` limits. Use document visiting to export a corpus. Vespa's separate streaming search mode requires a streaming-mode content cluster and request properties such as `StreamingGroupName`.
+`SearchStreamAsync` paginates ordinary search results lazily and is subject to Vespa's `maxHits`/`maxOffset` limits. Use document visiting to export a corpus. Vespa's separate [streaming search mode](docs/search.md#native-streaming-search) requires a streaming-mode content cluster. Use `StreamingGroupName` or `WithStreamingGroups` to select groups and YQL to filter their contents.
 
 > Full predicate reference, boolean composition, and validation rules in **[docs/yql-builder.md](https://github.com/outmatic/Vespa.NET/blob/main/docs/yql-builder.md)**
 
@@ -346,10 +354,10 @@ var metrics = await client.GetMetricsAsync();
 ```
 
 > **Note:**
-> `ApiKey`, `DefaultRequestHeaders`, compression, timeout, and mTLS settings are applied to both the data-plane client and the admin/config-server client.
+> The SDK applies `ApiKey`, `DefaultRequestHeaders` and timeout to both clients. When it builds the handlers, it also applies the connection and certificate options to both. `UseCompression` enables gzip and deflate response decompression.
 
 > **Note:**
-> Retry and circuit-breaker options are enforced by the DI registrations (`AddVespaClient`). A directly constructed `VespaClient` applies feed-level retry only; use `new VespaClient(options)` (options-only constructor) to get a fully configured handler (mTLS, compression, pooling) without DI.
+> Use `AddVespaClient` for HTTP retries and the circuit breaker. A directly constructed client uses feed-level retry when enabled. Use `new VespaClient(options)` to have the SDK build and own the data-plane handler outside DI.
 
 > **Tip:**
 > Health/state helpers such as `HealthCheckAsync`, `IsReadyAsync`, `GetMetricsAsync`, `GetVersionAsync`, and `GetHistogramsAsync` are best-effort on ordinary failures, but they still propagate `OperationCanceledException` when the request is cancelled.
@@ -416,10 +424,11 @@ var options = new VespaClientOptions
     Endpoint        = "https://myapp.vespa-cloud.com",
     CertificatePath = "/path/to/cert.pem",
     ClientKeyPath   = "/path/to/key.pem",
-    // or: ClientCertificate = myCert,
-    // or: ApiKey = "bearer-token"
 };
+using var client = new VespaClient(options);
 ```
+
+For a named DI client, pass the same options to `AddVespaClient`. See the configuration guide for PFX, in-memory certificates, token authentication and supplying your own `HttpClient`. [Vespa Cloud configuration](docs/configuration.md#vespa-cloud-mtls)
 
 </details>
 
@@ -431,13 +440,14 @@ Install `OpenTelemetry.Extensions.Hosting` and register the SDK's sources in you
 ```csharp
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using Vespa;
 
 builder.Services.AddOpenTelemetry()
-    .WithTracing(b => b.AddSource("Vespa.NET"))
-    .WithMetrics(m => m.AddMeter("Vespa.NET"));
+    .WithTracing(b => b.AddSource(VespaActivitySource.Name))
+    .WithMetrics(m => m.AddMeter(VespaClientMetrics.MeterName));
 ```
 
-Spans: `vespa.search`, `vespa.document.*`, `vespa.feed.pipeline`, etc. Query text (YQL) and document ids are excluded from span tags by default; opt in with `VespaClientOptions.RecordQueryTextInTraces = true`. Metrics: `vespa.client.requests`, `vespa.client.request_duration`, `vespa.client.documents_written`, etc.
+Spans include `vespa.search`, `vespa.document.*` and `vespa.feed.pipeline`. Set `VespaClientOptions.RecordQueryTextInTraces = true` to include YQL and document IDs as span tags. The HTTP pipeline registered by `AddVespaClient` records metrics such as `vespa.client.requests` and `vespa.client.request_duration`.
 
 </details>
 
@@ -446,6 +456,13 @@ Spans: `vespa.search`, `vespa.document.*`, `vespa.feed.pipeline`, etc. Query tex
 
 ```csharp
 builder.Services.AddHealthChecks().AddVespa();
+```
+
+For a client registered with `AddVespaClient("analytics", options)`, register its readiness check by key and give the check its own name.
+
+```csharp
+builder.Services.AddHealthChecks()
+    .AddVespa(clientName: "analytics", name: "vespa-analytics", tags: ["ready"]);
 ```
 
 </details>

@@ -36,10 +36,10 @@ internal static class VespaErrorResponse
                     errors.ValueKind == JsonValueKind.Array)
                     error = errors.EnumerateArray().FirstOrDefault(e => e.ValueKind == JsonValueKind.Object)
                         is { ValueKind: JsonValueKind.Object } first
-                            ? first.Deserialize<VespaError>(VespaJsonOptions.Default)
+                            ? first.Deserialize(VespaProtocolJsonContext.Default.VespaError)
                             : null;
                 else if (root.ValueKind == JsonValueKind.Object)
-                    error = root.Deserialize<VespaError>(VespaJsonOptions.Default);
+                    error = root.Deserialize(VespaProtocolJsonContext.Default.VespaError);
             }
             catch (JsonException)
             {

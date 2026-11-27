@@ -1,0 +1,12 @@
+root = true
+
+[*.cs]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+# Editor preferences. Build analyzer settings live in src/Directory.Build.props.
+csharp_style_namespace_declarations = file_scoped:suggestion
+csharp_prefer_braces = false:suggestion

@@ -81,6 +81,64 @@ public sealed class LiveVespaTests
         Assert.Null(await new VespaAgentStateStore(newClient, new() { Namespace = "knowledge", Scope = "bob" }).ReadAsync("concurrency", ct));
         await VerifyNativeRetrievalAsync(newClient, ct);
         await VerifyLexicalMatchingAsync(newClient, ct);
+        await VerifyHybridWithoutEmbeddingAsync(newClient, ct);
+    }
+
+    private static async Task VerifyHybridWithoutEmbeddingAsync(IVespaClient client, CancellationToken ct)
+    {
+        const string filter = "category contains \"hybrid-availability\"";
+        const string query = "quasar";
+        var vector = new float[768];
+        vector[0] = 1;
+        foreach (var (id, title, embedding) in new[]
+        {
+            ("hybrid-dense", "Configuration guide", vector),
+            ("hybrid-opposite", "Quasar archive", vector.Select(value => -value).ToArray()),
+            ("hybrid-missing", "Quasar", null)
+        })
+        {
+            var fields = new Dictionary<string, object>
+            {
+                ["title"] = title,
+                ["body"] = title,
+                ["category"] = "hybrid-availability",
+                ["published"] = true
+            };
+            if (embedding is not null)
+                fields["embedding"] = new Dictionary<string, object> { ["values"] = embedding };
+            var response = await client.Documents.PutAsync(id, fields, "article", "knowledge", cancellationToken: ct);
+            Assert.False(response.HadIgnoredFields);
+        }
+
+        var visibility = new VespaSearchRequest { Yql = $"select documentid from article where {filter}", Hits = 0 };
+        while ((await client.Search.SearchAsync<Article>(visibility, ct)).Root.Fields?.TotalCount != 3)
+            await Task.Delay(250, ct);
+
+        foreach (var (mode, rrfK) in new[]
+        {
+            ("hybrid_normalized", 60), ("hybrid_rrf", 10), ("hybrid_rrf", 30), ("hybrid_rrf", 60), ("hybrid_rrf", 100)
+        })
+        {
+            var request = NativeRetrieval.CreateRequest(query, vector, "article", filter, new()
+            {
+                Mode = mode,
+                RrfK = rrfK,
+                VectorWeight = 1,
+                VectorCandidates = 3,
+                KeywordCandidates = 3,
+                Approximate = false
+            });
+            var response = await client.Search.SearchAsync<Article>(request, ct);
+            Assert.True(response.Root.Coverage is { Full: true });
+            Assert.Equal(3, response.Root.Children.Count);
+            var missing = Assert.Single(response.Root.Children, hit => hit.Id == "hybrid-missing");
+            var opposite = Assert.Single(response.Root.Children, hit => hit.Id == "hybrid-opposite");
+            Assert.True(missing.GetMatchFeature("lexical_score") > 0);
+            Assert.Equal(-1d, missing.GetMatchFeature("semantic_score"));
+            Assert.Equal(0d, missing.Relevance);
+            if (mode == "hybrid_rrf")
+                Assert.True(opposite.Relevance > 0);
+        }
     }
 
     private static async Task VerifyLexicalMatchingAsync(IVespaClient client, CancellationToken ct)

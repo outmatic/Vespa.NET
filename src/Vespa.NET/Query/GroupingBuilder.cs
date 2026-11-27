@@ -4,7 +4,8 @@ using System.Text;
 namespace Vespa.Query;
 
 /// <summary>
-/// Fluent builder for a Vespa grouping expression appended to YQL with the pipe operator.
+/// Fluent builder for a Vespa grouping expression. Use it in a YQL pipe
+/// or assign the built expression to <c>VespaSearchRequest.Select</c>.
 /// <para>
 /// Example:
 /// <code>
@@ -101,7 +102,7 @@ public sealed class GroupingBuilder
     /// .GroupByBuckets("price",
     ///     GroupingBucket.Numeric(null, 100),          // bucket[-inf,100)
     ///     GroupingBucket.Numeric(100, 500, toInclusive: true),
-    ///     GroupingBucket.Numeric(500, null))          // bucket[500,inf)
+    ///     GroupingBucket.Numeric(500, null, fromInclusive: false)) // bucket&lt;500,inf)
     /// </code>
     /// </example>
     public GroupingBuilder GroupByBuckets(string field, params GroupingBucket[] buckets)
@@ -125,9 +126,8 @@ public sealed class GroupingBuilder
 
     /// <summary>
     /// <c>max(inf)</c> — return all groups (no group-count cap).
-    /// Vespa rejects unbounded group counts while <c>grouping.globalMaxGroups</c> is
-    /// enabled — disable it per query via
-    /// <c>VespaSearchRequest.GroupingGlobalMaxGroups = -1</c>.
+    /// Use a deployed query profile with <c>grouping.globalMaxGroups</c> set to <c>-1</c>
+    /// when the application needs unbounded grouping.
     /// </summary>
     public GroupingBuilder MaxAll()
     {
@@ -333,7 +333,7 @@ public sealed class EachGroupingBuilder
 /// <summary>
 /// A single bucket for <c>predefined(...)</c> grouping, with control over bound
 /// inclusivity and infinite endpoints
-/// (grammar: <c>bucket[from,to)</c>, <c>bucket(from,to]</c>, <c>-inf</c>/<c>inf</c>).
+/// (grammar: <c>bucket[from,to)</c>, <c>bucket&lt;from,to]</c>, <c>-inf</c>/<c>inf</c>).
 /// </summary>
 public sealed class GroupingBucket
 {
@@ -370,12 +370,11 @@ public sealed class GroupingBucket
     /// </summary>
     public static GroupingBucket Text(string? from, string? to, bool fromInclusive = true, bool toInclusive = false)
         => new(
-            from is null ? "-inf" : $"\"{Escape(from)}\"",
-            to is null ? "inf" : $"\"{Escape(to)}\"",
+            from is null ? "-inf" : $"\"{QuotedQueryString.EscapeContent(from)}\"",
+            to is null ? "inf" : $"\"{QuotedQueryString.EscapeContent(to)}\"",
             fromInclusive, toInclusive);
 
     internal string Build() =>
-        $"bucket{(_fromInclusive ? '[' : '(')}{_from},{_to}{(_toInclusive ? ']' : ')')}";
+        $"bucket{(_fromInclusive ? '[' : '<')}{_from},{_to}{(_toInclusive ? ']' : ')')}";
 
-    private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 }

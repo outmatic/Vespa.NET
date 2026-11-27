@@ -118,6 +118,8 @@ internal static class SchemaEmitter
             w.Line("bolding: on");
         if (field.FastSearch)
             w.Line("attribute: fast-search");
+        if (field.EnableBm25)
+            w.Line("index: enable-bm25");
         if (field.Normalizing is not null)
             w.Line($"normalizing: {field.Normalizing}");
 
@@ -142,25 +144,28 @@ internal static class SchemaEmitter
         var inherits = profile.Inherits is not null ? $" inherits {profile.Inherits}" : "";
         w.Open($"rank-profile {profile.Name}{inherits}");
 
-        if (profile.EmitInputs && tensorInputs.Count > 0)
+        if (profile.EmitInputs || profile.QueryInputs.Count > 0)
         {
             w.Open("inputs");
-            foreach (var (queryName, tensorType) in tensorInputs)
-                w.Line($"{queryName} {tensorType}");
+            if (profile.EmitInputs)
+                foreach (var (queryName, tensorType) in tensorInputs)
+                    w.Line($"{queryName} {tensorType}");
+            foreach (var (name, defaultValue) in profile.QueryInputs)
+                w.Line(FormattableString.Invariant($"query({name}) double: {defaultValue:R}"));
             w.Close();
         }
 
         if (profile.FirstPhase is not null)
         {
             w.Open("first-phase");
-            w.Line($"expression: {profile.FirstPhase}");
+            EmitRankExpression(w, profile.FirstPhase);
             w.Close();
         }
 
         if (profile.SecondPhase is not null)
         {
             w.Open("second-phase");
-            w.Line($"expression: {profile.SecondPhase}");
+            EmitRankExpression(w, profile.SecondPhase);
             if (profile.SecondPhaseRerankCount > 0)
                 w.Line($"rerank-count: {profile.SecondPhaseRerankCount}");
             w.Close();
@@ -169,7 +174,7 @@ internal static class SchemaEmitter
         if (profile.GlobalPhase is not null)
         {
             w.Open("global-phase");
-            w.Line($"expression: {profile.GlobalPhase}");
+            EmitRankExpression(w, profile.GlobalPhase);
             if (profile.GlobalPhaseRerankCount > 0)
                 w.Line($"rerank-count: {profile.GlobalPhaseRerankCount}");
             w.Close();
@@ -197,10 +202,24 @@ internal static class SchemaEmitter
                 ? function.Signature
                 : $"{function.Signature}()";
             w.Open($"function {signature}");
-            w.Line($"expression: {function.Expression}");
+            EmitRankExpression(w, function.Expression);
             w.Close();
         }
 
+        w.Close();
+    }
+
+    private static void EmitRankExpression(SchemaWriter w, string expression)
+    {
+        if (!expression.Contains('\n') && !expression.Contains('\r'))
+        {
+            w.Line($"expression: {expression}");
+            return;
+        }
+
+        w.Open("expression");
+        foreach (var line in expression.ReplaceLineEndings("\n").Split('\n'))
+            w.Line(line);
         w.Close();
     }
 }

@@ -29,8 +29,11 @@ public sealed class SamplePatternTests
         Assert.Contains(model.LastMessages, m => m.Text == "First turn.");
     }
 
-    [Fact]
-    public async Task CustomContextProvider_InjectsThePreferenceAndPersistsPerSessionRunState()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Use C# examples.")]
+    [InlineData("No saved preference found.")]
+    public async Task CustomContextProvider_InjectsOnlySavedPreferencesAndPersistsPerSessionRunState(string? preference)
     {
         using var fixture = new StateFixture();
         using var embeddings = new SampleEmbeddings();
@@ -38,13 +41,21 @@ public sealed class SamplePatternTests
         using var memories = vectors.GetCollection<string, MemoryRecord>("memory");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var memory = new PreferenceMemory(memories, embeddings, "demo-user");
-        await memory.RememberAsync("Use C# examples.", timeout.Token);
+        if (preference is not null)
+            await memory.RememberAsync(preference, timeout.Token);
         var provider = new PreferenceContextProvider(memories, embeddings, _ => new() { UserId = "demo-user" });
         using var model = new PatternChatClient();
         var agent = model.AsAIAgent(new ChatClientAgentOptions { Name = "custom-context", AIContextProviders = [provider] });
         var session = await agent.CreateSessionAsync(timeout.Token);
         await agent.RunAsync("What do I prefer?", session, cancellationToken: timeout.Token);
-        Assert.Contains(model.LastMessages, m => m.Text.Contains("Stored code-example preference: Use C# examples.", StringComparison.Ordinal));
+        Assert.Contains(model.LastMessages, message => message.Text == "What do I prefer?");
+        const string prefix = "Stored code-example preference: ";
+        var storedMessages = model.LastMessages.Where(message => message.Text.StartsWith(prefix, StringComparison.Ordinal));
+        if (preference is null)
+            Assert.Empty(storedMessages);
+        else
+            Assert.Equal(prefix + preference, Assert.Single(storedMessages).Text);
+        Assert.Equal(preference ?? "No saved preference found.", await memory.RecallAsync(timeout.Token));
         var serialized = await agent.SerializeSessionAsync(session, cancellationToken: timeout.Token);
         var resumed = await agent.DeserializeSessionAsync(serialized, cancellationToken: timeout.Token);
         var state = resumed.StateBag.GetValue<PreferenceContextProvider.State>(nameof(PreferenceContextProvider));

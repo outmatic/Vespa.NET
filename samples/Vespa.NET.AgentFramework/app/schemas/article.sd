@@ -66,35 +66,39 @@ schema article {
             query(title_weight) double: 1
         }
         function lexical_score() { expression: query(title_weight) * bm25(title) + bm25(body) }
-        function semantic_score() { expression: cos(distance(field, embedding)) }
+        function semantic_distance() { expression: distance(field, embedding) }
+        # Vespa's missing-embedding distance lies outside the angular range.
+        # Leave room for rounding at pi.
+        function has_semantic_score() { expression: semantic_distance <= 3.141592653589793 + 1e-12 }
+        function semantic_score() { expression: if(has_semantic_score, cos(semantic_distance), -1) }
         first-phase { expression: log(1 + lexical_score) + closeness(field, embedding) }
         global-phase {
-            expression: (1-query(vector_weight)) * normalize_linear(lexical_score) + query(vector_weight) * normalize_linear(semantic_score)
+            expression: (1-query(vector_weight)) * normalize_linear(lexical_score) + query(vector_weight) * has_semantic_score * normalize_linear(semantic_score)
             rerank-count: 200
         }
-        match-features: lexical_score semantic_score
+        match-features: lexical_score semantic_score has_semantic_score
     }
     rank-profile hybrid_rrf_10 inherits hybrid_normalized {
         global-phase {
-            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 10) + query(vector_weight) * reciprocal_rank(semantic_score, 10)
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 10) + query(vector_weight) * has_semantic_score * reciprocal_rank(semantic_score, 10)
             rerank-count: 200
         }
     }
     rank-profile hybrid_rrf_30 inherits hybrid_normalized {
         global-phase {
-            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 30) + query(vector_weight) * reciprocal_rank(semantic_score, 30)
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 30) + query(vector_weight) * has_semantic_score * reciprocal_rank(semantic_score, 30)
             rerank-count: 200
         }
     }
     rank-profile hybrid_rrf_60 inherits hybrid_normalized {
         global-phase {
-            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 60) + query(vector_weight) * reciprocal_rank(semantic_score, 60)
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 60) + query(vector_weight) * has_semantic_score * reciprocal_rank(semantic_score, 60)
             rerank-count: 200
         }
     }
     rank-profile hybrid_rrf_100 inherits hybrid_normalized {
         global-phase {
-            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 100) + query(vector_weight) * reciprocal_rank(semantic_score, 100)
+            expression: (1-query(vector_weight)) * reciprocal_rank(lexical_score, 100) + query(vector_weight) * has_semantic_score * reciprocal_rank(semantic_score, 100)
             rerank-count: 200
         }
     }

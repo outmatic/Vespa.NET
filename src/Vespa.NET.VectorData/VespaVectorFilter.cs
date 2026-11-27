@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -6,7 +7,8 @@ using System.Text.Json;
 
 namespace Vespa.VectorData;
 
-internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord> mapper) where TRecord : class
+internal sealed class VespaVectorFilter<[DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord>(
+    VespaVectorRecordMapper<TRecord> mapper) where TRecord : class
 {
     internal string Translate(Expression<Func<TRecord, bool>> filter) => Visit(filter.Body, filter.Parameters[0]);
 
@@ -21,8 +23,6 @@ internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord
         return TryPropertyName(Unwrap(expression, selector.Parameters[0]), selector.Parameters[0], out var name)
             ? mapper.Property(name) : throw new NotSupportedException("Select one mapped property directly.");
     }
-
-    internal bool IsVectorSelector(LambdaExpression selector) => ResolvePropertySelector(selector).IsVector;
 
     private string Visit(Expression expression, ParameterExpression parameter)
     {
@@ -81,7 +81,7 @@ internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord
                 throw new NotSupportedException("Vespa does not index empty string values; empty-string comparisons are unsupported.");
             if (nodeType is not (ExpressionType.Equal or ExpressionType.NotEqual))
                 throw new NotSupportedException("Only equality and inequality are supported for strings.");
-            var term = $"{property.StorageName} contains ({{stem:false,normalizeCase:false,accentDrop:false}}{JsonSerializer.Serialize(text)})";
+            var term = $"{property.StorageName} contains ({{stem:false,normalizeCase:false,accentDrop:false}}{JsonSerializer.Serialize(text, VectorDataJsonContext.Default.String)})";
             return nodeType == ExpressionType.NotEqual ? $"!({term})" : term;
         }
         var literal = Literal(value);
@@ -167,7 +167,8 @@ internal sealed class VespaVectorFilter<TRecord>(VespaVectorRecordMapper<TRecord
             {
                 Method.Name: "op_Implicit", Arguments.Count: 1, Method.DeclaringType: { IsGenericType: true } spanType
             } span && (spanType.GetGenericTypeDefinition() == typeof(ReadOnlySpan<>) || spanType.GetGenericTypeDefinition() == typeof(Span<>)) &&
-            span.Arguments[0].Type == spanType.GenericTypeArguments[0].MakeArrayType())
+            span.Arguments[0].Type is { IsSZArray: true } arrayType &&
+            arrayType.GetElementType() == spanType.GenericTypeArguments[0])
         {
             source = span.Arguments[0];
             value = call.Arguments[1];

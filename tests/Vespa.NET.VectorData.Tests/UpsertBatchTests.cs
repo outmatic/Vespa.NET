@@ -22,7 +22,10 @@ public sealed class UpsertBatchTests
         });
         using var store = new VespaVectorStore(harness.Client, TestHarness.Options with
         {
-            UpsertBatchSize = 4, EmbeddingBatchSize = 2, UpsertConcurrency = 1, EmbeddingGenerator = generator
+            UpsertBatchSize = 4,
+            EmbeddingBatchSize = 2,
+            UpsertConcurrency = 1,
+            EmbeddingGenerator = generator
         });
         IEnumerable<Dictionary<string, object?>> Records()
         {

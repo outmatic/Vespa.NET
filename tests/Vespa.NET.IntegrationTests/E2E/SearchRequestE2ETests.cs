@@ -46,6 +46,83 @@ public class SearchRequestE2ETests(VespaFixture fixture)
             await fixture.Client.Documents.DeleteAsync<TestProduct>(id);
     }
 
+    [Fact]
+    public async Task SearchAsync_UserQueryDistinguishesSignedTermsFromUserText()
+    {
+        if (!Enabled) return;
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        var token = deadline.Token;
+        var tag = Guid.NewGuid().ToString("N");
+        var products = new[]
+        {
+            new TestProduct { Name = "indigo chair", Category = "retail", Tag = tag },
+            new TestProduct { Name = "indigo table", Category = "retail", Tag = tag },
+            new TestProduct { Name = "indigo refurbished chair", Category = "retail", Description = "outdated", Tag = tag },
+            new TestProduct { Name = "indigo sofa", Category = "wholesale", Tag = tag },
+            new TestProduct { Name = "violet sofa", Category = "wholesale", Tag = tag }
+        };
+        var ids = new List<string>();
+
+        try
+        {
+            for (var index = 0; index < products.Length; index++)
+            {
+                var id = $"simple-query-{tag}-{index}";
+                ids.Add(id);
+                Assert.True((await fixture.Client.Documents.PutAsync(id, products[index], cancellationToken: token)).IsSuccess);
+            }
+
+            var seeded = YqlBuilder<TestProduct>.Select()
+                .Where(w => w.Field(p => p.Tag).Contains(tag))
+                .ToSearchRequest();
+            while ((await FindAsync(seeded)).Length < products.Length)
+                await Task.Delay(250, token);
+
+            var filter = new SimpleQueryBuilder()
+                .Word<TestProduct>(p => p.Category, "retail", SimpleQueryOccurrence.Required)
+                .Word<TestProduct>(p => p.Description, "outdated", SimpleQueryOccurrence.Excluded)
+                .Word<TestProduct>(p => p.Name, "chair");
+            Assert.Equal(new[] { "indigo chair", "indigo table" },
+                await FindAsync(Request().WithModelQueryText("indigo").WithModelFilter(filter)));
+
+            var recall = new SimpleQueryBuilder()
+                .Phrase<TestProduct>(p => p.Name, "indigo chair", SimpleQueryOccurrence.Required)
+                .Word<TestProduct>(p => p.Description, "outdated", SimpleQueryOccurrence.Excluded);
+            Assert.Equal(new[] { "indigo chair" }, await FindAsync(Request().WithModelQueryText("indigo").WithRecall(recall)));
+
+            var signed = new SimpleQueryBuilder()
+                .Word("indigo", SimpleQueryOccurrence.Required)
+                .Word("chair", SimpleQueryOccurrence.Excluded)
+                .Word("sofa");
+            Assert.Equal(new[] { "indigo sofa", "indigo table" }, await FindAsync(Request().WithSimpleQuery(signed)));
+            Assert.Equal(new[] { "indigo chair" },
+                await FindAsync(Request().WithSimpleQuery(new SimpleQueryBuilder().Phrase("indigo chair"))));
+
+            var plainText = Request().WithModelQueryText("indigo -chair");
+            Assert.Equal(new[] { "indigo chair", "indigo refurbished chair", "indigo sofa", "indigo table" },
+                await FindAsync(plainText));
+        }
+        finally
+        {
+            await CleanupAsync(ids);
+        }
+
+        VespaSearchRequest Request() => new VespaSearchRequest { ModelDefaultIndex = "product_name" }
+            .WithYql(YqlBuilder<TestProduct>.Select().Where(w =>
+            {
+                w.Field(p => p.Tag).Contains(tag);
+                w.UserQuery();
+            }));
+
+        async Task<string[]> FindAsync(VespaSearchRequest request)
+        {
+            var response = await fixture.Client.Search.SearchAsync<TestProduct>(request, token);
+            Assert.Empty(response.Root.Errors ?? []);
+            return response.Root.Children.Select(hit => hit.Fields!.Name).Order(StringComparer.Ordinal).ToArray();
+        }
+    }
+
     // ── QueryAsync with parameters dict ──────────────────────────────────────
 
     [Fact]
@@ -219,6 +296,57 @@ public class SearchRequestE2ETests(VespaFixture fixture)
         finally { await CleanupAsync(ids); }
     }
 
+    [Fact]
+    public async Task SortingBuilder_SortsAttributesAndRelevanceAndYqlOrderTakesPrecedence()
+    {
+        if (!Enabled) return;
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var cancellationToken = deadline.Token;
+        var tag = $"sorting-{Guid.NewGuid():N}";
+        var ids = Enumerable.Range(0, 4).Select(i => $"{tag}-{i}").ToList();
+        var search = fixture.Client.Search;
+        try
+        {
+            for (var i = 0; i < ids.Count; i++)
+                await fixture.Client.Documents.PutAsync(ids[i], new TestProduct
+                {
+                    Name = ids[i],
+                    Tag = tag,
+                    Price = i == 2 ? 20 : 10,
+                    Quantity = i
+                }, cancellationToken: cancellationToken);
+
+            var query = YqlBuilder<TestProduct>.Select()
+                .Where(w => w.Field(p => p.Tag).Contains(tag));
+            var request = query.ToSearchRequest();
+            while ((await search.SearchAsync<TestProduct>(request, cancellationToken)).Root.Children.Count != ids.Count)
+                await Task.Delay(100, cancellationToken);
+
+            var attributes = new SortingBuilder().OrderBy<TestProduct>(p => p.Price)
+                .OrderBy<TestProduct>(p => p.Quantity, SortDirection.Descending);
+            var rank = RankingBuilder.WithProfile("unranked").Sorting(attributes.Build());
+            request = request.WithRanking(rank);
+            var sorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([3, 1, 0, 2], Quantities(sorted));
+
+            request = request.WithYql(query.OrderBy(p => p.Quantity));
+            var yqlSorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([0, 1, 2, 3], Quantities(yqlSorted));
+            Assert.Equal("+price -quantity", request.Ranking?.Sorting);
+
+            var byRelevance = new SortingBuilder().OrderByRelevance().OrderBy<TestProduct>(p => p.Quantity);
+            request = request.WithYql(YqlBuilder<TestProduct>.Select().Where(w => w.Field(p => p.Tag).Contains(tag)))
+                .WithRanking(RankingBuilder.WithProfile("features_profile").Sorting(byRelevance.Build()));
+            var relevanceSorted = await search.SearchAsync<TestProduct>(request, cancellationToken);
+            Assert.Equal([2, 0, 1, 3], Quantities(relevanceSorted));
+        }
+        finally { await CleanupAsync(ids); }
+
+        static int[] Quantities(VespaSearchResponse<TestProduct> response) =>
+            response.Root.Children.Select(hit => Assert.IsType<TestProduct>(hit.Fields).Quantity).ToArray();
+    }
+
     // ── GroupByStreamAsync ───────────────────────────────────────────────────
 
     [Fact]
@@ -266,12 +394,8 @@ public class SearchRequestE2ETests(VespaFixture fixture)
             var request = new VespaSearchRequest
             {
                 Yql = YqlBuilder<TestProduct>.Select().Where(w => w.True()).Build(),
-                Hits = 5,
-                CustomParameters = new Dictionary<string, object>
-                {
-                    ["ranking.softtimeout.enable"] = true
-                }
-            };
+                Hits = 5
+            }.WithParameter("ranking.softtimeout.enable", true);
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
             Assert.NotNull(result.Root);

@@ -20,8 +20,10 @@ public class GroupingPaginationE2ETests(VespaFixture fixture)
 
     private static string NewId() => $"grp-{Guid.NewGuid():N}";
 
-    [Fact]
-    public async Task GroupByStreamAsync_ManyGroups_PaginatesWithContinuationTokens()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GroupByStreamAsync_ManyGroups_PaginatesWithContinuationTokens(bool useSelect)
     {
         if (!Enabled) return;
 
@@ -45,13 +47,30 @@ public class GroupingPaginationE2ETests(VespaFixture fixture)
             await Task.Delay(3000);
 
             // max(5) groups per page over 30 distinct categories forces continuations
-            var request = YqlBuilder.Select().From("product")
+            var builder = YqlBuilder.Select().From("product")
                 .Where(w => w.Field("tag").Contains(runTag))
-                .GroupBy(GroupingBuilder.All()
-                    .Group("category")
-                    .Max(5)
-                    .Each(e => e.Output(GroupingAgg.Count())))
-                .ToSearchRequest();
+                .Limit(0);
+            var grouping = GroupingBuilder.All()
+                .Group("category")
+                .Max(5)
+                .OrderByAscending(GroupingAgg.Min("price"))
+                .Each(e => e.Output(GroupingAgg.Count()));
+            var request = useSelect ? builder.ToSearchRequest() : builder.GroupBy(grouping).ToSearchRequest();
+            if (useSelect)
+            {
+                request = request with { Select = grouping.Build() };
+                var first = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
+                Assert.Equal(groupCount, first.TotalCount);
+                Assert.NotNull(first.Coverage);
+                var firstGroups = Assert.Single(first.GroupingResults).Groups;
+                var tokens = Assert.IsAssignableFrom<IReadOnlyList<string>>(first.ContinuationTokens);
+                var resume = request.WithParameter("continue", string.Join(' ', tokens));
+                var second = await fixture.Client.Search.GroupByAsync<TestProduct>(resume);
+                var secondGroups = Assert.Single(second.GroupingResults).Groups;
+                Assert.Equal(5, firstGroups.Count);
+                Assert.Equal(5, secondGroups.Count);
+                Assert.Empty(firstGroups.Select(g => g.Value).Intersect(secondGroups.Select(g => g.Value)));
+            }
 
             var pages = 0;
             var seenGroups = new List<string>();

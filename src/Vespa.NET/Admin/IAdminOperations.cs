@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Vespa.Models;
 using Vespa.Models.Schema;
 
@@ -25,6 +26,7 @@ public interface IAdminOperations
     /// <param name="options">Application package options.</param>
     /// <param name="tenant">Tenant name override. When <see langword="null"/>, uses <see cref="VespaClientOptions.Tenant"/>.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    [RequiresUnreferencedCode(VespaSchemaBuilder.RuntimeTypesRequireReflection)]
     Task DeploySchemaAsync<T>(ApplicationPackageOptions? options = null, string? tenant = null, CancellationToken cancellationToken = default) where T : class;
 
     /// <summary>
@@ -34,6 +36,7 @@ public interface IAdminOperations
     /// <param name="options">Application package options.</param>
     /// <param name="tenant">Tenant name override. When <see langword="null"/>, uses <see cref="VespaClientOptions.Tenant"/>.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    [RequiresUnreferencedCode(VespaSchemaBuilder.RuntimeTypesRequireReflection)]
     Task DeploySchemaAsync(IEnumerable<Type> documentTypes, ApplicationPackageOptions? options = null, string? tenant = null, CancellationToken cancellationToken = default);
 
     /// <summary>

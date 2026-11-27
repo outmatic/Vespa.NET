@@ -166,7 +166,7 @@ public class YqlBuilderTests
     {
         // YQL order by accepts annotated fields; the raw overload is the documented escape hatch
         var yql = YqlBuilder.Select().From("music")
-            .OrderByRaw("""{"function":"uca","locale":"en_US"}name""", descending: true)
+            .OrderByRaw("""{"function":"uca","locale":"en_US"}name""", SortDirection.Descending)
             .Build();
 
         Assert.Contains("""order by {"function":"uca","locale":"en_US"}name desc""", yql);
@@ -359,7 +359,7 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder.Select().From("music")
             .Where(w => w.True())
-            .OrderBy("relevance", descending: true)
+            .OrderBy("relevance", SortDirection.Descending)
             .Build();
 
         Assert.Contains("order by relevance desc", yql);
@@ -379,8 +379,8 @@ public class YqlBuilderTests
     public void Build_MultipleOrderBy_ProducesCommaSeparatedClauses()
     {
         var yql = YqlBuilder.Select().From("music")
-            .OrderBy("relevance", descending: true)
-            .OrderBy("year", descending: false)
+            .OrderBy("relevance", SortDirection.Descending)
+            .OrderBy("year", SortDirection.Ascending)
             .Build();
 
         Assert.Contains("order by relevance desc, year asc", yql);
@@ -390,9 +390,9 @@ public class YqlBuilderTests
     public void Build_ThreeOrderByClauses_AllIncluded()
     {
         var yql = YqlBuilder.Select().From("music")
-            .OrderBy("relevance", descending: true)
-            .OrderBy("year", descending: false)
-            .OrderBy("title", descending: true)
+            .OrderBy("relevance", SortDirection.Descending)
+            .OrderBy("year", SortDirection.Ascending)
+            .OrderBy("title", SortDirection.Descending)
             .Build();
 
         Assert.Contains("order by relevance desc, year asc, title desc", yql);
@@ -402,11 +402,22 @@ public class YqlBuilderTests
     public void Build_TypedOrderBy_ResolvesFieldFromAttribute()
     {
         var yql = YqlBuilder<MusicModel>.Select()
-            .OrderBy(m => m.ArtistName, descending: true)
+            .OrderBy(m => m.ArtistName, SortDirection.Descending)
             .OrderBy(m => m.Year)
             .Build();
 
         Assert.Contains("order by artist_name desc, year asc", yql);
+    }
+
+    [Fact]
+    public void OrderBy_RejectsUnknownDirectionBeforeAddingTheKey()
+    {
+        var builder = YqlBuilder.Select().From("music").OrderBy("year");
+        var invalidDirection = (SortDirection)42;
+
+        Assert.Throws<ArgumentOutOfRangeException>("direction", () => builder.OrderBy("title", invalidDirection));
+        Assert.Throws<ArgumentOutOfRangeException>("direction", () => builder.OrderByRaw("title", invalidDirection));
+        Assert.Equal("select * from music where true order by year asc", builder.Build());
     }
 
     // --- Limit / Offset ---
@@ -471,7 +482,7 @@ public class YqlBuilderTests
                 .And(w2 => w2
                     .Field("genre").Contains("rock")
                     .Or(w3 => w3.Field("genre").Contains("jazz"))))
-            .OrderBy("relevance", descending: true)
+            .OrderBy("relevance", SortDirection.Descending)
             .Limit(10)
             .Offset(0)
             .Build();
@@ -505,16 +516,57 @@ public class YqlBuilderTests
         Assert.Equal("select * from music where true", request.Yql);
     }
 
-    [Fact]
-    public void WithYql_UpdatesExistingRequest()
+    [Theory]
+    [InlineData(null, null, 20, 5)]
+    [InlineData(0, null, 0, 5)]
+    [InlineData(null, 0, 20, 0)]
+    [InlineData(4, 7, 4, 7)]
+    public void WithYql_AppliesOnlyExplicitBuilderPagination(int? limit, int? offset, int expectedHits, int expectedOffset)
     {
-        var request = new VespaSearchRequest { Hits = 20 };
-        var builder = YqlBuilder.Select().From("music");
+        var untyped = YqlBuilder.Select().From("music");
+        var typed = YqlBuilder<MusicModel>.Select();
+        if (limit is { } hits)
+        {
+            untyped.Limit(hits);
+            typed.Limit(hits);
+        }
+        if (offset is { } start)
+        {
+            untyped.Offset(start);
+            typed.Offset(start);
+        }
 
-        request.WithYql(builder);
+        var request = new VespaSearchRequest { Hits = 20, Offset = 5, ModelQueryString = "existing text" };
+        foreach (var result in new[] { request.WithYql(untyped), request.WithYql(typed) })
+        {
+            Assert.Equal("select * from music where true", result.Yql);
+            Assert.Equal(expectedHits, result.Hits);
+            Assert.Equal(expectedOffset, result.Offset);
+            Assert.Equal("existing text", result.ModelQueryString);
+        }
+        Assert.Equal((20, 5), (request.Hits, request.Offset));
+    }
 
-        Assert.Equal("select * from music where true", request.Yql);
-        Assert.Equal(20, request.Hits); // other properties preserved
+    [Fact]
+    public void WithYql_PreservesRequestSettingsAndCopiesUserQueryAndGrouping()
+    {
+        var request = new VespaSearchRequest { ModelQueryString = "previous text" }
+            .WithRankProfile("music_rank")
+            .WithQueryTensor("q", new float[] { 1, 2 })
+            .WithUserInput("filter", "jazz");
+        var builder = YqlBuilder<MusicModel>.Select()
+            .Where(w => w.UserQuery("jazz classics"))
+            .Limit(0)
+            .GroupBy(GroupingBuilder.All().Group("genre").Each(e => e.Output(GroupingAgg.Count())));
+
+        request = request.WithYql(builder);
+
+        Assert.Equal("select * from music where userQuery() | all(group(genre) each(output(count())))", request.Yql);
+        Assert.Equal("jazz classics", request.ModelQueryString);
+        Assert.Equal(0, request.Hits);
+        Assert.Equal("music_rank", request.Ranking?.Profile);
+        Assert.Equal("jazz", request.CustomParameters?["filter"]);
+        Assert.Equal(new float[] { 1, 2 }, Assert.IsType<float[]>(request.Input?["query(q)"]));
     }
 
     // --- Double / float formatting ---
@@ -989,14 +1041,45 @@ public class YqlBuilderTests
         Assert.Contains("targetHits:10", yql);
     }
 
-    [Fact]
-    public void Build_NearestNeighbor_WithApproximate()
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(NearestNeighborMode.Exact, "approximate:false")]
+    [InlineData(NearestNeighborMode.Approximate, "approximate:true")]
+    public void NearestNeighborAndHybridSearch_RenderTheSelectedMode(NearestNeighborMode? mode, string? annotation)
     {
-        var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.NearestNeighbor("embedding", "q", approximate: false))
-            .Build();
+        const string field = "vector_embedding";
+        var queries = new[]
+        {
+            YqlBuilder.Select().From("embedding_doc").Where(w => w.NearestNeighbor(field, "q", mode: mode)).Build(),
+            YqlBuilder.Select().From("embedding_doc").Where(w => w.NearestNeighbor<EmbeddingModel>(m => m.Embedding, "q", mode: mode)).Build(),
+            YqlBuilder<EmbeddingModel>.Select().Where(w => w.NearestNeighbor(field, "q", mode: mode)).Build(),
+            YqlBuilder<EmbeddingModel>.Select().Where(w => w.NearestNeighbor(m => m.Embedding, "q", mode: mode)).Build(),
+            YqlBuilder.Select().From("embedding_doc").Where(w => w.HybridSearch(field, "q", "text", mode: mode)).Build(),
+            YqlBuilder<EmbeddingModel>.Select().Where(w => w.HybridSearch(field, "q", "text", mode: mode)).Build(),
+            YqlBuilder<EmbeddingModel>.Select().Where(w => w.HybridSearch(m => m.Embedding, "q", "text", mode: mode)).Build()
+        };
+        foreach (var yql in queries)
+        {
+            Assert.Contains("nearestNeighbor(vector_embedding, q)", yql);
+            if (annotation is null)
+                Assert.DoesNotContain("approximate:", yql);
+            else
+                Assert.Contains(annotation, yql);
+        }
+    }
 
-        Assert.Contains("approximate:false", yql);
+    [Fact]
+    public void NearestNeighborAndHybridSearch_RejectUndefinedModeBeforeAddingThePredicate()
+    {
+        var invalid = (NearestNeighborMode)42;
+        var yql = YqlBuilder.Select().From("music").Where(w =>
+        {
+            Assert.Throws<ArgumentOutOfRangeException>("mode", () => w.NearestNeighbor("embedding", "q", mode: invalid));
+            Assert.Throws<ArgumentOutOfRangeException>("mode", () => w.HybridSearch("embedding", "q", "text", mode: invalid));
+            w.True();
+        }).Build();
+
+        Assert.Equal("select * from music where true", yql);
     }
 
     [Fact]
@@ -1024,7 +1107,7 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder.Select().From("music")
             .Where(w => w.NearestNeighbor("embedding", "q",
-                targetHits: 50, label: "nn", approximate: true,
+                targetHits: 50, label: "nn", mode: NearestNeighborMode.Approximate,
                 distanceThreshold: 1.5, hnswExploreAdditionalHits: 100))
             .Build();
 
@@ -1148,7 +1231,7 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder<MusicModel>.Select()
             .Where(w => w.NearestNeighbor("embedding", "q",
-                targetHits: 20, label: "myNN", approximate: true))
+                targetHits: 20, label: "myNN", mode: NearestNeighborMode.Approximate))
             .Build();
 
         Assert.Contains("targetHits:20", yql);
@@ -1192,7 +1275,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_Filter_ProducesAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("genre").ContainsAnnotated("rock", filter: true))
+            .Where(w => w.Field("genre").ContainsAnnotated("rock", new() { Filter = true }))
             .Build();
 
         Assert.Contains("""genre contains ({filter: true}"rock")""", yql);
@@ -1204,7 +1287,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_TermId_ProducesIdAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("rock", termId: 1))
+            .Where(w => w.Field("title").ContainsAnnotated("rock", new() { TermId = 1 }))
             .Build();
 
         Assert.Contains("""title contains ({id: 1}"rock")""", yql);
@@ -1214,10 +1297,48 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_Connectivity_ProducesConnectivityAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("roll", termId: 1, connectivityWeight: 0.8))
+            .Where(w => w.Field("title").ContainsAnnotated("roll", new() { Connectivity = new(1, 0.8) }))
             .Build();
 
-        Assert.Contains("""connectivity: {id: 1, weight: 0.8}""", yql);
+        Assert.Contains("""title contains ({connectivity: {id: 1, weight: 0.8}}"roll")""", yql);
+    }
+
+    [Fact]
+    public void Build_ContainsAnnotated_TermIdAndConnectivity_CanBeSetIndependently()
+    {
+        var yql = YqlBuilder.Select().From("music").Where(w => w
+            .Field("title").ContainsAnnotated("hard", new() { TermId = 1, Connectivity = new(2, 0.8) })
+            .Field("title").ContainsAnnotated("rock", new() { TermId = 2, Connectivity = new(3, 0.6) })
+            .Field("title").ContainsAnnotated("band", new() { TermId = 3 })).Build();
+
+        Assert.Equal(
+            """select * from music where title contains ({id: 1, connectivity: {id: 2, weight: 0.8}}"hard") and title contains ({id: 2, connectivity: {id: 3, weight: 0.6}}"rock") and title contains ({id: 3}"band")""",
+            yql);
+    }
+
+    [Fact]
+    public void Build_ContainsAnnotated_EmptyAnnotations_UsesPlainContains()
+    {
+        var value = "rock \"live\"";
+        var plain = YqlBuilder.Select().From("music").Where(w => w.Field("title").Contains(value)).Build();
+        var annotated = YqlBuilder.Select().From("music").Where(w => w.Field("title").ContainsAnnotated(value, new())).Build();
+
+        Assert.Equal(plain, annotated);
+    }
+
+    [Fact]
+    public void ContainsAnnotated_InvalidArgumentsAreRejectedBeforeAddingAPredicate()
+    {
+        var builder = YqlBuilder.Select().From("music");
+        builder.Where(w =>
+        {
+            var title = w.Field("title");
+            Assert.Throws<ArgumentException>("value", () => title.ContainsAnnotated(" ", new()));
+            Assert.Throws<ArgumentNullException>("annotations", () => title.ContainsAnnotated("rock", null!));
+            title.Contains("rock");
+        });
+
+        Assert.Equal("select * from music where title contains \"rock\"", builder.Build());
     }
 
     // --- M13: stem/normalizeCase/accentDrop/usePositionData annotations ---
@@ -1226,7 +1347,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_Stem_ProducesAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("running", stem: false))
+            .Where(w => w.Field("title").ContainsAnnotated("running", new() { Stem = false }))
             .Build();
 
         Assert.Contains("""stem: false""", yql);
@@ -1236,7 +1357,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_NormalizeCase_ProducesAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("Rock", normalizeCase: false))
+            .Where(w => w.Field("title").ContainsAnnotated("Rock", new() { NormalizeCase = false }))
             .Build();
 
         Assert.Contains("""normalizeCase: false""", yql);
@@ -1246,7 +1367,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_AccentDrop_ProducesAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("café", accentDrop: false))
+            .Where(w => w.Field("title").ContainsAnnotated("café", new() { AccentDrop = false }))
             .Build();
 
         Assert.Contains("""accentDrop: false""", yql);
@@ -1256,7 +1377,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_UsePositionData_ProducesAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("rock", usePositionData: false))
+            .Where(w => w.Field("title").ContainsAnnotated("rock", new() { UsePositionData = false }))
             .Build();
 
         Assert.Contains("""usePositionData: false""", yql);
@@ -1266,7 +1387,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_MultipleAnnotations()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("rock", filter: true, stem: false, normalizeCase: false))
+            .Where(w => w.Field("title").ContainsAnnotated("rock", new() { Filter = true, Stem = false, NormalizeCase = false }))
             .Build();
 
         Assert.Contains("filter: true", yql);
@@ -1372,7 +1493,7 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder.Select().From("memory")
             .Where(w => w.HybridSearch("embedding", "q", "userQuery",
-                targetHits: 50, label: "emb", approximate: true, distanceThreshold: 0.5))
+                targetHits: 50, label: "emb", mode: NearestNeighborMode.Approximate, distanceThreshold: 0.5))
             .Build();
 
         Assert.Contains("rank(", yql);
@@ -1648,7 +1769,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_Weight_ProducesAnnotation()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("rock", weight: 200))
+            .Where(w => w.Field("title").ContainsAnnotated("rock", new() { Weight = 200 }))
             .Build();
 
         Assert.Contains("""title contains ({weight: 200}"rock")""", yql);
@@ -1659,9 +1780,9 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder.Select().From("music")
             .Where(w => w
-                .Field("a").ContainsAnnotated("pre", prefix: true)
-                .Field("b").ContainsAnnotated("suf", suffix: true)
-                .Field("c").ContainsAnnotated("sub", substring: true))
+                .Field("a").ContainsAnnotated("pre", new() { Prefix = true })
+                .Field("b").ContainsAnnotated("suf", new() { Suffix = true })
+                .Field("c").ContainsAnnotated("sub", new() { Substring = true }))
             .Build();
 
         Assert.Contains("{prefix: true}", yql);
@@ -1673,7 +1794,7 @@ public class YqlBuilderTests
     public void Build_ContainsAnnotated_SignificanceAndRanked()
     {
         var yql = YqlBuilder.Select().From("music")
-            .Where(w => w.Field("title").ContainsAnnotated("rock", significance: 0.75, ranked: false))
+            .Where(w => w.Field("title").ContainsAnnotated("rock", new() { Significance = 0.75, Ranked = false }))
             .Build();
 
         Assert.Contains("significance: 0.75", yql);
@@ -1685,7 +1806,7 @@ public class YqlBuilderTests
     {
         var yql = YqlBuilder.Select().From("music")
             .Where(w => w.Field("title").ContainsAnnotated("rock",
-                language: "en-US", nfkc: false, implicitTransforms: false))
+                new() { Language = "en-US", Nfkc = false, ImplicitTransforms = false }))
             .Build();
 
         Assert.Contains("""language: "en-US" """.Trim(), yql);

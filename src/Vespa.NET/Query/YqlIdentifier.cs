@@ -1,3 +1,5 @@
+using Vespa.Models;
+
 namespace Vespa.Query;
 
 /// <summary>
@@ -29,10 +31,10 @@ internal static class YqlIdentifier
         while (true)
         {
             // identifier segment
-            if (i >= name.Length || (!char.IsAsciiLetter(name[i]) && name[i] != '_'))
+            if (i >= name.Length || !IdentifierSyntax.IsStart(name[i]))
                 return false;
             i++;
-            while (i < name.Length && (char.IsAsciiLetterOrDigit(name[i]) || name[i] == '_'))
+            while (i < name.Length && IdentifierSyntax.IsPart(name[i]))
                 i++;
 
             // optional map-key suffix: {"key"} — key may not contain quotes/backslashes

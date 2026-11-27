@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.VectorData;
+using Vespa.Models;
 
 namespace Vespa.VectorData;
 
@@ -20,15 +22,24 @@ public sealed class VespaVectorStore : VectorStore
         _options = ValidateAndSnapshotOptions(options);
     }
 
+    [RequiresUnreferencedCode("The VectorStore API does not preserve record members. Call BindCollection on VespaVectorStore or use GetDynamicCollection.")]
+    [RequiresDynamicCode("The VectorStore API does not support Native AOT. Call BindCollection on VespaVectorStore or use GetDynamicCollection.")]
     public override VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(
+        string name, VectorStoreCollectionDefinition? definition = null) => BindCollection<TKey, TRecord>(name, definition);
+
+    /// <summary>Binds a record type while preserving the constructor and properties used by the mapper.</summary>
+    public VespaVectorStoreCollection<TKey, TRecord> BindCollection<TKey,
+        [DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord>(
         string name, VectorStoreCollectionDefinition? definition = null)
+        where TKey : notnull where TRecord : class
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return new VespaVectorStoreCollection<TKey, TRecord>(_client, name, _options, definition);
     }
 
     /// <summary>Binds a collection with its own complete options, replacing the store defaults.</summary>
-    public VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(
+    public VectorStoreCollection<TKey, TRecord> GetCollection<TKey,
+        [DynamicallyAccessedMembers(VespaCollectionModel.RecordMembers)] TRecord>(
         string name, VectorStoreCollectionDefinition? definition, VespaVectorStoreOptions options)
         where TKey : notnull where TRecord : class
     {
@@ -65,21 +76,71 @@ public sealed class VespaVectorStore : VectorStore
     private async IAsyncEnumerable<string> ListAsync(IVespaCollectionCatalog catalog,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        HashSet<string> seen = new(StringComparer.Ordinal);
-        await foreach (var name in catalog.ListCollectionNamesAsync(cancellationToken).WithCancellation(cancellationToken))
+        cancellationToken.ThrowIfCancellationRequested();
+        IAsyncEnumerator<string> names;
+        try
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            cancellationToken.ThrowIfCancellationRequested();
-            VespaVectorValidation.Identifier(name, nameof(catalog));
-            if (seen.Add(name))
-                yield return name;
+            names = catalog.ListCollectionNamesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
         }
+        catch (Exception exception) when (VespaVectorErrors.IsOperational(exception, cancellationToken))
+        {
+            throw ListingFailure(exception);
+        }
+
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string name;
+                try
+                {
+                    if (!await names.MoveNextAsync())
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        break;
+                    }
+
+                    name = names.Current;
+                }
+                catch (Exception exception) when (VespaVectorErrors.IsOperational(exception, cancellationToken))
+                {
+                    throw ListingFailure(exception);
+                }
+
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                cancellationToken.ThrowIfCancellationRequested();
+                VespaVectorValidation.Identifier(name, nameof(catalog));
+                if (seen.Add(name))
+                    yield return name;
+            }
+        }
+        finally
+        {
+            await DisposeNamesAsync();
+        }
+
+        async ValueTask DisposeNamesAsync()
+        {
+            try
+            {
+                await names.DisposeAsync();
+            }
+            catch (Exception exception) when (VespaVectorErrors.IsOperational(exception, cancellationToken))
+            {
+                throw ListingFailure(exception);
+            }
+        }
+
+        static VectorStoreException ListingFailure(Exception exception) =>
+            VespaVectorErrors.Create(null, nameof(ListCollectionNamesAsync), exception.Message, exception);
     }
 
     public override Task<bool> CollectionExistsAsync(string name, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return VespaCollectionProbe.ExistsAsync(name, _options.CollectionCatalog, cancellationToken);
+        return VespaCollectionProbe.ExistsAsync(name, _options.CollectionCatalog, nameof(CollectionExistsAsync), cancellationToken);
     }
 
     public override Task EnsureCollectionDeletedAsync(string name, CancellationToken cancellationToken = default)
@@ -160,8 +221,7 @@ internal static class VespaVectorValidation
     internal static void Identifier(string value, string parameterName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
-        if (!(char.IsAsciiLetter(value[0]) || value[0] == '_') ||
-            value.Any(c => !(char.IsAsciiLetterOrDigit(c) || c == '_')))
+        if (!IdentifierSyntax.IsSimple(value))
             throw new ArgumentException("Expected a simple Vespa identifier containing letters, digits or underscores.", parameterName);
     }
 

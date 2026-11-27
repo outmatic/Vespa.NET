@@ -23,11 +23,11 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
 
     public TypedYqlWhereClause<T> NearestNeighbor(
         string field, string queryTensor, int targetHits = 10,
-        string? label = null, bool? approximate = null,
+        string? label = null, NearestNeighborMode? mode = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
         int? totalTargetHits = null, int? minTargetHits = null)
     {
-        inner.NearestNeighbor(field, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
+        inner.NearestNeighbor(field, queryTensor, targetHits, label, mode, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
         return this;
     }
 
@@ -36,11 +36,11 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         Expression<Func<T, object?>> fieldSelector,
         string queryTensor,
         int targetHits = 10,
-        string? label = null, bool? approximate = null,
+        string? label = null, NearestNeighborMode? mode = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
         int? totalTargetHits = null, int? minTargetHits = null)
     {
-        inner.NearestNeighbor(fieldSelector, queryTensor, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
+        inner.NearestNeighbor(fieldSelector, queryTensor, targetHits, label, mode, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits, minTargetHits);
         return this;
     }
 
@@ -119,6 +119,13 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         return this;
     }
 
+    /// <summary>Adds <c>userQuery()</c>, which reads the model query set on the search request.</summary>
+    public TypedYqlWhereClause<T> UserQuery()
+    {
+        inner.UserQuery();
+        return this;
+    }
+
     public TypedYqlWhereClause<T> UserInput(string paramName, string? grammar = null, string? defaultIndex = null, string? language = null, bool? allowEmpty = null)
     {
         inner.UserInput(paramName, grammar, defaultIndex, language, allowEmpty);
@@ -133,11 +140,11 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
     public TypedYqlWhereClause<T> HybridSearch(
         string vectorField, string queryTensor, string userInputParam,
         int targetHits = 100,
-        string? label = null, bool? approximate = null,
+        string? label = null, NearestNeighborMode? mode = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
         int? totalTargetHits = null)
     {
-        inner.HybridSearch(vectorField, queryTensor, userInputParam, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
+        inner.HybridSearch(vectorField, queryTensor, userInputParam, targetHits, label, mode, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
         return this;
     }
 
@@ -148,11 +155,11 @@ public sealed class TypedYqlWhereClause<T>(YqlWhereClause inner) where T : class
         Expression<Func<T, object?>> vectorFieldSelector,
         string queryTensor, string userInputParam,
         int targetHits = 100,
-        string? label = null, bool? approximate = null,
+        string? label = null, NearestNeighborMode? mode = null,
         double? distanceThreshold = null, int? hnswExploreAdditionalHits = null,
         int? totalTargetHits = null)
     {
-        inner.HybridSearch(VespaDocumentMeta.FieldName(vectorFieldSelector), queryTensor, userInputParam, targetHits, label, approximate, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
+        inner.HybridSearch(VespaDocumentMeta.FieldName(vectorFieldSelector), queryTensor, userInputParam, targetHits, label, mode, distanceThreshold, hnswExploreAdditionalHits, totalTargetHits);
         return this;
     }
 

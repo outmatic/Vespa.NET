@@ -39,11 +39,15 @@ public sealed class CollectionConfigurationTests
 
         await Assert.ThrowsAsync<ArgumentException>(() => articles.UpsertAsync(new Article
         {
-            Id = "a", Category = null!, Embedding = new float[] { 1, 0, 0 }
+            Id = "a",
+            Category = null!,
+            Embedding = new float[] { 1, 0, 0 }
         }));
         await Assert.ThrowsAsync<ArgumentException>(() => memories.UpsertAsync(new GuidRecord
         {
-            Id = Guid.NewGuid(), Text = null!, Embedding = new float[] { 1, 0, 0 }
+            Id = Guid.NewGuid(),
+            Text = null!,
+            Embedding = new float[] { 1, 0, 0 }
         }));
         Assert.Equal(3, harness.Handler.Requests.Count);
     }
@@ -69,7 +73,8 @@ public sealed class CollectionConfigurationTests
         AssertQuery(harness.Handler.Requests[1].Body!, "memory", "memory_rank", "memory_vectors");
         await Assert.ThrowsAsync<ArgumentException>(() => collection.UpsertAsync(new Dictionary<string, object?>
         {
-            ["Key"] = Guid.NewGuid(), ["Vector"] = new float[] { 1, 0, 0 }
+            ["Key"] = Guid.NewGuid(),
+            ["Vector"] = new float[] { 1, 0, 0 }
         }));
         Assert.Equal(2, harness.Handler.Requests.Count);
     }

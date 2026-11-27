@@ -20,8 +20,7 @@ public sealed class VespaAgentStateStore
         ArgumentException.ThrowIfNullOrWhiteSpace(options.Schema);
         if (options.Namespace.Contains(':', StringComparison.Ordinal))
             throw new ArgumentException("A namespace cannot contain ':'.", nameof(options));
-        if (!(char.IsAsciiLetter(options.Schema[0]) || options.Schema[0] == '_') ||
-            options.Schema.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '_'))
+        if (!IdentifierSyntax.IsSimple(options.Schema))
             throw new ArgumentException("Schema must be a simple Vespa identifier.", nameof(options));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxPayloadBytes);
         _client = client;
@@ -91,7 +90,9 @@ public sealed class VespaAgentStateStore
     private string DocumentKey(string key)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
-        return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new[] { _options.Scope, key }))).ToLowerInvariant();
+        var identity = JsonSerializer.SerializeToUtf8Bytes(
+            new[] { _options.Scope, key }, AgentStorageJsonContext.Default.StringArray);
+        return Convert.ToHexString(SHA256.HashData(identity)).ToLowerInvariant();
     }
 
     private string Condition(string revision) => $"{_options.Schema}.revision == \"{revision}\"";

@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using Vespa.Documents;
 using Vespa.Models;
 using Vespa.Models.Attributes;
@@ -39,7 +41,7 @@ public abstract class FeedOperation
     /// <summary>Target namespace; null uses the client's default namespace.</summary>
     public string? Namespace { get; }
 
-    /// <summary>Optional Vespa test-and-set condition.</summary>
+    /// <summary>Optional native test-and-set condition, rendered and frozen when the operation is constructed.</summary>
     public string? Condition { get; }
 
     /// <summary>Routing, timeout and other options for this operation.</summary>
@@ -49,49 +51,59 @@ public abstract class FeedOperation
     /// Create an insert/replace operation. An explicit <paramref name="documentType"/>
     /// allows models without <c>[VespaDocument]</c>; its namespace defaults to the client.
     /// </summary>
-    public static FeedOperation Put<T>(
+    /// <remarks>Use condition for a typed predicate or rawCondition for a native string. Captured values are read when this factory is called.</remarks>
+    public static FeedOperation Put<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         T document,
         string? documentType = null,
         string? @namespace = null,
-        string? condition = null,
+        Expression<Func<T, bool>>? condition = null,
+        string? rawCondition = null,
         bool create = false,
         DocumentRequestOptions? requestOptions = null) where T : class
     {
         ArgumentNullException.ThrowIfNull(document);
         var (type, ns) = ResolveTarget<T>(documentType, @namespace);
-        return new PutOperation<T>(documentId, document, type, ns, condition, create, requestOptions);
+        var selector = ResolveCondition(type, condition, rawCondition);
+        return new PutOperation<T>(documentId, document, type, ns, selector, create, requestOptions);
     }
 
     /// <summary>Create a model-aware field update using property selectors.</summary>
-    public static FeedOperation Update<T>(
+    /// <remarks>The condition is validated and frozen against the resolved target before configure runs.</remarks>
+    public static FeedOperation Update<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         Action<TypedFieldUpdateBuilder<T>> configure,
         string? documentType = null,
         string? @namespace = null,
+        Expression<Func<T, bool>>? condition = null,
+        string? rawCondition = null,
         bool createIfMissing = false,
-        string? condition = null,
         DocumentRequestOptions? requestOptions = null) where T : class
     {
         ArgumentNullException.ThrowIfNull(configure);
+        var (type, ns) = ResolveTarget<T>(documentType, @namespace);
+        var selector = ResolveCondition(type, condition, rawCondition);
         var builder = new TypedFieldUpdateBuilder<T>();
         configure(builder);
-        return Update<T>(documentId, builder.Build(), documentType, @namespace, createIfMissing, condition, requestOptions);
+        return Update(documentId, builder.Build(), type, ns, createIfMissing, selector, requestOptions);
     }
 
     /// <summary>Create a model-aware field update using Vespa field names and operations.</summary>
-    public static FeedOperation Update<T>(
+    /// <remarks>The typed condition uses the resolved document type, including explicit overrides.</remarks>
+    public static FeedOperation Update<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         IReadOnlyDictionary<string, FieldOperation> fieldOperations,
         string? documentType = null,
         string? @namespace = null,
+        Expression<Func<T, bool>>? condition = null,
+        string? rawCondition = null,
         bool createIfMissing = false,
-        string? condition = null,
         DocumentRequestOptions? requestOptions = null) where T : class
     {
         ArgumentNullException.ThrowIfNull(fieldOperations);
         var (type, ns) = ResolveTarget<T>(documentType, @namespace);
-        return Update(documentId, fieldOperations, type, ns, createIfMissing, condition, requestOptions);
+        var selector = ResolveCondition(type, condition, rawCondition);
+        return Update(documentId, fieldOperations, type, ns, createIfMissing, selector, requestOptions);
     }
 
     /// <summary>Create a field update with an explicit schema and optional namespace.</summary>
@@ -110,15 +122,17 @@ public abstract class FeedOperation
     }
 
     /// <summary>Create a model-aware delete operation.</summary>
-    public static FeedOperation Delete<T>(
+    public static FeedOperation Delete<[DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(
         string documentId,
         string? documentType = null,
         string? @namespace = null,
-        string? condition = null,
+        Expression<Func<T, bool>>? condition = null,
+        string? rawCondition = null,
         DocumentRequestOptions? requestOptions = null) where T : class
     {
         var (type, ns) = ResolveTarget<T>(documentType, @namespace);
-        return Delete(documentId, type, ns, condition, requestOptions);
+        var selector = ResolveCondition(type, condition, rawCondition);
+        return Delete(documentId, type, ns, selector, requestOptions);
     }
 
     /// <summary>Create a delete operation with an explicit schema and optional namespace.</summary>
@@ -147,6 +161,14 @@ public abstract class FeedOperation
 
         var (type, ns) = VespaDocumentMeta.For<T>();
         return (type, @namespace ?? ns);
+    }
+
+    private static string? ResolveCondition<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, bool>>? condition, string? rawCondition) where T : class
+    {
+        if (condition is not null && rawCondition is not null)
+            throw new ArgumentException("Specify either condition or rawCondition, not both.", nameof(rawCondition));
+        return condition is null ? rawCondition : DocumentCondition.Render(documentType, condition);
     }
 
     private sealed class PutOperation<T>(string id, T document, string documentType,

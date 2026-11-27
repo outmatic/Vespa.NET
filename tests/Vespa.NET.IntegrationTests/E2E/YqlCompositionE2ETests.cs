@@ -253,28 +253,33 @@ public class YqlCompositionE2ETests(VespaFixture fixture)
 
     // --- HybridSearch ---
 
-    [Fact]
-    public async Task HybridSearch_ValidYql()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(NearestNeighborMode.Exact)]
+    [InlineData(NearestNeighborMode.Approximate)]
+    public async Task NearestNeighborAndHybridSearch_AcceptSearchMode(NearestNeighborMode? mode)
     {
         if (!Enabled) return;
         var ids = await SeedAsync();
         try
         {
-            var yql = YqlBuilder<TestProduct>.Select()
-                .Where(w => w.HybridSearch("embedding", "query_embedding", "userQuery", targetHits: 5))
-                .Build();
-
-            var request = new VespaSearchRequest
+            var queries = new[]
             {
-                Yql = yql,
-                Hits = 5,
-                Ranking = new RankingConfig { Profile = "closeness_profile" },
-                Input = new() { ["query(query_embedding)"] = VespaTensor.FromDenseValues([5f, 1f, 0f, 0.1f]) },
-                CustomParameters = new() { ["userQuery"] = "laptop" }
+                YqlBuilder<TestProduct>.Select()
+                    .Where(w => w.NearestNeighbor(p => p.Embedding, "query_embedding", totalTargetHits: 5, mode: mode)),
+                YqlBuilder<TestProduct>.Select()
+                    .Where(w => w.HybridSearch(p => p.Embedding, "query_embedding", "userQuery", totalTargetHits: 5, mode: mode))
             };
-
-            var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
-            Assert.True(result.Root.Children.Count > 0);
+            foreach (var query in queries)
+            {
+                var request = query.Limit(5).ToSearchRequest()
+                    .WithRankProfile("closeness_profile")
+                    .WithQueryTensor("query_embedding", VespaTensor.FromDenseValues([5f, 1f, 0f, 0.1f]))
+                    .WithUserInput("userQuery", "laptop");
+                var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
+                Assert.Empty(result.Root.Errors ?? []);
+                Assert.Contains(result.Root.Children, hit => ids.Contains(hit.Id));
+            }
         }
         finally { await CleanupAsync(ids); }
     }
@@ -300,10 +305,9 @@ public class YqlCompositionE2ETests(VespaFixture fixture)
             {
                 Yql = yql,
                 Hits = 5,
-                Ranking = new RankingConfig { Profile = "closeness_profile" },
-                Input = new() { ["query(query_embedding)"] = VespaTensor.FromDenseValues([5f, 1f, 0f, 0.1f]) },
-                CustomParameters = new() { ["userQuery"] = "laptop" }
-            };
+                Ranking = new RankingConfig { Profile = "closeness_profile" }
+            }.WithQueryTensor("query_embedding", VespaTensor.FromDenseValues([5f, 1f, 0f, 0.1f]))
+                .WithParameter("userQuery", "laptop");
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
             foreach (var hit in result.Root.Children)

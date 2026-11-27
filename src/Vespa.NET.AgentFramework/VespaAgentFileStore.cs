@@ -133,7 +133,8 @@ public sealed class VespaAgentFileStore : AgentFileStore
                 return false;
             try
             {
-                await _store.WriteAsync(_key, JsonSerializer.SerializeToElement(tree), snapshot?.Revision, cancellationToken);
+                var payload = JsonSerializer.SerializeToElement(tree, AgentStorageJsonContext.Default.FileTree);
+                await _store.WriteAsync(_key, payload, snapshot?.Revision, cancellationToken);
                 return true;
             }
             catch (VespaConditionNotMetException) when (attempt < 4)
@@ -144,7 +145,8 @@ public sealed class VespaAgentFileStore : AgentFileStore
     }
 
     private static FileTree Tree(VespaAgentStateSnapshot? snapshot) => snapshot is null ? new()
-        : snapshot.Payload.Deserialize<FileTree>() ?? throw new JsonException("The file-memory snapshot is missing.");
+        : snapshot.Payload.Deserialize(AgentStorageJsonContext.Default.FileTree)
+            ?? throw new JsonException("The file-memory snapshot is missing.");
 
     private static bool DirectChild(string path, string prefix) => path.StartsWith(prefix, StringComparison.Ordinal)
         && path.Length > prefix.Length && !path[prefix.Length..].Contains('/', StringComparison.Ordinal);
@@ -171,7 +173,7 @@ public sealed class VespaAgentFileStore : AgentFileStore
         return string.Join('/', parts).ToLowerInvariant();
     }
 
-    private sealed class FileTree
+    internal sealed class FileTree
     {
         public Dictionary<string, string> Files { get; set; } = [];
         public HashSet<string> Directories { get; set; } = [];

@@ -7,6 +7,47 @@ namespace Vespa.Tests.Unit;
 
 public class VespaSchemaBuilderTests
 {
+    [Fact]
+    public void RegisteredSchemaMetadata_ProducesTheSamePackageAsRuntimeDiscovery()
+    {
+        var metadata = new VespaSchemaMetadata()
+            .WithDocument<NestedStructDoc>()
+            .WithDocument<MapOfStructDoc>()
+            .WithStruct<PlaceStruct>()
+            .WithStruct<GeoPointStruct>()
+            .WithStruct<AddressStruct>();
+        var options = new ApplicationPackageOptions { NodeCount = 2, Redundancy = 2 };
+        using var discovered = new MemoryStream();
+        using var registered = new MemoryStream();
+
+        VespaSchemaBuilder.GenerateApplicationPackage(discovered, [typeof(NestedStructDoc), typeof(MapOfStructDoc)], options);
+        metadata.GenerateApplicationPackage(registered, options);
+        Assert.Equal(VespaSchemaBuilder.GenerateSchema<NestedStructDoc>(options), metadata.GenerateSchema<NestedStructDoc>(options));
+
+        using var expected = new ZipArchive(discovered, ZipArchiveMode.Read);
+        using var actual = new ZipArchive(registered, ZipArchiveMode.Read);
+        Assert.Equal(expected.Entries.Select(entry => entry.FullName), actual.Entries.Select(entry => entry.FullName));
+        foreach (var entry in expected.Entries)
+        {
+            using var expectedReader = new StreamReader(entry.Open());
+            using var actualReader = new StreamReader(actual.GetEntry(entry.FullName)!.Open());
+            Assert.Equal(expectedReader.ReadToEnd(), actualReader.ReadToEnd());
+        }
+    }
+
+    [Fact]
+    public void RegisteredSchemaMetadata_ReportsAnUnregisteredNestedStruct()
+    {
+        var metadata = new VespaSchemaMetadata().WithDocument<NestedStructDoc>().WithStruct<PlaceStruct>();
+
+        var error = Assert.Throws<InvalidOperationException>(() => metadata.GenerateSchema<NestedStructDoc>());
+
+        Assert.Contains(nameof(GeoPointStruct), error.Message);
+        Assert.Contains("WithStruct<T>()", error.Message);
+        Assert.Contains("struct geo_point", metadata.WithStruct<GeoPointStruct>().GenerateSchema<NestedStructDoc>());
+        Assert.Throws<InvalidOperationException>(() => metadata.GenerateSchema<NestedStructDoc>());
+    }
+
     // ── Test document types ───────────────────────────────────────────────────
 
     [VespaDocument("music")]
@@ -81,6 +122,13 @@ public class VespaSchemaBuilderTests
 
     private class NoBadge { public string X { get; set; } = string.Empty; }
 
+    [VespaDocument("struct_document")]
+    private readonly struct StructDocument
+    {
+        [VespaField(Name = "sale_price")]
+        public int Price { get; init; }
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -96,12 +144,43 @@ public class VespaSchemaBuilderTests
     }
 
     [Fact]
+    public void TypeOverloads_GenerateSchemaAndPackageForStructDocument()
+    {
+        var type = typeof(StructDocument);
+        var schema = VespaSchemaBuilder.GenerateSchema(type);
+        Assert.Contains("field sale_price type int", schema);
+
+        using var package = new MemoryStream();
+        VespaSchemaBuilder.GenerateApplicationPackage(package, type);
+        using var zip = new ZipArchive(package, ZipArchiveMode.Read);
+        using var reader = new StreamReader(zip.GetEntry("schemas/struct_document.sd")!.Open());
+        Assert.Equal(schema, reader.ReadToEnd());
+    }
+
+    [Fact]
     public void GenerateSchema_IntField_WithExplicitFieldType()
     {
         var schema = VespaSchemaBuilder.GenerateSchema<MusicDoc>();
 
         Assert.Contains("field year type int", schema);
         Assert.Contains("indexing: attribute | summary", schema);
+    }
+
+    [Fact]
+    public void VespaFieldType_KeepsPublishedNumericValues()
+    {
+        var values = Enum.GetValues<VespaFieldType>();
+        Assert.Equal(new[]
+        {
+            VespaFieldType.None, VespaFieldType.Bool, VespaFieldType.Byte, VespaFieldType.Int,
+            VespaFieldType.Long, VespaFieldType.Float, VespaFieldType.Double, VespaFieldType.String,
+            VespaFieldType.Raw, VespaFieldType.Uri, VespaFieldType.Predicate,
+            VespaFieldType.ArrayBool, VespaFieldType.ArrayByte, VespaFieldType.ArrayInt,
+            VespaFieldType.ArrayLong, VespaFieldType.ArrayFloat, VespaFieldType.ArrayDouble, VespaFieldType.ArrayString,
+            VespaFieldType.WeightedSetString, VespaFieldType.WeightedSetInt,
+            VespaFieldType.MapStringString, VespaFieldType.MapStringInt, VespaFieldType.Reference
+        }, values);
+        Assert.Equal(Enumerable.Range(0, 24).Where(value => value != 11), values.Select(type => (int)type));
     }
 
     [Fact]
@@ -446,7 +525,6 @@ public class VespaSchemaBuilderTests
     [Fact]
     public void GenerateSchema_RankProfileFunctions_IncludesFunctionBlock()
     {
-        // Legacy string DSL — obsolete but still honored
         var schema = VespaSchemaBuilder.GenerateSchema<RankProfileFuncDoc>();
         Assert.Contains("function freshness() {", schema);
         Assert.Contains("expression: now - attribute(timestamp)", schema);
@@ -461,11 +539,16 @@ public class VespaSchemaBuilderTests
     }
 
     [Fact]
-    public void GenerateSchema_RankProfileFunctions_MissingColon_Throws()
+    public void GenerateSchema_RankFunctionTargetsGeneratedDefault()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => VespaSchemaBuilder.GenerateSchema<RankProfileBadFuncDoc>());
-        Assert.Contains("signature: expression", ex.Message);
+        var schema = VespaSchemaBuilder.GenerateSchema<GeneratedDefaultFunctionDoc>();
+        Assert.Contains("rank-profile default {", schema);
+        Assert.Contains("function fallback() {", schema);
+
+        var options = new ApplicationPackageOptions()
+            .WithRankProfile<GeneratedDefaultFunctionDoc>("default", profile => profile.FirstPhase(1));
+        Assert.Throws<InvalidOperationException>(() =>
+            VespaSchemaBuilder.GenerateSchema<GeneratedDefaultFunctionDoc>(options));
     }
 
     // --- [VespaRankFunction] attribute ---
@@ -476,7 +559,6 @@ public class VespaSchemaBuilderTests
         var schema = VespaSchemaBuilder.GenerateSchema<RankFunctionAttrDoc>();
         Assert.Contains("function freshness() {", schema);
         Assert.Contains("expression: now - attribute(timestamp)", schema);
-        // Expressions containing ':' (impossible in the string DSL) work
         Assert.Contains("function scaled(x) {", schema);
         Assert.Contains("expression: if (x > 0, x, 0)", schema);
     }
@@ -517,6 +599,37 @@ public class VespaSchemaBuilderTests
     }
 
     // --- M16: Struct field types ---
+
+    [Fact]
+    public void GenerateSchema_RejectsDifferentStructsWithTheSameDerivedName()
+    {
+        var error = Assert.Throws<NotSupportedException>(() => VespaSchemaBuilder.GenerateSchema<DerivedStructCollision>());
+        Assert.Contains("address", error.Message);
+        Assert.Contains(typeof(BillingModel.Address).FullName!, error.Message);
+        Assert.Contains(typeof(DeliveryModel.Address).FullName!, error.Message);
+        Assert.Contains(nameof(DerivedStructCollision.Billing), error.Message);
+        Assert.Contains(nameof(DerivedStructCollision.Delivery), error.Message);
+    }
+
+    [Fact]
+    public void GenerateSchema_DeduplicatesDifferentClrTypesWithIdenticalStructMembers()
+    {
+        var schema = VespaSchemaBuilder.GenerateSchema<MatchingStructs>();
+        Assert.Single(schema.Split('\n'), line => line.Trim() == "struct address {");
+        Assert.Contains("field billing type address {", schema);
+        Assert.Contains("field delivery type address {", schema);
+        Assert.Contains("field return_address type address {", schema);
+    }
+
+    [Fact]
+    public void GenerateSchema_RejectsAnExplicitStructNameThatConflictsWithADerivedName()
+    {
+        var error = Assert.Throws<NotSupportedException>(() => VespaSchemaBuilder.GenerateSchema<ExplicitStructCollision>());
+        Assert.Contains("address", error.Message);
+        Assert.Contains(typeof(BillingModel.Address).FullName!, error.Message);
+        Assert.Contains(typeof(ExplicitAddress).FullName!, error.Message);
+        Assert.Contains(nameof(ExplicitStructCollision.Delivery), error.Message);
+    }
 
     [Fact]
     public void GenerateSchema_StructField_EmitsStructDefinition()
@@ -765,37 +878,6 @@ public class VespaSchemaBuilderTests
     }
 
     [Fact]
-    public void GenerateApplicationPackage_SourcePath_AutoIncludesFiles()
-    {
-        var onnxBytes = new byte[] { 0x4F, 0x4E, 0x4E, 0x58 };
-        var onnxPath = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllBytes(onnxPath, onnxBytes);
-
-            // Use a doc type with SourcePath set dynamically — we test via AdditionalFiles
-            // since attributes are compile-time. SourcePath is tested separately below.
-            var opts = new ApplicationPackageOptions
-            {
-                AdditionalFiles = new Dictionary<string, string>
-                {
-                    ["models/my_model.onnx"] = onnxPath
-                }
-            };
-
-            var bytes = GeneratePackageBytes<OnnxModelDoc>(opts);
-
-            using var ms = new MemoryStream(bytes);
-            using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
-            Assert.NotNull(zip.GetEntry("models/my_model.onnx"));
-        }
-        finally
-        {
-            File.Delete(onnxPath);
-        }
-    }
-
-    [Fact]
     public void GenerateApplicationPackage_NoAdditionalFiles_StillWorks()
     {
         var bytes = GeneratePackageBytes<MusicDoc>();
@@ -977,12 +1059,27 @@ public class VespaSchemaBuilderTests
     // --- Distance metric renames ---
 
     [Fact]
-    public void GenerateSchema_InnerProductMetric_EmitsPrenormalizedAngular()
+    public void GenerateSchema_LegacyNumericMetric_EmitsPrenormalizedAngular()
     {
-        // Vespa removed the "innerproduct" name; its successor is prenormalized-angular
-        var schema = VespaSchemaBuilder.GenerateSchema<InnerProductMetricDoc>();
-        Assert.Contains("distance-metric: prenormalized-angular", schema);
-        Assert.DoesNotContain("distance-metric: innerproduct", schema);
+        var legacy = VespaSchemaBuilder.GenerateSchema<LegacyMetricDoc>();
+        var canonical = VespaSchemaBuilder.GenerateSchema<PrenormalizedMetricDoc>();
+        var dotProduct = VespaSchemaBuilder.GenerateSchema<DotProductMetricDoc>();
+
+        Assert.Equal(canonical, legacy);
+        Assert.Contains("distance-metric: prenormalized-angular", canonical);
+        Assert.Equal(canonical.Replace("distance-metric: prenormalized-angular", "distance-metric: dotproduct"), dotProduct);
+    }
+
+    [Fact]
+    public void DistanceMetric_KeepsPublishedNumericValues()
+    {
+        var values = Enum.GetValues<DistanceMetric>();
+        Assert.Equal(new[]
+        {
+            DistanceMetric.None, DistanceMetric.Euclidean, DistanceMetric.Angular, DistanceMetric.DotProduct,
+            DistanceMetric.Hamming, DistanceMetric.Geodesic, DistanceMetric.PrenormalizedAngular
+        }, values);
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 7 }, values.Select(metric => (int)metric));
     }
 
     // --- Stemming shortest / rank-type about, empty ---
@@ -1024,6 +1121,36 @@ public class VespaSchemaBuilderTests
         var child = schema.IndexOf("rank-profile child inherits default {", StringComparison.Ordinal);
         Assert.True(child >= 0);
         Assert.Equal(-1, schema.IndexOf("inputs {", child, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GenerateApplicationPackage_EmitsExplicitMinimumServerVersion()
+    {
+        var opts = new ApplicationPackageOptions { MinimumRequiredVespaVersion = new Version(8, 640, 27) };
+        var servicesXml = ReadServicesXml(GeneratePackageBytes<MusicDoc>(opts));
+
+        Assert.Contains("<services version=\"1.0\" minimum-required-vespa-version=\"8.640.27\">", servicesXml);
+        Assert.DoesNotContain("minimum-required-vespa-version", ReadServicesXml(GeneratePackageBytes<MusicDoc>()));
+    }
+
+    [Theory]
+    [InlineData("8.640", null, "three version components")]
+    [InlineData("8.640.27.1", null, "three version components")]
+    [InlineData("8.640.27", "<services version=\"1.0\"/>", "CustomServicesXml")]
+    public void GenerateApplicationPackage_RejectsInvalidMinimumServerVersionBeforeWriting(
+        string version, string? customServicesXml, string expectedMessage)
+    {
+        var opts = new ApplicationPackageOptions
+        {
+            MinimumRequiredVespaVersion = Version.Parse(version),
+            CustomServicesXml = customServicesXml
+        };
+        using var output = new MemoryStream();
+
+        var error = Assert.Throws<ArgumentException>(() => VespaSchemaBuilder.GenerateApplicationPackage<MusicDoc>(output, opts));
+
+        Assert.Contains(expectedMessage, error.Message);
+        Assert.Equal(0, output.Length);
     }
 
     // --- Multi-node packages (hosts.xml) ---
@@ -1344,9 +1471,9 @@ file record RankProfileDiversityDoc
     public string Title { get; init; } = string.Empty;
 }
 
-#pragma warning disable CS0618 // Functions DSL is obsolete but must keep working
 [VespaDocument("func_doc")]
-[VespaRankProfile("myrank", FirstPhase = "freshness", Functions = "freshness: now - attribute(timestamp)")]
+[VespaRankProfile("myrank", FirstPhase = "freshness")]
+[VespaRankFunction("freshness", "now - attribute(timestamp)", Profile = "myrank")]
 file record RankProfileFuncDoc
 {
     [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
@@ -1354,21 +1481,22 @@ file record RankProfileFuncDoc
 }
 
 [VespaDocument("multifunc_doc")]
-[VespaRankProfile("myrank", FirstPhase = "myScore(1,2)", Functions = "freshness: now - attribute(timestamp); myScore(a,b): a * b")]
+[VespaRankProfile("myrank", FirstPhase = "myScore(1,2)")]
+[VespaRankFunction("freshness", "now - attribute(timestamp)", Profile = "myrank")]
+[VespaRankFunction("myScore(a,b)", "a * b", Profile = "myrank")]
 file record RankProfileMultiFuncDoc
 {
     [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
     public string Title { get; init; } = string.Empty;
 }
 
-[VespaDocument("badfunc_doc")]
-[VespaRankProfile("myrank", Functions = "freshness now - attribute(timestamp)")]
-file record RankProfileBadFuncDoc
+[VespaDocument("generated_default_function_doc")]
+[VespaRankFunction("fallback", "1")]
+file record GeneratedDefaultFunctionDoc
 {
-    [VespaField(Name = "title", IndexingMode = IndexingMode.IndexAttributeSummary)]
-    public string Title { get; init; } = string.Empty;
+    [VespaTensor("tensor<float>(x[2])")]
+    public float[]? Embedding { get; init; }
 }
-#pragma warning restore CS0618
 
 [VespaDocument("rankfunc_attr_doc")]
 [VespaRankProfile("myrank", FirstPhase = "freshness")]
@@ -1425,6 +1553,40 @@ file class AddressStruct
     [VespaField(Name = "street")] public string Street { get; set; } = "";
     [VespaField(Name = "city")] public string City { get; set; } = "";
 }
+
+file static class BillingModel
+{
+    [VespaStruct]
+    public sealed record Address(string Street);
+}
+
+file static class DeliveryModel
+{
+    [VespaStruct]
+    public sealed record Address(int PostalCode);
+}
+
+[VespaStruct("address")]
+file sealed record MatchingAddress(string Street);
+
+[VespaStruct("address")]
+file sealed record ExplicitAddress(int PostalCode);
+
+[VespaDocument("derived_struct_collision")]
+file sealed record DerivedStructCollision(
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address Billing,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] DeliveryModel.Address Delivery);
+
+[VespaDocument("matching_structs")]
+file sealed record MatchingStructs(
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address Billing,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] MatchingAddress Delivery,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address ReturnAddress);
+
+[VespaDocument("explicit_struct_collision")]
+file sealed record ExplicitStructCollision(
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] BillingModel.Address Billing,
+    [property: VespaField(IndexingMode = IndexingMode.Summary)] ExplicitAddress Delivery);
 
 [VespaDocument("struct_doc")]
 file record StructDoc
@@ -1684,14 +1846,26 @@ file record ImplicitDoubleTensorDoc
     public Dictionary<string, double>? Sparse { get; init; }
 }
 
-#pragma warning disable CS0618 // InnerProduct is obsolete; verify its mapped emission
 [VespaDocument("ip_metric_doc")]
-file record InnerProductMetricDoc
+file record LegacyMetricDoc
 {
-    [VespaTensor("tensor<float>(x[8])", DistanceMetric = DistanceMetric.InnerProduct)]
+    [VespaTensor("tensor<float>(x[8])", DistanceMetric = (DistanceMetric)6)]
     public float[]? Vec { get; init; }
 }
-#pragma warning restore CS0618
+
+[VespaDocument("ip_metric_doc")]
+file record PrenormalizedMetricDoc
+{
+    [VespaTensor("tensor<float>(x[8])", DistanceMetric = DistanceMetric.PrenormalizedAngular)]
+    public float[]? Vec { get; init; }
+}
+
+[VespaDocument("ip_metric_doc")]
+file record DotProductMetricDoc
+{
+    [VespaTensor("tensor<float>(x[8])", DistanceMetric = DistanceMetric.DotProduct)]
+    public float[]? Vec { get; init; }
+}
 
 [VespaDocument("stemming_shortest_doc")]
 file record StemmingShortestDoc

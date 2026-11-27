@@ -49,12 +49,10 @@ public sealed class VespaAgentSessionStore(VespaAgentStateStore store) : AgentSe
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(key);
         ArgumentException.ThrowIfNullOrWhiteSpace(agent.Name);
-        return "session/" + JsonSerializer.Serialize(new
-        {
-            Agent = agent.Name,
-            key.SessionId,
-            Partitions = key.Partitions?.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => new[] { p.Key, p.Value }).ToArray()
-        });
+        var partitions = key.Partitions?.OrderBy(p => p.Key, StringComparer.Ordinal)
+            .Select(p => new[] { p.Key, p.Value }).ToArray();
+        return "session/" + JsonSerializer.Serialize(
+            new SessionIdentity(agent.Name, key.SessionId, partitions), AgentStorageJsonContext.Default.SessionIdentity);
     }
 
     private sealed class SessionVersion
@@ -63,3 +61,5 @@ public sealed class VespaAgentSessionStore(VespaAgentStateStore store) : AgentSe
         public string? Revision { get; set; }
     }
 }
+
+internal sealed record SessionIdentity(string Agent, string SessionId, string[][]? Partitions);

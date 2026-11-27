@@ -142,10 +142,18 @@ public sealed class LiveFeatureTests(ITestOutputHelper output)
 
     private static FeatureRecord Make(long id, string title, string category, List<string> tags, int priority,
         DateTimeOffset created, float[] primary, float[] secondary, float[] euclidean, float[] dot) => new()
-    {
-        Id = id, Title = title, Category = category, Tags = tags, Priority = priority, Created = created,
-        Primary = primary, Secondary = new(secondary), Euclidean = euclidean, Dot = dot
-    };
+        {
+            Id = id,
+            Title = title,
+            Category = category,
+            Tags = tags,
+            Priority = priority,
+            Created = created,
+            Primary = primary,
+            Secondary = new(secondary),
+            Euclidean = euclidean,
+            Dot = dot
+        };
 
     private static async Task CheckMetricAsync(VespaClient client, string metric, string field, string profile, string queryName,
         float[] query, double[] expected, double threshold, CancellationToken ct)
@@ -154,7 +162,9 @@ public sealed class LiveFeatureTests(ITestOutputHelper output)
         {
             using var store = new VespaVectorStore(client, TestHarness.Options with
             {
-                RankProfile = profile, QueryTensorName = queryName, Approximate = approximate
+                RankProfile = profile,
+                QueryTensorName = queryName,
+                Approximate = approximate
             });
             using var collection = store.GetDynamicCollection("features", new()
             {
@@ -189,27 +199,28 @@ public sealed class LiveFeatureTests(ITestOutputHelper output)
         using (var collection = store.GetDynamicCollection("tiny_features", definition))
             await collection.UpsertAsync(new Dictionary<string, object?>
             {
-                ["Id"] = "tiny", ["Vector"] = new float[] { 1e-17f, 0, 0 }
+                ["Id"] = "tiny",
+                ["Vector"] = new float[] { 1e-17f, 0, 0 }
             }, ct);
         foreach (var approximate in new[] { false, true })
-        foreach (var metric in new[] { DistanceFunction.EuclideanDistance, DistanceFunction.EuclideanSquaredDistance })
-        {
-            definition.Properties.OfType<VectorStoreVectorProperty>().Single().DistanceFunction = metric;
-            using var store = new VespaVectorStore(client, TestHarness.Options with { RankProfile = "tiny_search", Approximate = approximate });
-            using var collection = store.GetDynamicCollection("tiny_features", definition);
-            List<VectorSearchResult<Dictionary<string, object?>>> hits;
-            do
+            foreach (var metric in new[] { DistanceFunction.EuclideanDistance, DistanceFunction.EuclideanSquaredDistance })
             {
-                hits = await collection.SearchAsync(new float[] { 0, 0, 0 }, 1, cancellationToken: ct).Collect();
-                if (hits.Count == 0)
-                    await Task.Delay(100, ct);
-            } while (hits.Count == 0);
-            Assert.Equal("tiny", Assert.Single(hits).Record["Id"]);
-            // Closeness rounds to 1, so Vespa's public distance is 0 although
-            // the stored point differs from zero. A raw threshold of 0 loses it.
-            Assert.Equal(0, hits[0].Score);
-            Assert.Single(await collection.SearchAsync(new float[] { 0, 0, 0 }, 1, new() { ScoreThreshold = 0 }, ct).Collect());
-        }
+                definition.Properties.OfType<VectorStoreVectorProperty>().Single().DistanceFunction = metric;
+                using var store = new VespaVectorStore(client, TestHarness.Options with { RankProfile = "tiny_search", Approximate = approximate });
+                using var collection = store.GetDynamicCollection("tiny_features", definition);
+                List<VectorSearchResult<Dictionary<string, object?>>> hits;
+                do
+                {
+                    hits = await collection.SearchAsync(new float[] { 0, 0, 0 }, 1, cancellationToken: ct).Collect();
+                    if (hits.Count == 0)
+                        await Task.Delay(100, ct);
+                } while (hits.Count == 0);
+                Assert.Equal("tiny", Assert.Single(hits).Record["Id"]);
+                // Closeness rounds to 1, so Vespa's public distance is 0 although
+                // the stored point differs from zero. A raw threshold of 0 loses it.
+                Assert.Equal(0, hits[0].Score);
+                Assert.Single(await collection.SearchAsync(new float[] { 0, 0, 0 }, 1, new() { ScoreThreshold = 0 }, ct).Collect());
+            }
     }
 
     private static async Task DeployAsync(VespaClient client, CancellationToken ct)

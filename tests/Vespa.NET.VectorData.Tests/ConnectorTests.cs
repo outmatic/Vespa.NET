@@ -228,6 +228,26 @@ public sealed class ConnectorTests
             new float[] { 1, 0, 0 }, 1, cancellationToken: cancellation.Token).Collect());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Search_ObservesEnumeratorCancellationBeforeValidation(bool hybrid)
+    {
+        using var harness = new TestHarness();
+        using var operationCancellation = new CancellationTokenSource();
+        using var enumerationCancellation = new CancellationTokenSource();
+        var collection = (VespaVectorStoreCollection<string, Article>)harness.Collection;
+        var vector = new float[] { 1, 0, 0 };
+        var results = hybrid
+            ? collection.HybridSearchAsync(vector, ["vespa"], 0, cancellationToken: operationCancellation.Token)
+            : collection.SearchAsync(vector, 0, cancellationToken: operationCancellation.Token);
+
+        enumerationCancellation.Cancel();
+        await using var enumerator = results.GetAsyncEnumerator(enumerationCancellation.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await enumerator.MoveNextAsync());
+        Assert.Empty(harness.Handler.Requests);
+    }
+
     [Fact]
     public async Task DiscoveryWithoutCatalogAndDestructiveLifecycleOperations_RemainUnsupported()
     {

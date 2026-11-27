@@ -48,6 +48,23 @@ public class AdminE2ETests(VespaFixture fixture)
         Assert.True(ready);
     }
 
+    [Fact]
+    public async Task DeploySchemaAsync_EnforcesMinimumRequiredVespaVersion()
+    {
+        if (!Enabled) return;
+
+        await fixture.Client.Admin.DeploySchemaAsync(VespaFixture.SchemaTypes,
+            options: new ApplicationPackageOptions { MinimumRequiredVespaVersion = new Version(8, 290, 51) });
+        var error = await Assert.ThrowsAsync<VespaException>(() =>
+            fixture.Client.Admin.DeploySchemaAsync(VespaFixture.SchemaTypes,
+                options: new ApplicationPackageOptions { MinimumRequiredVespaVersion = new Version(8, 9999, 0) }));
+
+        Assert.Equal(400, error.StatusCode);
+        Assert.Contains("minimum required Vespa version", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("8.9999.0", error.Message);
+        Assert.True(await fixture.Client.IsReadyAsync());
+    }
+
     // ── DeployAsync with raw stream ──────────────────────────────────────────
 
     [Fact]

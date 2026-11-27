@@ -1,0 +1,59 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
+using Vespa.Models;
+using Vespa.Models.Attributes;
+
+namespace Vespa.Documents;
+
+/// <summary>Builds native document field lists for GET and visit requests.</summary>
+public static class DocumentFieldSet
+{
+    /// <summary>Renders a field list using the model's document type and mapped property names.</summary>
+    /// <remarks>Requires at least one direct document property. Names are compared ordinally; duplicate names are removed and first-appearance order is preserved.</remarks>
+    public static string For<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(params Expression<Func<T, object?>>[] fields) where T : class
+    {
+        ValidateFields(fields);
+        var (documentType, _) = VespaDocumentMeta.For<T>();
+        return Render(documentType, fields);
+    }
+
+    /// <summary>Renders mapped properties for an explicit document type without requiring a document attribute.</summary>
+    /// <remarks>The qualifier does not change the request's target or document selection. Pass the result as the named fieldSet argument or VisitOptions.FieldSet.</remarks>
+    public static string ForDocumentType<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, params Expression<Func<T, object?>>[] fields) where T : class
+    {
+        ValidateFields(fields);
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentType);
+        return Render(documentType, fields);
+    }
+
+    private static string Render<
+        [DynamicallyAccessedMembers(DocumentFieldSelector.ModelMembers)] T>(string documentType, Expression<Func<T, object?>>[] fields)
+    {
+        if (!IdentifierSyntax.IsSimple(documentType))
+            throw new ArgumentException($"'{documentType}' is not a valid document type name for a field set.", nameof(documentType));
+
+        List<string> names = [];
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        for (var index = 0; index < fields.Length; index++)
+        {
+            var field = fields[index];
+            if (field is null)
+                throw new ArgumentNullException(nameof(fields), $"Field selector at index {index} must not be null.");
+            var name = DocumentFieldSelector.FieldName(field);
+            if (!IdentifierSyntax.IsSimple(name))
+                throw new ArgumentException($"'{name}' is not a valid top-level document field name for a field set.", nameof(fields));
+            if (seen.Add(name))
+                names.Add(name);
+        }
+        return $"{documentType}:{string.Join(",", names)}";
+    }
+
+    private static void ValidateFields<T>(Expression<Func<T, object?>>[] fields)
+    {
+        ArgumentNullException.ThrowIfNull(fields);
+        if (fields.Length == 0)
+            throw new ArgumentException("Specify at least one document field.", nameof(fields));
+    }
+}

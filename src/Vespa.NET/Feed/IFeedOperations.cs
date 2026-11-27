@@ -48,7 +48,7 @@ public interface IFeedOperations
         throw new NotSupportedException("This feed implementation does not support mixed operations.");
 
     /// <summary>
-    /// Bulk insert/update multiple documents
+    /// Inserts or replaces documents, enumerating the source as space becomes available in the bounded feed channel.
     /// </summary>
     Task<FeedResult> BulkPutAsync<T>(
         IEnumerable<FeedDocument<T>> documents,
@@ -84,10 +84,8 @@ public interface IFeedOperations
     );
 
     /// <summary>
-    /// High-throughput streaming feed pipeline. Reads documents from an <see cref="IAsyncEnumerable{T}"/>
-    /// and writes them concurrently using a bounded channel with HTTP/2 multiplexing.
-    /// Unlike <see cref="BulkPutAsync{T}"/>, the input is not materialized into a list —
-    /// documents are consumed on-demand with backpressure.
+    /// Reads an <see cref="IAsyncEnumerable{T}"/> into a bounded channel and writes documents concurrently.
+    /// Both this method and <see cref="BulkPutAsync{T}"/> enumerate their sources incrementally.
     /// </summary>
     /// <param name="documents">Streaming source of documents (e.g. from a database cursor).</param>
     /// <param name="documentType">Vespa document type.</param>
@@ -115,40 +113,6 @@ public interface IFeedOperations
         Action<FeedProgress>? onProgress = null,
         CancellationToken cancellationToken = default
     ) where T : class;
-}
-
-/// <summary>
-/// Represents a document for feeding
-/// </summary>
-public sealed record FeedDocument<T> where T : class
-{
-    public string Id { get; init; } = string.Empty;
-    public T Fields { get; init; } = default!;
-
-    /// <summary>
-    /// Optional document selection condition for this document.
-    /// When set, the PUT will only succeed if the condition is met (HTTP 412 otherwise).
-    /// Example: <c>"music.year > 2000"</c>
-    /// </summary>
-    public string? Condition { get; init; }
-}
-
-/// <summary>
-/// Single request in a <see cref="IFeedOperations.BulkUpdateAsync"/> batch.
-/// Carries the document ID plus a dictionary of Vespa field operations (produced by
-/// <see cref="FieldOp"/> helpers), matching the shape expected by <c>PUT /document/v1</c>.
-/// </summary>
-public sealed record BulkFieldUpdate
-{
-    public string Id { get; init; } = string.Empty;
-
-    public Dictionary<string, FieldOperation> FieldOperations { get; init; } = [];
-
-    /// <summary>
-    /// Optional document selection condition for this update.
-    /// When set, the update only succeeds if the condition is met (HTTP 412 otherwise).
-    /// </summary>
-    public string? Condition { get; init; }
 }
 
 /// <summary>

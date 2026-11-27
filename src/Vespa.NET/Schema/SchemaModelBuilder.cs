@@ -7,10 +7,12 @@ namespace Vespa.Models.Schema;
 /// Builds a <see cref="SchemaModel"/> from an attributed CLR type in a single
 /// reflection pass, performing all schema validation up front.
 /// </summary>
-internal sealed class SchemaModelBuilder
+internal sealed class SchemaModelBuilder(Func<Type, PropertyInfo[]> getProperties)
 {
     private readonly List<SchemaStructModel> _structs = [];
     private readonly Dictionary<Type, SchemaStructModel> _structIndex = [];
+    private readonly Dictionary<string, (Type Type, string Field, SchemaStructModel Model)> _structsByName =
+        new(StringComparer.Ordinal);
     private readonly HashSet<Type> _structsInProgress = [];
 
     private sealed record ResolvedFieldType(
@@ -20,7 +22,15 @@ internal sealed class SchemaModelBuilder
         string? MapValueType = null,
         Type? MapValueStructType = null);
 
-    public static SchemaModel Build(Type type)
+    private readonly record struct FieldIndexing(
+        string? Indexing,
+        IReadOnlyList<(string Path, string Indexing)>? StructFields = null,
+        int? PredicateArity = null,
+        long? PredicateLowerBound = null,
+        long? PredicateUpperBound = null);
+
+    public static SchemaModel Build(
+        Type type, Func<Type, PropertyInfo[]> getProperties, IReadOnlyList<RankProfileDefinition>? rankProfiles = null)
     {
         ArgumentNullException.ThrowIfNull(type);
 
@@ -28,15 +38,16 @@ internal sealed class SchemaModelBuilder
             ?? throw new InvalidOperationException(
                 $"Type '{type.Name}' must be decorated with [VespaDocument].");
 
-        return new SchemaModelBuilder().BuildCore(type, docAttr);
+        return new SchemaModelBuilder(getProperties).BuildCore(type, docAttr, rankProfiles);
     }
 
-    private SchemaModel BuildCore(Type type, VespaDocumentAttribute docAttr)
+    private SchemaModel BuildCore(
+        Type type, VespaDocumentAttribute docAttr, IReadOnlyList<RankProfileDefinition>? rankProfiles)
     {
         var fields = new List<SchemaFieldModel>();
         var tensorInputs = new List<(string QueryName, string TensorType)>();
 
-        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var prop in getProperties(type))
         {
             // [VespaExtraFields] is a catch-all bag for unmapped fields — skip in schema generation
             if (prop.GetCustomAttribute<VespaExtraFieldsAttribute>() is not null)
@@ -63,7 +74,7 @@ internal sealed class SchemaModelBuilder
             OnnxModels = [.. type.GetCustomAttributes<VespaOnnxModelAttribute>()],
             FieldSets = [.. type.GetCustomAttributes<VespaFieldSetAttribute>()],
             DocumentSummaries = [.. type.GetCustomAttributes<VespaDocumentSummaryAttribute>()],
-            RankProfiles = BuildRankProfiles(type, tensorInputs)
+            RankProfiles = BuildRankProfiles(type, tensorInputs, rankProfiles)
         };
     }
 
@@ -86,68 +97,16 @@ internal sealed class SchemaModelBuilder
         var context = $"property '{prop.Name}' on type '{prop.DeclaringType?.Name}'";
         var resolved = ResolveDeclaredType(prop, fieldAttr, context);
         var mode = fieldAttr.IndexingMode;
+        if (fieldAttr.EnableBm25 && ((mode & IndexingMode.Index) == 0 ||
+            resolved.VespaType is not ("string" or "array<string>" or "weightedset<string>")))
+            throw new InvalidOperationException($"EnableBm25 requires an indexed string field ({context}).");
 
-        string? indexing = null;
-        IReadOnlyList<(string, string)> structFields = [];
-        int? predicateArity = null;
-        long? predicateLower = null;
-        long? predicateUpper = null;
-
-        if (resolved.Shape is not FieldShape.Simple)
+        var indexing = resolved.Shape switch
         {
-            // Struct, array-of-struct and map fields: attribute/index are invalid on the
-            // outer field; Summary maps to `indexing: summary`, Attribute to struct-field blocks.
-            var kind = resolved.Shape is FieldShape.Map ? "map" : "struct";
-            if ((mode & IndexingMode.Index) != 0)
-                throw new InvalidOperationException(
-                    $"IndexingMode.Index is not supported for {kind} fields in indexed search ({context}). " +
-                    "Use IndexingMode.Summary, optionally combined with IndexingMode.Attribute to generate " +
-                    "struct-field attribute blocks for primitive-typed struct members.");
-            if (fieldAttr.FastSearch)
-                throw new InvalidOperationException(
-                    $"FastSearch cannot be set on a {kind} field ({context}): fast-search applies to " +
-                    "attribute fields only, and the outer field of a struct/map cannot be an attribute.");
-
-            // Vespa's ComplexFieldsWithStructFieldAttributesValidator only accepts
-            // struct-field attributes on array-of-struct and map fields; a single
-            // struct field with attributed members fails deployment.
-            if ((mode & IndexingMode.Attribute) != 0 && resolved.Shape is FieldShape.Struct)
-                throw new InvalidOperationException(
-                    $"IndexingMode.Attribute is not supported for single struct fields in indexed search ({context}): " +
-                    "Vespa allows struct-field attributes only on array-of-struct and map fields. " +
-                    "Set IndexingMode = IndexingMode.Summary explicitly (the default AttributeSummary includes Attribute).");
-
-            if ((mode & IndexingMode.Summary) != 0)
-                indexing = "summary";
-            if ((mode & IndexingMode.Attribute) != 0)
-                structFields = BuildStructFieldEntries(resolved);
-        }
-        else if (resolved.VespaType == "predicate")
-        {
-            if (fieldAttr.PredicateArity < 1)
-                throw new InvalidOperationException(
-                    $"Predicate field '{name}' ({context}) requires PredicateArity >= 1 — " +
-                    "Vespa mandates `index { arity: N }` on predicate fields.");
-            if ((mode & IndexingMode.Index) != 0)
-                throw new InvalidOperationException(
-                    $"IndexingMode.Index is not supported for predicate fields ({context}); " +
-                    "predicates use an implicit attribute-backed index configured via PredicateArity.");
-            if ((mode & IndexingMode.Attribute) == 0)
-                throw new InvalidOperationException(
-                    $"Predicate field '{name}' ({context}) must include IndexingMode.Attribute — " +
-                    "predicate fields are stored as attributes.");
-
-            indexing = BuildIndexingString(mode);
-            predicateArity = fieldAttr.PredicateArity;
-            if (fieldAttr.PredicateLowerBound != long.MinValue)
-                predicateLower = fieldAttr.PredicateLowerBound;
-            if (fieldAttr.PredicateUpperBound != long.MaxValue)
-                predicateUpper = fieldAttr.PredicateUpperBound;
-        }
-        else if (mode != IndexingMode.None)
-        {
-            indexing = BuildIndexingString(mode);
-        }
+            not FieldShape.Simple => BuildComplexFieldIndexing(resolved, fieldAttr, context),
+            _ when resolved.VespaType == "predicate" => BuildPredicateFieldIndexing(fieldAttr, name, context),
+            _ => new FieldIndexing(mode == IndexingMode.None ? null : BuildIndexingString(mode))
+        };
 
         if (fieldAttr.PredicateArity != 0 && resolved.VespaType != "predicate")
             throw new InvalidOperationException(
@@ -169,19 +128,74 @@ internal sealed class SchemaModelBuilder
         {
             Name = name,
             VespaType = resolved.VespaType,
-            Indexing = indexing,
+            Indexing = indexing.Indexing,
             Match = ToVespaMatchName(fieldAttr.MatchMode),
             Stemming = ToVespaStemmingName(fieldAttr.Stemming),
             Bolding = fieldAttr.Bolding,
             FastSearch = fieldAttr.FastSearch,
+            EnableBm25 = fieldAttr.EnableBm25,
             Normalizing = fieldAttr.Normalizing,
             Rank = rank,
             RankTypeName = rankTypeName,
-            StructFields = structFields,
-            PredicateArity = predicateArity,
-            PredicateLowerBound = predicateLower,
-            PredicateUpperBound = predicateUpper
+            StructFields = indexing.StructFields ?? [],
+            PredicateArity = indexing.PredicateArity,
+            PredicateLowerBound = indexing.PredicateLowerBound,
+            PredicateUpperBound = indexing.PredicateUpperBound
         };
+    }
+
+    private FieldIndexing BuildComplexFieldIndexing(
+        ResolvedFieldType resolved, VespaFieldAttribute fieldAttr, string context)
+    {
+        // Struct, array-of-struct and map fields: attribute/index are invalid on the
+        // outer field; Summary maps to `indexing: summary`, Attribute to struct-field blocks.
+        var mode = fieldAttr.IndexingMode;
+        var kind = resolved.Shape is FieldShape.Map ? "map" : "struct";
+        if ((mode & IndexingMode.Index) != 0)
+            throw new InvalidOperationException(
+                $"IndexingMode.Index is not supported for {kind} fields in indexed search ({context}). " +
+                "Use IndexingMode.Summary, optionally combined with IndexingMode.Attribute to generate " +
+                "struct-field attribute blocks for primitive-typed struct members.");
+        if (fieldAttr.FastSearch)
+            throw new InvalidOperationException(
+                $"FastSearch cannot be set on a {kind} field ({context}): fast-search applies to " +
+                "attribute fields only, and the outer field of a struct/map cannot be an attribute.");
+
+        // Vespa's ComplexFieldsWithStructFieldAttributesValidator only accepts
+        // struct-field attributes on array-of-struct and map fields; a single
+        // struct field with attributed members fails deployment.
+        var hasAttributes = (mode & IndexingMode.Attribute) != 0;
+        if (hasAttributes && resolved.Shape is FieldShape.Struct)
+            throw new InvalidOperationException(
+                $"IndexingMode.Attribute is not supported for single struct fields in indexed search ({context}): " +
+                "Vespa allows struct-field attributes only on array-of-struct and map fields. " +
+                "Set IndexingMode = IndexingMode.Summary explicitly (the default AttributeSummary includes Attribute).");
+
+        return new FieldIndexing(
+            (mode & IndexingMode.Summary) != 0 ? "summary" : null,
+            hasAttributes ? BuildStructFieldEntries(resolved) : null);
+    }
+
+    private static FieldIndexing BuildPredicateFieldIndexing(VespaFieldAttribute fieldAttr, string name, string context)
+    {
+        var mode = fieldAttr.IndexingMode;
+        if (fieldAttr.PredicateArity < 1)
+            throw new InvalidOperationException(
+                $"Predicate field '{name}' ({context}) requires PredicateArity >= 1 — " +
+                "Vespa mandates `index { arity: N }` on predicate fields.");
+        if ((mode & IndexingMode.Index) != 0)
+            throw new InvalidOperationException(
+                $"IndexingMode.Index is not supported for predicate fields ({context}); " +
+                "predicates use an implicit attribute-backed index configured via PredicateArity.");
+        if ((mode & IndexingMode.Attribute) == 0)
+            throw new InvalidOperationException(
+                $"Predicate field '{name}' ({context}) must include IndexingMode.Attribute — " +
+                "predicate fields are stored as attributes.");
+
+        return new FieldIndexing(BuildIndexingString(mode),
+            PredicateArity: fieldAttr.PredicateArity,
+            PredicateLowerBound: fieldAttr.PredicateLowerBound != long.MinValue ? fieldAttr.PredicateLowerBound : null,
+            PredicateUpperBound: fieldAttr.PredicateUpperBound != long.MaxValue ? fieldAttr.PredicateUpperBound : null);
     }
 
     private static SchemaFieldModel BuildTensorField(
@@ -192,6 +206,8 @@ internal sealed class SchemaModelBuilder
     {
         var name = ResolveFieldName(prop, fieldAttr);
         var context = $"property '{prop.Name}' on type '{prop.DeclaringType?.Name}'";
+        if (fieldAttr?.EnableBm25 == true)
+            throw new InvalidOperationException($"EnableBm25 requires an indexed string field ({context}).");
         var typeStr = tensorAttr.GetTensorTypeString();
         var mode = fieldAttr?.IndexingMode ?? IndexingMode.None;
 
@@ -282,7 +298,7 @@ internal sealed class SchemaModelBuilder
             return new ResolvedFieldType(scalar, FieldShape.Simple);
 
         if (type.GetCustomAttribute<VespaStructAttribute>() is not null)
-            return new ResolvedFieldType(CollectStruct(type).Name, FieldShape.Struct, type);
+            return new ResolvedFieldType(CollectStruct(type, context).Name, FieldShape.Struct, type);
 
         if (VespaTypeMapper.TryGetDictionaryTypes(type, out var keyType, out var valueType))
         {
@@ -294,7 +310,7 @@ internal sealed class SchemaModelBuilder
             var unwrappedValue = Nullable.GetUnderlyingType(valueType) ?? valueType;
             if (unwrappedValue.GetCustomAttribute<VespaStructAttribute>() is not null)
             {
-                var structModel = CollectStruct(unwrappedValue);
+                var structModel = CollectStruct(unwrappedValue, context);
                 return new ResolvedFieldType(
                     $"map<{key},{structModel.Name}>", FieldShape.Map, MapValueStructType: unwrappedValue);
             }
@@ -310,7 +326,7 @@ internal sealed class SchemaModelBuilder
             var element = Nullable.GetUnderlyingType(elementType) ?? elementType;
             if (element.GetCustomAttribute<VespaStructAttribute>() is not null)
                 return new ResolvedFieldType(
-                    $"array<{CollectStruct(element).Name}>", FieldShape.StructCollection, element);
+                    $"array<{CollectStruct(element, context).Name}>", FieldShape.StructCollection, element);
 
             return new ResolvedFieldType(
                 $"array<{ResolveClrType(element, context).VespaType}>", FieldShape.Simple);
@@ -323,7 +339,7 @@ internal sealed class SchemaModelBuilder
             "collections/dictionaries of these, or a [VespaStruct]-annotated type.");
     }
 
-    private SchemaStructModel CollectStruct(Type structType)
+    private SchemaStructModel CollectStruct(Type structType, string context)
     {
         if (_structIndex.TryGetValue(structType, out var existing))
             return existing;
@@ -337,7 +353,7 @@ internal sealed class SchemaModelBuilder
         var structName = structAttr.Name ?? VespaNaming.ToSnakeCase(structType.Name);
 
         var members = new List<(string Name, string VespaType)>();
-        foreach (var prop in structType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var prop in getProperties(structType))
         {
             var fieldAttr = prop.GetCustomAttribute<VespaFieldAttribute>();
             var memberName = fieldAttr?.Name ?? VespaNaming.ToSnakeCase(prop.Name);
@@ -350,10 +366,23 @@ internal sealed class SchemaModelBuilder
 
         _structsInProgress.Remove(structType);
 
+        if (_structsByName.TryGetValue(structName, out var named))
+        {
+            if (!named.Model.Fields.SequenceEqual(members))
+                throw new NotSupportedException(
+                    $"Vespa struct '{structName}' has different members on CLR types '{named.Type}' " +
+                    $"({named.Field}) and '{structType}' ({context}). " +
+                    "Give one type a different [VespaStruct] name or use separate schemas.");
+
+            _structIndex[structType] = named.Model;
+            return named.Model;
+        }
+
         // Nested structs were collected during member resolution, so dependencies
         // land in _structs before their containing struct.
         var model = new SchemaStructModel(structName, members);
         _structIndex[structType] = model;
+        _structsByName.Add(structName, (structType, context, model));
         _structs.Add(model);
         return model;
     }
@@ -362,7 +391,8 @@ internal sealed class SchemaModelBuilder
 
     private static List<RankProfileModel> BuildRankProfiles(
         Type type,
-        List<(string QueryName, string TensorType)> tensorInputs)
+        List<(string QueryName, string TensorType)> tensorInputs,
+        IReadOnlyList<RankProfileDefinition>? runtimeProfiles)
     {
         var profiles = new List<RankProfileModel>();
 
@@ -382,16 +412,55 @@ internal sealed class SchemaModelBuilder
                 DiversityAttribute = rp.DiversityAttribute,
                 DiversityMinGroups = rp.DiversityMinGroups
             };
-#pragma warning disable CS0618 // Functions is obsolete but still honored
-            profile.Functions.AddRange(ParseFunctionsDsl(rp.Functions, rp.Name));
-#pragma warning restore CS0618
             profiles.Add(profile);
         }
 
-        // Auto-generate a "default" profile carrying the tensor query inputs, unless
-        // the user declared their own "default" (two same-name profiles fail deployment).
+        RankProfileModel? generatedDefault = null;
         if (tensorInputs.Count > 0 && !profiles.Any(p => p.Name == "default"))
-            profiles.Insert(0, new RankProfileModel { Name = "default" });
+        {
+            generatedDefault = new RankProfileModel { Name = "default" };
+            profiles.Insert(0, generatedDefault);
+        }
+
+        // Bind attribute functions before adding runtime profiles so implicit targets stay stable.
+        foreach (var fn in type.GetCustomAttributes<VespaRankFunctionAttribute>())
+            ResolveFunctionTarget(fn, profiles, type).Functions.Add(new RankFunctionModel(fn.Signature, fn.Expression));
+
+        if (runtimeProfiles is not null)
+        {
+            foreach (var definition in runtimeProfiles)
+            {
+                var existing = profiles.FindIndex(profile => profile.Name == definition.Name);
+                if (existing >= 0 && (profiles[existing] != generatedDefault || profiles[existing].Functions.Count > 0))
+                    throw new InvalidOperationException(
+                        $"Rank profile '{definition.Name}' already has an attribute declaration on type '{type.Name}'.");
+
+                foreach (var (name, _) in definition.QueryInputs)
+                {
+                    var queryName = $"query({name})";
+                    if (tensorInputs.Exists(input => input.QueryName == queryName))
+                        throw new InvalidOperationException(
+                            $"Scalar input '{name}' in rank profile '{definition.Name}' conflicts with a generated tensor input.");
+                }
+
+                var profile = new RankProfileModel
+                {
+                    Name = definition.Name,
+                    Inherits = definition.Inherits,
+                    FirstPhase = definition.FirstPhase,
+                    SecondPhase = definition.SecondPhase,
+                    SecondPhaseRerankCount = definition.SecondPhaseRerankCount,
+                    GlobalPhase = definition.GlobalPhase,
+                    GlobalPhaseRerankCount = definition.GlobalPhaseRerankCount,
+                    QueryInputs = definition.QueryInputs
+                };
+                profile.Functions.AddRange(definition.Functions);
+                if (existing >= 0)
+                    profiles[existing] = profile;
+                else
+                    profiles.Add(profile);
+            }
+        }
 
         // Emit the tensor inputs into every profile that does not (transitively)
         // inherit them from another generated profile — a profile inheriting only
@@ -400,9 +469,6 @@ internal sealed class SchemaModelBuilder
         foreach (var profile in profiles)
             profile.EmitInputs = tensorInputs.Count > 0
                 && (profile.Inherits is null || !names.Contains(profile.Inherits));
-
-        foreach (var fn in type.GetCustomAttributes<VespaRankFunctionAttribute>())
-            ResolveFunctionTarget(fn, profiles, type).Functions.Add(new RankFunctionModel(fn.Signature, fn.Expression));
 
         return profiles;
     }
@@ -429,24 +495,6 @@ internal sealed class SchemaModelBuilder
                 $"{profiles.Count} rank profiles exist ({string.Join(", ", profiles.Select(p => p.Name))}). " +
                 "Set Profile to pick one.")
         };
-    }
-
-    private static IEnumerable<RankFunctionModel> ParseFunctionsDsl(string? functions, string profileName)
-    {
-        if (functions is null)
-            yield break;
-
-        foreach (var entry in functions.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var colonIdx = entry.IndexOf(':');
-            if (colonIdx <= 0 || colonIdx == entry.Length - 1)
-                throw new InvalidOperationException(
-                    $"Invalid Functions entry '{entry}' in rank profile '{profileName}': " +
-                    "expected 'signature: expression'. Prefer [VespaRankFunction(signature, expression)], " +
-                    "which also supports expressions containing ':' or ';'.");
-
-            yield return new RankFunctionModel(entry[..colonIdx].Trim(), entry[(colonIdx + 1)..].Trim());
-        }
     }
 
     // ── Name tables ───────────────────────────────────────────────────────────
@@ -494,10 +542,8 @@ internal sealed class SchemaModelBuilder
         DistanceMetric.DotProduct => "dotproduct",
         DistanceMetric.Hamming => "hamming",
         DistanceMetric.Geodesic => "geodegrees",
-#pragma warning disable CS0618 // mapped to its successor for backward compatibility
-        DistanceMetric.InnerProduct => "prenormalized-angular",
-#pragma warning restore CS0618
-        DistanceMetric.PrenormalizedAngular => "prenormalized-angular",
+        // Compiled attributes and saved numeric settings can still contain the former InnerProduct value.
+        (DistanceMetric)6 or DistanceMetric.PrenormalizedAngular => "prenormalized-angular",
         _ => null
     };
 

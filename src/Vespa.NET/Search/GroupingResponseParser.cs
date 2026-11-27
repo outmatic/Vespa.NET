@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Vespa.Models;
 
@@ -6,24 +7,26 @@ namespace Vespa.Search;
 /// <summary>Parses grouping trees and metadata independently of HTTP execution.</summary>
 internal static class GroupingResponseParser
 {
-    internal static GroupingSearchResponse<T> Parse<T>(JsonElement rootEl) where T : class
+    internal static GroupingSearchResponse<T> Parse<T>(JsonElement rootEl, ModelJson<T>? model) where T : class
     {
+        var metadata = VespaProtocolJsonContext.Default;
+        var readHit = CreateHitReader(model);
         TimingInfo? timing = rootEl.TryGetProperty("timing", out var timingEl)
-            ? timingEl.Deserialize<TimingInfo>(VespaJsonOptions.Default)
+            ? timingEl.Deserialize(metadata.TimingInfo)
             : null;
 
         TraceInfo? trace = rootEl.TryGetProperty("trace", out var traceEl)
-            ? traceEl.Deserialize<TraceInfo>(VespaJsonOptions.Default)
+            ? traceEl.Deserialize(metadata.TraceInfo)
             : null;
 
         if (!rootEl.TryGetProperty("root", out var searchRoot))
             throw new VespaException("Search response does not contain a root object.");
 
         Coverage? coverage = searchRoot.TryGetProperty("coverage", out var coverageEl)
-            ? coverageEl.Deserialize<Coverage>(VespaJsonOptions.Default)
+            ? coverageEl.Deserialize(metadata.Coverage)
             : null;
         List<VespaError>? errors = searchRoot.TryGetProperty("errors", out var errorsEl)
-            ? errorsEl.Deserialize<List<VespaError>>(VespaJsonOptions.Default)
+            ? errorsEl.Deserialize(metadata.ListVespaError)
             : null;
 
         long totalCount = searchRoot.TryGetProperty("fields", out var fields) &&
@@ -45,19 +48,16 @@ internal static class GroupingResponseParser
 
                 if (id.StartsWith("group:root:", StringComparison.Ordinal))
                 {
-                    var groupRoot = ParseGroup<T>(child);
+                    var groupRoot = ParseGroup(child, readHit);
                     groupingRoots.Add(groupRoot);
                     groupingResults.AddRange(groupRoot.SubGroups);
                     continuationTokens ??= ExtractContinuationTokens(child);
                 }
                 else
                 {
-                    var hit = child.Deserialize<SearchHit<T>>(VespaJsonOptions.Default);
+                    var hit = readHit(child);
                     if (hit is not null)
-                    {
-                        VespaIdInjector.Inject(hit);
                         hits.Add(hit);
-                    }
                 }
             }
         }
@@ -69,6 +69,26 @@ internal static class GroupingResponseParser
             Errors = errors,
             Trace = trace
         };
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "With reflection JSON disabled, GroupByAsync resolves registered model metadata before parsing hits.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled reader uses the generated protocol context and the registered fields metadata.")]
+    private static Func<JsonElement, SearchHit<T>?> CreateHitReader<T>(ModelJson<T>? model) where T : class
+    {
+        if (VespaJsonReflection.IsEnabled && model is null)
+            return static node =>
+            {
+                var hit = node.Deserialize<SearchHit<T>>(VespaJsonOptions.Default);
+                if (hit is not null)
+                    VespaIdInjector.Inject(hit);
+                return hit;
+            };
+
+        var options = VespaProtocolJsonContext.Default.Options;
+        Func<JsonElement, string, T?> readFields = model!.ReadFields;
+        return node => node.ValueKind == JsonValueKind.Null ? null : SearchHitConverter<T>.Read(node, options, readFields);
     }
 
     /// <summary>
@@ -108,18 +128,19 @@ internal static class GroupingResponseParser
                 CollectNextTokens(child, output);
     }
 
-    private static VespaGroupList ParseSingleGroupList<T>(JsonElement groupListNode, string label) where T : class
+    private static VespaGroupList ParseSingleGroupList<T>(
+        JsonElement groupListNode, string label, Func<JsonElement, SearchHit<T>?> readHit) where T : class
     {
         var groups = new List<VespaGroup>();
 
         if (groupListNode.TryGetProperty("children", out var groupChildren))
             foreach (var groupNode in groupChildren.EnumerateArray())
-                groups.Add(ParseGroup<T>(groupNode));
+                groups.Add(ParseGroup(groupNode, readHit));
 
         return new VespaGroupList(label, groups);
     }
 
-    private static VespaGroup ParseGroup<T>(JsonElement node) where T : class
+    private static VespaGroup ParseGroup<T>(JsonElement node, Func<JsonElement, SearchHit<T>?> readHit) where T : class
     {
         var id = node.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
         var value = node.TryGetProperty("value", out var valueEl) ? valueEl.ToString() : ParseBucketId(id);
@@ -127,18 +148,20 @@ internal static class GroupingResponseParser
         var rawAggregations = new Dictionary<string, JsonElement>();
 
         if (node.TryGetProperty("fields", out var fields))
-            foreach (var field in fields.EnumerateObject())
+        {
+            // The detached fields object keeps every value readable after the response is disposed.
+            foreach (var field in fields.Clone().EnumerateObject())
             {
-                // Clones must outlive the response JsonDocument.
-                rawAggregations[field.Name] = field.Value.Clone();
+                rawAggregations[field.Name] = field.Value;
                 if (field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetDouble(out var number))
                     aggregations[field.Name] = number;
             }
+        }
 
         var subGroups = (IReadOnlyList<VespaGroupList>)[];
         var hits = (IReadOnlyList<object>)[];
         if (node.TryGetProperty("children", out var children))
-            (subGroups, hits) = ParseGroupChildren<T>(children);
+            (subGroups, hits) = ParseGroupChildren(children, readHit);
 
         return new VespaGroup(value, aggregations, subGroups)
         {
@@ -153,7 +176,7 @@ internal static class GroupingResponseParser
     /// per-group document summaries (<c>hitlist:*</c>, from <c>each(output(summary()))</c>).
     /// </summary>
     private static (IReadOnlyList<VespaGroupList> SubGroups, IReadOnlyList<object> Hits) ParseGroupChildren<T>(
-        JsonElement childrenEl) where T : class
+        JsonElement childrenEl, Func<JsonElement, SearchHit<T>?> readHit) where T : class
     {
         var subGroups = new List<VespaGroupList>();
         var hits = new List<object>();
@@ -165,16 +188,15 @@ internal static class GroupingResponseParser
 
             if (id.StartsWith("grouplist:", StringComparison.Ordinal))
             {
-                subGroups.Add(ParseSingleGroupList<T>(child, id["grouplist:".Length..]));
+                subGroups.Add(ParseSingleGroupList(child, id["grouplist:".Length..], readHit));
             }
             else if (id.StartsWith("hitlist:", StringComparison.Ordinal) && child.TryGetProperty("children", out var hitChildren))
             {
                 foreach (var hitNode in hitChildren.EnumerateArray())
                 {
-                    var hit = hitNode.Deserialize<SearchHit<T>>(VespaJsonOptions.Default);
-                    if (hit is null) continue;
-                    VespaIdInjector.Inject(hit);
-                    hits.Add(hit);
+                    var hit = readHit(hitNode);
+                    if (hit is not null)
+                        hits.Add(hit);
                 }
             }
         }

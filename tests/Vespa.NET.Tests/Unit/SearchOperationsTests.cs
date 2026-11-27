@@ -4,6 +4,7 @@ using Moq;
 using Moq.Protected;
 using Vespa;
 using Vespa.Models;
+using Vespa.Models.Attributes;
 using Vespa.Models.Tensors;
 using Vespa.Search;
 using Vespa.Tests.Helpers;
@@ -19,6 +20,7 @@ public class SearchOperationsTests : IDisposable
     private readonly Mock<HttpMessageHandler> _mockHandler;
     private readonly HttpClient _httpClient;
     private readonly SearchOperations _searchOps;
+    private string? _sentSearchBody;
 
     public SearchOperationsTests()
     {
@@ -52,7 +54,10 @@ public class SearchOperationsTests : IDisposable
             Hits = 10
         };
         var expectedResponse = TestDataFactory.CreateSearchResponse(
-            [TestDataFactory.CreateSearchHit("doc-1", new TestDocument { Title = "Test" })]
+            [
+                TestDataFactory.CreateSearchHit("id:test:testdoc::doc-1", new TestDocument { Title = "Test" }),
+                TestDataFactory.CreateSearchHit("id:test:testdoc:g=tenant:part:two", new TestDocument { Title = "Second" })
+            ]
         );
         SetupSearchSuccessResponse(expectedResponse);
 
@@ -62,7 +67,9 @@ public class SearchOperationsTests : IDisposable
         // Assert
         Assert.NotNull(result);
         Assert.NotNull(result.Root);
-        Assert.Single(result.Root.Children);
+        Assert.Collection(result.Root.Children,
+            hit => Assert.Equal("doc-1", hit.Fields?.Id),
+            hit => Assert.Equal("part:two", hit.Fields?.Id));
         VerifyHttpCall(HttpMethod.Post, "/search/");
     }
 
@@ -216,7 +223,7 @@ public class SearchOperationsTests : IDisposable
 
     #endregion
 
-    #region NearestNeighborSearchAsync Tests (10 tests)
+    #region NearestNeighborSearchAsync Tests
 
     [Theory]
     [InlineData(TensorFormat.MappedSingle)]
@@ -239,10 +246,10 @@ public class SearchOperationsTests : IDisposable
     }
 
     [Fact]
-    public async Task NearestNeighborSearchAsync_WithDoubleArray_ZeroCopy()
+    public async Task NearestNeighborSearchAsync_WithDoubleArray_PreservesValues()
     {
         // Arrange
-        var doubleArray = new[] { 1.0, 2.0, 3.0 };
+        var doubleArray = new[] { 16777217.0, -2.5, 3.75 };
         var tensor = VespaTensor.FromDenseValues(doubleArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -255,14 +262,14 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert - Verify request contains the embedding
-        await VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding(doubleArray);
     }
 
     [Fact]
     public async Task NearestNeighborSearchAsync_WithFloatArray_ConvertsToDouble()
     {
         // Arrange
-        var floatArray = new[] { 1.0f, 2.0f, 3.0f };
+        var floatArray = new[] { 0.1f, -2.5f, 3.75f };
         var tensor = VespaTensor.FromDenseValues(floatArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -275,14 +282,14 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert
-        await VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding([(double)0.1f, -2.5, 3.75]);
     }
 
     [Fact]
     public async Task NearestNeighborSearchAsync_WithSByteArray_ConvertsToDouble()
     {
         // Arrange
-        var sbyteArray = new sbyte[] { 1, 2, 3 };
+        var sbyteArray = new sbyte[] { sbyte.MinValue, 0, sbyte.MaxValue };
         var tensor = VespaTensor.FromDenseValues(sbyteArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -295,14 +302,14 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert
-        await VerifySearchRequestContainsEmbedding([1.0, 2.0, 3.0]);
+        VerifySearchRequestContainsEmbedding([-128.0, 0.0, 127.0]);
     }
 
     [Fact]
     public async Task NearestNeighborSearchAsync_WithHalfArray_ConvertsToDouble()
     {
         // Arrange
-        var halfArray = new[] { (Half)1.0, (Half)2.0, (Half)3.0 };
+        var halfArray = new[] { (Half)0.125, (Half)(-2.5), (Half)3.75 };
         var tensor = VespaTensor.FromDenseValues(halfArray);
         var expectedResponse = TestDataFactory.CreateSearchResponse(
             new List<SearchHit<TestDocument>>()
@@ -314,8 +321,21 @@ public class SearchOperationsTests : IDisposable
             tensor, "embedding", "testdoc"
         );
 
-        // Assert - Values should be approximately equal (Half has lower precision)
-        VerifyHttpCall(HttpMethod.Post, "/search/");
+        // Assert
+        VerifySearchRequestContainsEmbedding([0.125, -2.5, 3.75]);
+    }
+
+    [Fact]
+    public async Task NearestNeighborSearchAsync_WithMissingDenseValues_ThrowsBeforeSending()
+    {
+        var tensor = new VespaTensor { Format = TensorFormat.IndexedDense };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _searchOps.NearestNeighborSearchAsync<TestDocument>(tensor, "embedding", "testdoc"));
+
+        Assert.Equal("queryEmbedding", ex.ParamName);
+        Assert.StartsWith("Unable to extract dense values from tensor", ex.Message);
+        _mockHandler.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -351,7 +371,7 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert - Verify YQL contains filter
-        await VerifySearchRequestContainsYql("category = 'news'");
+        VerifySearchRequestContainsYql("category = 'news'");
     }
 
     [Fact]
@@ -389,8 +409,8 @@ public class SearchOperationsTests : IDisposable
         );
 
         // Assert - Verify YQL uses the preferred totalTargetHits annotation
-        await VerifySearchRequestContainsYql("{totalTargetHits: 20}");
-        await VerifySearchRequestContainsYql("nearestNeighbor(embedding, query_embedding)");
+        VerifySearchRequestContainsYql("{totalTargetHits: 20}");
+        VerifySearchRequestContainsYql("nearestNeighbor(embedding, query_embedding)");
     }
 
     [Fact]
@@ -497,17 +517,7 @@ public class SearchOperationsTests : IDisposable
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
 
-        _mockHandler
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>()
-            )
-            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(json)
-            });
+        SetupRawSearchResponse(json);
     }
 
     private void SetupRawSearchResponse(string json)
@@ -519,9 +529,11 @@ public class SearchOperationsTests : IDisposable
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>()
             )
-            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            .Returns(async (HttpRequestMessage request, CancellationToken cancellationToken) =>
             {
-                Content = new StringContent(json)
+                Assert.NotNull(request.Content);
+                _sentSearchBody = await request.Content.ReadAsStringAsync(cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
             });
     }
 
@@ -555,69 +567,21 @@ public class SearchOperationsTests : IDisposable
             );
     }
 
-    private async Task VerifySearchRequestContainsEmbedding(double[] expectedValues)
+    private void VerifySearchRequestContainsEmbedding(double[] expectedValues)
     {
-        _mockHandler
-            .Protected()
-            .Verify(
-                "SendAsync",
-                Times.Once(),
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    VerifyEmbeddingInRequest(req, expectedValues).Result
-                ),
-                ItExpr.IsAny<CancellationToken>()
-            );
+        VerifyHttpCall(HttpMethod.Post, "/search/");
+        Assert.NotNull(_sentSearchBody);
+        using var doc = JsonDocument.Parse(_sentSearchBody);
+        var values = doc.RootElement.GetProperty("input").GetProperty("query(query_embedding)").GetProperty("values");
+        Assert.Equal(expectedValues, values.EnumerateArray().Select(value => value.GetDouble()));
     }
 
-    private async Task VerifySearchRequestContainsYql(string expectedYqlFragment)
+    private void VerifySearchRequestContainsYql(string expectedYqlFragment)
     {
-        _mockHandler
-            .Protected()
-            .Verify(
-                "SendAsync",
-                Times.Once(),
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    VerifyYqlInRequest(req, expectedYqlFragment).Result
-                ),
-                ItExpr.IsAny<CancellationToken>()
-            );
-    }
-
-    private static async Task<bool> VerifyEmbeddingInRequest(HttpRequestMessage request, double[] expectedValues)
-    {
-        if (request.Content == null) return false;
-
-        var json = await request.Content.ReadAsStringAsync();
-        var doc = JsonDocument.Parse(json);
-
-        if (!doc.RootElement.TryGetProperty("input", out var input))
-            return false;
-
-        if (!input.TryGetProperty("query(query_embedding)", out var queryEmbedding))
-            return false;
-
-        if (!queryEmbedding.TryGetProperty("values", out var values))
-            return false;
-
-        var actualValues = values.EnumerateArray()
-            .Select(v => v.GetDouble())
-            .ToArray();
-
-        return actualValues.SequenceEqual(expectedValues);
-    }
-
-    private static async Task<bool> VerifyYqlInRequest(HttpRequestMessage request, string expectedFragment)
-    {
-        if (request.Content == null) return false;
-
-        var json = await request.Content.ReadAsStringAsync();
-        var doc = JsonDocument.Parse(json);
-
-        if (!doc.RootElement.TryGetProperty("yql", out var yql))
-            return false;
-
-        var yqlString = yql.GetString();
-        return yqlString != null && yqlString.Contains(expectedFragment);
+        VerifyHttpCall(HttpMethod.Post, "/search/");
+        Assert.NotNull(_sentSearchBody);
+        using var doc = JsonDocument.Parse(_sentSearchBody);
+        Assert.Contains(expectedYqlFragment, doc.RootElement.GetProperty("yql").GetString());
     }
 
     #endregion
@@ -626,6 +590,8 @@ public class SearchOperationsTests : IDisposable
 
     private class TestDocument
     {
+        [VespaId]
+        public string? Id { get; init; }
         public string Title { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;
     }

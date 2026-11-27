@@ -16,7 +16,10 @@ internal static class ApplicationPackageXml
         var multiNode = opts.NodeCount > 1;
         var sb = new StringBuilder();
         sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        sb.Append("<services version=\"1.0\">\n");
+        sb.Append("<services version=\"1.0\"");
+        if (opts.MinimumRequiredVespaVersion is { } minimumVersion)
+            sb.Append(" minimum-required-vespa-version=\"").Append(minimumVersion).Append('"');
+        sb.Append(">\n");
         sb.Append("  <container id=\"default\" version=\"1.0\">\n");
         sb.Append("    <search/>\n");
         sb.Append("    <document-api/>\n");
@@ -55,8 +58,15 @@ internal static class ApplicationPackageXml
                 _ => "index"
             };
             var globalAttr = global ? " global=\"true\"" : "";
-            var selectionAttr = selection is not null ? $" selection=\"{XmlEscape(selection)}\"" : "";
-            sb.Append(CultureInfo.InvariantCulture, $"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}{selectionAttr}/>\n");
+            sb.Append(CultureInfo.InvariantCulture, $"      <document type=\"{XmlEscape(docType)}\" mode=\"{mode}\"{globalAttr}");
+            if (selection is not null)
+            {
+                var escapedSelection = opts.DocumentSelections?.ContainsKey(docType) == true
+                    ? SelectionEscape(selection)
+                    : XmlEscape(selection);
+                sb.Append(" selection=\"").Append(escapedSelection).Append('"');
+            }
+            sb.Append("/>\n");
         }
 
         sb.Append("    </documents>\n");
@@ -75,6 +85,11 @@ internal static class ApplicationPackageXml
         sb.Append("</services>\n");
         return sb.ToString();
     }
+
+    private static string SelectionEscape(string selection) => XmlEscape(selection)
+        .Replace("\t", "&#x9;", StringComparison.Ordinal)
+        .Replace("\n", "&#xA;", StringComparison.Ordinal)
+        .Replace("\r", "&#xD;", StringComparison.Ordinal);
 
     internal static string GenerateHostsXml(ApplicationPackageOptions opts)
     {

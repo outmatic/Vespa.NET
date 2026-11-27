@@ -14,8 +14,6 @@ namespace Vespa;
 /// </summary>
 public static partial class VespaServiceCollectionExtensions
 {
-    private static readonly HttpRetryStrategyOptions DefaultRetryOptions = new();
-
     /// <summary>Logical name of the default (unnamed) Vespa HttpClient registration.</summary>
     private const string DefaultHttpClientName = "Vespa.NET";
 
@@ -66,6 +64,7 @@ public static partial class VespaServiceCollectionExtensions
     /// <param name="options">VespaClient configuration options</param>
     /// <param name="configureHttpClient">Optional additional HttpClient configuration</param>
     /// <returns>An IHttpClientBuilder for further configuration</returns>
+    /// <exception cref="ArgumentException">The name <c>Vespa.NET</c> is reserved for the unnamed client.</exception>
     /// <remarks>
     /// Repeated calls with the same name replace the previous Vespa configuration.
     /// Registrations with other names and the unnamed client are unaffected.
@@ -79,6 +78,9 @@ public static partial class VespaServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(options);
+
+        if (string.Equals(name, DefaultHttpClientName, StringComparison.Ordinal))
+            throw new ArgumentException($"'{DefaultHttpClientName}' is reserved for the unnamed Vespa client. Choose a different name.", nameof(name));
 
         options.Validate();
 
@@ -258,13 +260,6 @@ public static partial class VespaServiceCollectionExtensions
                 Delay = TimeSpan.FromMilliseconds(100),
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                ShouldHandle = args =>
-                {
-                    // Retry on transient failures + 429 Too Many Requests
-                    if (args.Outcome.Result?.StatusCode == (HttpStatusCode)429)
-                        return ValueTask.FromResult(true);
-                    return DefaultRetryOptions.ShouldHandle(args);
-                },
                 OnRetry = args =>
                 {
                     VespaClientMetrics.RetryAttempts.Add(1);
@@ -281,7 +276,7 @@ public static partial class VespaServiceCollectionExtensions
             resilienceBuilder.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
             {
                 FailureRatio = 0.5,
-                MinimumThroughput = options.CircuitBreakerFailureThreshold,
+                MinimumThroughput = options.CircuitBreakerMinimumThroughput,
                 BreakDuration = options.CircuitBreakerDuration,
                 OnOpened = args =>
                 {

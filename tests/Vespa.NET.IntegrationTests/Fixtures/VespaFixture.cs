@@ -17,6 +17,9 @@ public sealed class VespaFixture : IAsyncLifetime
     public static bool IntegrationEnabled =>
         Environment.GetEnvironmentVariable("VESPA_INTEGRATION_TESTS") == "1";
 
+    internal static string Image =>
+        Environment.GetEnvironmentVariable("VESPA_INTEGRATION_IMAGE") ?? VespaContainer.DefaultImage;
+
     /// <summary>
     /// Every document type in the deployed application package. Tests that redeploy
     /// must use this full list: a package missing any of these schemas is rejected
@@ -40,13 +43,24 @@ public sealed class VespaFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        if (!IntegrationEnabled) return;
+        var expectedVersion = Environment.GetEnvironmentVariable("VESPA_EXPECTED_VERSION");
+        if (!IntegrationEnabled)
+        {
+            Assert.True(expectedVersion is null, "VESPA_EXPECTED_VERSION requires VESPA_INTEGRATION_TESTS=1.");
+            return;
+        }
 
-        var explicitEndpoint = Environment.GetEnvironmentVariable("VESPA_ENDPOINT");
+        await InitializeAsync(Environment.GetEnvironmentVariable("VESPA_ENDPOINT"),
+            Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT"));
+        if (expectedVersion is not null)
+            Assert.Equal(expectedVersion, await Client.GetVersionAsync());
+    }
 
+    internal async Task InitializeAsync(string? explicitEndpoint, string? explicitConfigEndpoint)
+    {
         if (explicitEndpoint is not null)
         {
-            var configEndpoint = Environment.GetEnvironmentVariable("VESPA_CONFIG_ENDPOINT")
+            var configEndpoint = explicitConfigEndpoint
                 ?? new UriBuilder(explicitEndpoint) { Port = 19071 }.Uri.ToString();
 
             var options = new VespaClientOptions
@@ -57,12 +71,12 @@ public sealed class VespaFixture : IAsyncLifetime
                 EnableRetry = false
             };
             var handler = VespaServiceCollectionExtensions.BuildSocketsHttpHandler(options);
-            _http = new HttpClient(handler, disposeHandler: true) { BaseAddress = new Uri(explicitEndpoint) };
+            _http = new HttpClient(handler, disposeHandler: true);
             Client = new VespaClient(_http, options);
         }
         else
         {
-            _vespa = new VespaContainer();
+            _vespa = new VespaContainer(Image);
             await _vespa.StartAsync();
             (Client, _http) = _vespa.CreateClientWithHttp("test");
         }
@@ -76,9 +90,22 @@ public sealed class VespaFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        _http?.Dispose();
-        if (_vespa is not null)
-            await _vespa.DisposeAsync();
+        try
+        {
+            Client?.Dispose();
+        }
+        finally
+        {
+            try
+            {
+                _http?.Dispose();
+            }
+            finally
+            {
+                if (_vespa is not null)
+                    await _vespa.DisposeAsync();
+            }
+        }
     }
 
     /// <summary>The Vespa endpoint URL (for container-level assertions).</summary>
@@ -133,6 +160,9 @@ public sealed record TestProduct
     [VespaField(Name = "price", IndexingMode = IndexingMode.AttributeSummary)]
     public double Price { get; init; }
 
+    [VespaField(Name = "single_value", IndexingMode = IndexingMode.Summary)]
+    public float? SingleValue { get; init; }
+
     [VespaField(Name = "category", IndexingMode = IndexingMode.IndexAttributeSummary)]
     public string Category { get; init; } = "";
 
@@ -171,6 +201,11 @@ public sealed record TestProduct
     [VespaTensor("tensor<double>(x[3])", IncludeInSummary = true,
         IndexType = TensorIndexType.None, DistanceMetric = DistanceMetric.None)]
     public VespaTensor? DenseDouble { get; init; }
+
+    [VespaField(Name = "block_scores")]
+    [VespaTensor("tensor<float>(cat{},x[2])", IncludeInSummary = true,
+        IndexType = TensorIndexType.None, DistanceMetric = DistanceMetric.None)]
+    public VespaTensor? BlockScores { get; init; }
 
     /// <summary>Mixed tensor with two mapped dimensions — exercises the blocks form.</summary>
     [VespaField(Name = "block_weights")]

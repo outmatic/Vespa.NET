@@ -53,8 +53,8 @@ public sealed class TypedGroupingE2ETests(VespaFixture fixture)
                     .Summary(maxHits: 2)
                     .SubGroup(GroupingBuilder.All().Group("quantity")
                         .Each(inner => inner.Output(GroupingAgg.Count()).Summary(maxHits: 1)))))
-                .ToSearchRequest();
-            request.Hits = 0;
+                .ToSearchRequest() with
+            { Hits = 0 };
 
             var result = (await fixture.Client.Search.GroupByAsync<TestProduct>(request)).AsTyped();
             var list = Assert.Single(result.GroupingResults);

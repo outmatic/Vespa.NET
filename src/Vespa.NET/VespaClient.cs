@@ -87,12 +87,14 @@ public sealed partial class VespaClient : IVespaClient
     /// <c>BaseAddress</c>, <c>Timeout</c>, the HTTP version policy, and default request
     /// headers (including <c>Authorization</c> from <see cref="VespaClientOptions.ApiKey"/>)
     /// from <paramref name="options"/>. Do not share the instance with non-Vespa callers.</para>
-    /// <para>Options that live on the HTTP handler cannot be honored here and throw
-    /// <see cref="InvalidOperationException"/> when set (mTLS certificates) — configure the
-    /// handler yourself via <see cref="VespaServiceCollectionExtensions.BuildSocketsHttpHandler(VespaClientOptions)"/>,
-    /// use the <see cref="VespaClient(VespaClientOptions, ILogger{VespaClient})"/> constructor,
-    /// or register through DI. HTTP-level retry/circuit-breaker options are only installed by
-    /// the DI registrations and log a warning here when set.</para>
+    /// <para>The caller owns the supplied client and its handler. Configure TLS and response
+    /// decompression on that handler before constructing the client. Passing
+    /// <see cref="VespaClientOptions.CertificatePath"/> or <see cref="VespaClientOptions.ClientCertificate"/>
+    /// to this constructor throws <see cref="InvalidOperationException"/>. Use the
+    /// <see cref="VespaClient(VespaClientOptions, ILogger{VespaClient})"/> constructor or register
+    /// through DI to apply certificate options to the data-plane and admin handlers.</para>
+    /// <para>HTTP retries and the circuit breaker are installed by the DI registrations.
+    /// This constructor logs a warning if those options are enabled and a logger is supplied.</para>
     /// </remarks>
     public VespaClient(
         HttpClient httpClient,
@@ -197,8 +199,8 @@ public sealed partial class VespaClient : IVespaClient
         }
     }
 
-    public async Task<bool> HealthCheckAsync(CancellationToken cancellationToken = default)
-        => await TryProbeAsync(
+    public Task<bool> HealthCheckAsync(CancellationToken cancellationToken = default)
+        => TryProbeAsync(
             async ct =>
             {
                 using var response = await _httpClient.GetAsync(VespaPaths.Health, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -217,8 +219,8 @@ public sealed partial class VespaClient : IVespaClient
             },
             cancellationToken);
 
-    public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default)
-        => await TryProbeAsync(
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default)
+        => TryProbeAsync(
             async ct =>
             {
                 using var response = await _httpClient.GetAsync(VespaPaths.Health, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -234,9 +236,9 @@ public sealed partial class VespaClient : IVespaClient
             _ => false,
             cancellationToken);
 
-    public async Task<VespaMetrics?> GetMetricsAsync(CancellationToken cancellationToken = default)
-        => await TryProbeAsync(
-            ct => GetJsonOrDefaultAsync<VespaMetrics>(VespaPaths.Metrics, ct),
+    public Task<VespaMetrics?> GetMetricsAsync(CancellationToken cancellationToken = default)
+        => TryProbeAsync(
+            ReadMetricsAsync,
             ex =>
             {
                 if (_logger != null)
@@ -268,7 +270,7 @@ public sealed partial class VespaClient : IVespaClient
 
     public Task<VespaStateConfig?> GetConfigAsync(CancellationToken cancellationToken = default) =>
         GetOrDefaultAsync(VespaPaths.Config,
-            response => response.Content.ReadFromJsonAsync<VespaStateConfig>(VespaJsonOptions.Default, cancellationToken),
+            response => response.Content.ReadFromJsonAsync(VespaProtocolJsonContext.Default.VespaStateConfig, cancellationToken),
             cancellationToken);
 
     public Task<string?> GetVersionAsync(CancellationToken cancellationToken = default) =>
@@ -307,11 +309,11 @@ public sealed partial class VespaClient : IVespaClient
         }
     }
 
-    private async Task<T?> GetJsonOrDefaultAsync<T>(string path, CancellationToken cancellationToken)
+    private async Task<VespaMetrics?> ReadMetricsAsync(CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await _httpClient.GetAsync(VespaPaths.Metrics, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.IsSuccessStatusCode)
-            return await response.Content.ReadFromJsonAsync<T>(VespaJsonOptions.Default, cancellationToken);
+            return await response.Content.ReadFromJsonAsync(VespaProtocolJsonContext.Default.VespaMetrics, cancellationToken);
 
         if (_logger != null)
             LogMetricsFailed(_logger, response.StatusCode);

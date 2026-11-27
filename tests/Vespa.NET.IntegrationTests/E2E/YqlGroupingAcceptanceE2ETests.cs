@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Vespa.Documents;
 using Vespa.IntegrationTests.Fixtures;
 using Vespa.Models;
+using Vespa.Models.Schema;
 using Vespa.Models.Tensors;
 using Vespa.Query;
 using Vespa.Search;
@@ -9,10 +11,8 @@ using Xunit;
 namespace Vespa.IntegrationTests.E2E;
 
 /// <summary>
-/// Acceptance tests for the newly expressible YQL and grouping syntax: each test
-/// runs a real query and asserts Vespa parses and executes it (no VespaException),
-/// not full ranking semantics. Mock-based unit tests cannot catch
-/// plausible-but-wrong syntax; these do.
+/// Exercises generated YQL and grouping syntax against Vespa, including features
+/// whose behavior differs between server versions.
 /// </summary>
 [Collection("Vespa")]
 [Trait("Category", "E2E")]
@@ -41,14 +41,50 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         };
 
         var ids = new List<string>();
-        foreach (var doc in docs)
+        try
         {
-            var id = NewId();
-            ids.Add(id);
-            await fixture.Client.Documents.PutAsync(id, doc);
+            foreach (var doc in docs)
+            {
+                var id = NewId();
+                ids.Add(id);
+                var put = await fixture.Client.Documents.PutAsync(id, doc);
+                Assert.True(put.IsSuccess, $"Could not seed product '{id}': {put.StatusCode} {put.Message}");
+            }
+            await WaitForSeedAsync(QueryByTag(tag).Build(), ids);
+            return (ids, tag);
         }
-        await Task.Delay(2000);
-        return (ids, tag);
+        catch
+        {
+            await CleanupAsync(ids);
+            throw;
+        }
+    }
+
+    private async Task WaitForSeedAsync(string yql, IReadOnlyCollection<string> ids)
+    {
+        var expectedIds = ids.ToHashSet(StringComparer.Ordinal);
+        string[] visibleIds = [];
+        Coverage? coverage = null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            while (true)
+            {
+                var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql, hits: ids.Count, cancellationToken: timeout.Token);
+                Assert.Empty(result.Root.Errors ?? []);
+                coverage = result.Root.Coverage;
+                visibleIds = result.Root.Children.Select(hit => hit.Id).ToArray();
+                if (coverage is not { Full: false } && visibleIds.Length == ids.Count && expectedIds.SetEquals(visibleIds))
+                    return;
+
+                await Task.Delay(100, timeout.Token);
+            }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            Assert.Fail($"Products for query '{yql}' were not searchable within 30 seconds. " +
+                $"Expected IDs: [{string.Join(", ", ids)}]. Visible IDs: [{string.Join(", ", visibleIds)}]. Coverage: {coverage}");
+        }
     }
 
     private async Task CleanupAsync(List<string> ids)
@@ -57,15 +93,85 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             await fixture.Client.Documents.DeleteAsync<TestProduct>(id);
     }
 
-    private VespaSearchRequest GroupingRequest(string tag, GroupingBuilder grouping) =>
+    private static YqlBuilder<TestProduct> QueryByTag(string tag) =>
+        YqlBuilder<TestProduct>.Select().Where(w => w.Field(p => p.Tag).Contains(tag));
+
+    private static VespaSearchRequest GroupingRequest(string tag, GroupingBuilder grouping) =>
         new()
         {
-            Yql = YqlBuilder<TestProduct>.Select()
-                .Where(w => w.Field(p => p.Tag).Contains(tag))
-                .GroupBy(grouping)
-                .Build(),
+            Yql = QueryByTag(tag).GroupBy(grouping).Build(),
             Hits = 0
         };
+
+    [Fact]
+    public async Task QuotedStrings_RoundTripInYqlAndGrouping()
+    {
+        if (!Enabled) return;
+        const string category = """a"b\c""";
+        const string pattern = """^a"b\\c$""";
+        var tag = $"escape-{Guid.NewGuid():N}-{category}";
+        var ids = new List<string> { NewId(), NewId() };
+        try
+        {
+            var match = new TestProduct { Tag = tag, Category = category };
+            var other = match with { Category = """a"bc""" };
+            Assert.True((await fixture.Client.Documents.PutAsync(ids[0], match)).IsSuccess);
+            Assert.True((await fixture.Client.Documents.PutAsync(ids[1], other)).IsSuccess);
+            // The YQL query matches the escaped tag on a string attribute and checks both IDs.
+            await WaitForSeedAsync(QueryByTag(tag).Build(), ids);
+
+            var filtered = await fixture.Client.Search.GroupByAsync<TestProduct>(GroupingRequest(tag,
+                GroupingBuilder.All().Group("category").Filter(GroupingFilter.Regex(pattern, "category"))
+                    .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 1))));
+            Assert.Empty(filtered.Errors ?? []);
+            var group = Assert.Single(Assert.Single(filtered.GroupingResults).Groups);
+            Assert.Equal(1L, group.GetAggregation<long>("count()"));
+            Assert.Equal(ids[0], Assert.Single(group.GetHits<TestProduct>()).Id);
+
+            var bucketed = await fixture.Client.Search.GroupByAsync<TestProduct>(GroupingRequest(tag,
+                GroupingBuilder.All().GroupByBuckets("category", GroupingBucket.Text(category, category + "z"))
+                    .Each(e => e.Output(GroupingAgg.Count()).Summary(maxHits: 1))));
+            Assert.Empty(bucketed.Errors ?? []);
+            var bucket = Assert.Single(Assert.Single(bucketed.GroupingResults).Groups, g => !g.IsRestBucket);
+            Assert.Equal(1L, bucket.GetAggregation<long>("count()"));
+            Assert.Equal(ids[0], Assert.Single(bucket.GetHits<TestProduct>()).Id);
+        }
+        finally { await CleanupAsync(ids); }
+    }
+
+    [Fact]
+    public async Task Contains_MatchesNewlineAndEscapedNewlineOnAStringAttribute()
+    {
+        if (!Enabled) return;
+        var prefix = $"newline-{Guid.NewGuid():N}-";
+        string[] tags = [prefix + "a\nb", prefix + "a b", prefix + @"a\nb"];
+        var ids = new List<string> { NewId(), NewId(), NewId() };
+        var marker = Random.Shared.Next(1_000_000, int.MaxValue);
+        var client = fixture.Client;
+        try
+        {
+            for (var index = 0; index < tags.Length; index++)
+                await client.Documents.PutAsync(ids[index], new TestProduct { Tag = tags[index], Quantity = marker });
+            await WaitForSeedAsync(YqlBuilder<TestProduct>.Select()
+                .Where(w => w.Field(p => p.Quantity).EqualTo(marker)).Build(), ids);
+
+            await AssertMatchAsync(QueryByTag(tags[0]).Build(), 0);
+            await AssertMatchAsync($"select * from product where tag contains \"{prefix}a\\nb\"", 0);
+            await AssertMatchAsync(QueryByTag(tags[1]).Build(), 1);
+            await AssertMatchAsync(QueryByTag(tags[2]).Build(), 2);
+        }
+        finally { await CleanupAsync(ids); }
+
+        async Task AssertMatchAsync(string yql, int index)
+        {
+            var result = await client.Search.QueryAsync<TestProduct>(yql);
+            Assert.Empty(result.Root.Errors ?? []);
+            Assert.True(result.Root.Coverage?.Full);
+            var hit = Assert.Single(result.Root.Children);
+            Assert.Equal(ids[index], hit.Id);
+            Assert.Equal(tags[index], hit.Fields!.Tag);
+        }
+    }
 
     // ── Grouping filter / keep ───────────────────────────────────────────────
 
@@ -108,18 +214,28 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
     }
 
     [Fact]
-    public async Task GroupingFilter_IsTrue_Accepted()
+    public async Task GroupingFilter_IsTrue_RequiresBooleanGroupingSupport()
     {
         if (!Enabled) return;
         var (ids, tag) = await SeedAsync();
         try
         {
-            var result = await fixture.Client.Search.GroupByAsync<TestProduct>(
-                GroupingRequest(tag, GroupingBuilder.All()
-                    .Group("category")
-                    .Filter(GroupingFilter.IsTrue("in_stock"))
-                    .Each(e => e.Output(GroupingAgg.Count()))));
+            var request = GroupingRequest(tag, GroupingBuilder.All()
+                .Group("category")
+                .Filter(GroupingFilter.IsTrue("in_stock"))
+                .Each(e => e.Output(GroupingAgg.Count())));
 
+            if (await ServerVersionAsync() < new Version(8, 646, 22))
+            {
+                var error = await Assert.ThrowsAsync<VespaException>(() =>
+                    fixture.Client.Search.GroupByAsync<TestProduct>(request));
+                Assert.Equal(400, error.StatusCode);
+                Assert.Contains("Encountered", error.Message);
+                Assert.Contains("istrue", error.Message);
+                return;
+            }
+
+            var result = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
             Assert.NotEmpty(result.GroupingResults);
         }
         finally { await CleanupAsync(ids); }
@@ -136,10 +252,16 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                 GroupingRequest(tag, GroupingBuilder.All()
                     .Group("category")
                     .Keep(GroupingFilter.Regex(".*-beta", "category"))
-                    .Each(e => e.Output(GroupingAgg.Count()))));
+                    .Each(e => e.Output(GroupingAgg.Count())))
+                    .WithTimeout(TimeSpan.FromSeconds(10)));
 
-            var groups = Assert.Single(result.GroupingResults).Groups;
-            Assert.All(groups, g => Assert.EndsWith("-beta", g.Value));
+            Assert.Empty(result.Errors ?? []);
+            Assert.True(result.Coverage is not { Full: false }, $"Grouping coverage: {result.Coverage}");
+            Assert.True(result.GroupingResults.Count == 1,
+                $"Expected one group list for '{tag}', got {result.GroupingResults.Count} with {result.TotalCount} matching documents.");
+            var group = Assert.Single(result.GroupingResults[0].Groups);
+            Assert.Equal($"{tag}-beta", group.Value);
+            Assert.Equal(2, group.GetAggregation<long>("count()"));
         }
         finally { await CleanupAsync(ids); }
     }
@@ -151,10 +273,9 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         var (ids, tag) = await SeedAsync();
         try
         {
-            // not (regex) and (range or istrue)
             var composite = GroupingFilter
                 .Not(GroupingFilter.Regex(".*-gamma", "category"))
-                .And(GroupingFilter.Range(0, 100, "quantity").Or(GroupingFilter.IsTrue("in_stock")));
+                .And(GroupingFilter.Range(0, 30, "quantity").Or(GroupingFilter.Regex(".*-beta", "category")));
 
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(
                 GroupingRequest(tag, GroupingBuilder.All()
@@ -280,10 +401,12 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                     .NearestNeighbor("embedding", "query_embedding", totalTargetHits: 5))
                 .ToSearchRequest()
                 .WithRankProfile("closeness_profile")
-                .WithQueryTensor("query_embedding", new float[] { 1, 0, 0, 0 });
+                .WithQueryTensor("query_embedding", new float[] { 1, 0, 0, 0 }) with
+            { TraceLevel = 5 };
 
             var result = await fixture.Client.Search.SearchAsync<TestProduct>(request);
             Assert.NotEmpty(result.Root.Children);
+            Assert.Contains("totalTargetHits: 5", ParsedYql(result));
         }
         finally { await CleanupAsync(ids); }
     }
@@ -305,14 +428,15 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                     }, totalTargetHits: 10))
                 .Build();
 
-            var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql, hits: 10);
+            var result = await fixture.Client.Search.SearchAsync<TestProduct>(new() { Yql = yql, Hits = 10, TraceLevel = 5 });
             Assert.NotEmpty(result.Root.Children);
+            Assert.Contains("totalTargetHits: 10", ParsedYql(result));
         }
         finally { await CleanupAsync(ids); }
     }
 
     [Fact]
-    public async Task Wand_TotalTargetHits_Accepted()
+    public async Task Wand_TotalTargetHits_IsAppliedOnSupportedServers()
     {
         if (!Enabled) return;
         var (ids, tag) = await SeedAsync();
@@ -326,10 +450,40 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
                         totalTargetHits: 10))
                 .Build();
 
-            var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql, hits: 10);
-            Assert.NotEmpty(result.Root.Children); // red/green docs match
+            var result = await fixture.Client.Search.SearchAsync<TestProduct>(new() { Yql = yql, Hits = 10, TraceLevel = 5 });
+            Assert.NotEmpty(result.Root.Children);
+            var parsed = ParsedYql(result);
+            if (await ServerVersionAsync() < new Version(8, 664, 22))
+                Assert.DoesNotContain("totalTargetHits", parsed);
+            else
+                Assert.Contains("totalTargetHits: 10", parsed);
         }
         finally { await CleanupAsync(ids); }
+    }
+
+    private async Task<Version> ServerVersionAsync()
+    {
+        var reportedVersion = await fixture.Client.GetVersionAsync();
+        Assert.True(Version.TryParse(reportedVersion, out var version), $"Unexpected Vespa version: '{reportedVersion}'.");
+        return version;
+    }
+
+    private static string ParsedYql(VespaSearchResponse<TestProduct> result)
+    {
+        var messages = result.Trace?.Children?.OfType<JsonElement>().SelectMany(TraceMessages) ?? [];
+        return Assert.Single(messages, message => message.StartsWith("YQL query parsed:", StringComparison.Ordinal));
+    }
+
+    private static IEnumerable<string> TraceMessages(JsonElement entry)
+    {
+        if (entry.ValueKind != JsonValueKind.Object)
+            yield break;
+        if (entry.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+            yield return message.GetString()!;
+        if (entry.TryGetProperty("children", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                foreach (var text in TraceMessages(child))
+                    yield return text;
     }
 
     // ── Term annotations ─────────────────────────────────────────────────────
@@ -353,11 +507,53 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
 
             var yql = YqlBuilder<TestProduct>.Select()
                 .Where(w => w.Field(p => p.Description)
-                    .ContainsAnnotated(term, weight: 200, ranked: true, stem: false))
+                    .ContainsAnnotated(term, new() { Weight = 200, Ranked = true, Stem = false }))
                 .Build();
 
             var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql);
             Assert.Single(result.Root.Children);
+        }
+        finally
+        {
+            await fixture.Client.Documents.DeleteAsync<TestProduct>(id);
+        }
+    }
+
+    [Fact]
+    public async Task TermAnnotations_ConnectedTermsCanCarryTheirOwnIds()
+    {
+        if (!Enabled) return;
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        var id = NewId();
+        var term = $"annot{Guid.NewGuid():N}";
+        try
+        {
+            var put = await fixture.Client.Documents.PutAsync(id,
+                new TestProduct { Name = "annotated", Description = $"{term} wireless headphones" },
+                cancellationToken: token);
+            Assert.True(put.IsSuccess);
+
+            var request = YqlBuilder<TestProduct>.Select().Where(w =>
+            {
+                var description = w.Field(p => p.Description);
+                description.ContainsAnnotated(term, new() { TermId = 1, Connectivity = new(2, 0.8) });
+                description.ContainsAnnotated("wireless", new() { TermId = 2, Connectivity = new(3, 0.6) });
+                description.ContainsAnnotated("headphones", new() { TermId = 3 });
+            }).ToSearchRequest();
+
+            while (true)
+            {
+                var result = await fixture.Client.Search.SearchAsync<TestProduct>(request, token);
+                Assert.Empty(result.Root.Errors ?? []);
+                if (result.Root.Children.Count > 0)
+                {
+                    Assert.Equal(id, Assert.Single(result.Root.Children).Id);
+                    break;
+                }
+                await Task.Delay(200, token);
+            }
         }
         finally
         {
@@ -384,7 +580,7 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
 
             // tag is a (non-indexed) string attribute — prefix matching is supported there
             var yql = YqlBuilder<TestProduct>.Select()
-                .Where(w => w.Field(p => p.Tag).ContainsAnnotated(tag[..12], prefix: true))
+                .Where(w => w.Field(p => p.Tag).ContainsAnnotated(tag[..12], new() { Prefix = true }))
                 .Build();
 
             var result = await fixture.Client.Search.QueryAsync<TestProduct>(yql);
@@ -419,18 +615,18 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
 
             // Cold streaming visits routinely exceed Vespa's 500 ms default query timeout
             var suffixRequest = YqlBuilder.Select().From("event")
-                .Where(w => w.Field("event_name").ContainsAnnotated("suffixdoc", suffix: true))
+                .Where(w => w.Field("event_name").ContainsAnnotated("suffixdoc", new() { Suffix = true }))
                 .ToSearchRequest()
-                .WithTimeout(TimeSpan.FromSeconds(10));
-            suffixRequest.StreamingGroupName = group;
+                .WithTimeout(TimeSpan.FromSeconds(10)) with
+            { StreamingGroupName = group };
             var suffixResult = await fixture.Client.Search.SearchAsync<TestEvent>(suffixRequest);
             Assert.NotNull(suffixResult.Root);
 
             var substringRequest = YqlBuilder.Select().From("event")
-                .Where(w => w.Field("event_name").ContainsAnnotated("ingsuffix", substring: true))
+                .Where(w => w.Field("event_name").ContainsAnnotated("ingsuffix", new() { Substring = true }))
                 .ToSearchRequest()
-                .WithTimeout(TimeSpan.FromSeconds(10));
-            substringRequest.StreamingGroupName = group;
+                .WithTimeout(TimeSpan.FromSeconds(10)) with
+            { StreamingGroupName = group };
             var substringResult = await fixture.Client.Search.SearchAsync<TestEvent>(substringRequest);
             Assert.NotNull(substringResult.Root);
         }
@@ -503,19 +699,17 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
         var (ids, tag) = await SeedAsync();
         try
         {
-            // Buckets must stay strictly monotonic after Vespa's normalization
-            // ([100,500] becomes [100,501>), so the open-from bucket starts at 600.
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(
                 GroupingRequest(tag, GroupingBuilder.All()
                     .GroupByBuckets("price",
-                        GroupingBucket.Numeric(null, 100),                     // bucket[-inf,100)
-                        GroupingBucket.Numeric(100, 500, toInclusive: true),   // bucket[100,500]
-                        GroupingBucket.Numeric(600, null, fromInclusive: false)) // bucket(600,inf)
+                        GroupingBucket.Numeric(null, 100),
+                        GroupingBucket.Numeric(100, 300, toInclusive: true),
+                        GroupingBucket.Numeric(300, null, fromInclusive: false))
                     .Each(e => e.Output(GroupingAgg.Count()))));
 
             var groups = Assert.Single(result.GroupingResults).Groups;
-            // Prices 50, 150, 300, 700 → every bucket collects at least one document
-            Assert.True(groups.Count >= 3, $"expected >= 3 buckets, got {groups.Count}");
+            Assert.DoesNotContain(groups, group => group.IsRestBucket);
+            Assert.Equal([1L, 1L, 2L], groups.Select(group => group.GetAggregation<long>("count()")).Order());
         }
         finally { await CleanupAsync(ids); }
     }
@@ -588,7 +782,26 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
     {
         if (!Enabled) return;
 
-        // 12 distinct categories exceed Vespa's default group cap of 10
+        var profilePath = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(profilePath, """
+                <query-profile id="unbounded-grouping">
+                    <field name="grouping.globalMaxGroups">-1</field>
+                </query-profile>
+                """);
+            await fixture.Client.Admin.DeploySchemaAsync(VespaFixture.SchemaTypes,
+                options: new ApplicationPackageOptions
+                {
+                    AdditionalFiles = new Dictionary<string, string>
+                    {
+                        ["search/query-profiles/unbounded-grouping.xml"] = profilePath
+                    }
+                });
+        }
+        finally { File.Delete(profilePath); }
+
+        // 12 distinct categories exceed Vespa's default group count of 10.
         var tag = $"maxinf-{Guid.NewGuid():N}";
         const int categoryCount = 12;
         var ids = new List<string>();
@@ -608,13 +821,11 @@ public class YqlGroupingAcceptanceE2ETests(VespaFixture fixture)
             }
             await Task.Delay(2000);
 
-            // max(inf) is rejected while grouping.globalMaxGroups is enabled —
-            // Vespa requires disabling the global cap for unbounded group counts.
             var request = GroupingRequest(tag, GroupingBuilder.All()
                 .Group("category")
                 .MaxAll()
-                .Each(e => e.Output(GroupingAgg.Count())));
-            request.GroupingGlobalMaxGroups = -1;
+                .Each(e => e.Output(GroupingAgg.Count()))) with
+            { QueryProfile = "unbounded-grouping" };
 
             var result = await fixture.Client.Search.GroupByAsync<TestProduct>(request);
 

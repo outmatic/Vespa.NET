@@ -316,7 +316,7 @@ public class FieldOperationsTests : IDisposable
         {
             new(new() { ["x"] = "0" }, 5.0)
         };
-        var op = FieldOp.Modify("replace", cells);
+        var op = FieldOp.Modify(TensorModifyOperation.Replace, cells);
         Assert.Equal("modify", op.Type);
     }
 
@@ -327,7 +327,7 @@ public class FieldOperationsTests : IDisposable
         {
             new(new() { ["x"] = "0", ["y"] = "1" }, 3.14)
         };
-        var op = FieldOp.Modify("replace", cells);
+        var op = FieldOp.Modify(TensorModifyOperation.Replace, cells);
         var json = JsonSerializer.Serialize(op, JsonOpts);
         var expected = """{"modify":{"operation":"replace","cells":[{"address":{"x":"0","y":"1"},"value":3.14}]}}""";
         Assert.Equal(expected, json);
@@ -341,7 +341,7 @@ public class FieldOperationsTests : IDisposable
             new(new() { ["x"] = "a" }, 1.0),
             new(new() { ["x"] = "b" }, 2.0)
         };
-        var op = FieldOp.Modify("add", cells);
+        var op = FieldOp.Modify(TensorModifyOperation.Add, cells);
         var json = JsonSerializer.Serialize(op, JsonOpts);
         var expected = """{"modify":{"operation":"add","cells":[{"address":{"x":"a"},"value":1},{"address":{"x":"b"},"value":2}]}}""";
         Assert.Equal(expected, json);
@@ -354,7 +354,7 @@ public class FieldOperationsTests : IDisposable
         {
             new(new() { ["x"] = "0" }, 2.5)
         };
-        var op = FieldOp.Modify("multiply", cells);
+        var op = FieldOp.Modify(TensorModifyOperation.Multiply, cells);
         var json = JsonSerializer.Serialize(op, JsonOpts);
         Assert.Contains("\"operation\":\"multiply\"", json);
         Assert.Contains("\"value\":2.5", json);
@@ -388,7 +388,7 @@ public class FieldOperationsTests : IDisposable
         };
         var ops = new Dictionary<string, FieldOperation>
         {
-            ["embedding"] = FieldOp.Modify("replace", cells)
+            ["embedding"] = FieldOp.Modify(TensorModifyOperation.Replace, cells)
         };
 
         await _documentOps.UpdateFieldsAsync("doc-1", ops, "music");
@@ -1118,7 +1118,7 @@ public class FieldOperationsTests : IDisposable
     [Fact]
     public void FieldOp_Modify_WithCreate_SerializesCreateFlag()
     {
-        var op = FieldOp.Modify("replace",
+        var op = FieldOp.Modify(TensorModifyOperation.Replace,
             [new TensorCellUpdate(new() { ["x"] = "b" }, 2.0)], create: true);
         var json = JsonSerializer.Serialize(op, JsonOpts);
         var expected = """{"modify":{"operation":"replace","create":true,"cells":[{"address":{"x":"b"},"value":2}]}}""";
@@ -1130,7 +1130,7 @@ public class FieldOperationsTests : IDisposable
     {
         // Short form for tensors with a single mapped dimension
         // (docs.vespa.ai/en/reference/document-json-format.html)
-        var op = FieldOp.ModifyCells("replace", new Dictionary<string, double> { ["b"] = 2.0 });
+        var op = FieldOp.ModifyCells(TensorModifyOperation.Replace, new Dictionary<string, double> { ["b"] = 2.0 });
         var json = JsonSerializer.Serialize(op, JsonOpts);
         Assert.Equal("""{"modify":{"operation":"replace","cells":{"b":2}}}""", json);
     }
@@ -1138,10 +1138,28 @@ public class FieldOperationsTests : IDisposable
     [Fact]
     public void FieldOp_ModifyBlocks_SerializesBlocksObject()
     {
-        var op = FieldOp.ModifyBlocks("add",
+        var op = FieldOp.ModifyBlocks(TensorModifyOperation.Add,
             new Dictionary<string, IReadOnlyList<double>> { ["a"] = [1.0, 2.0, 3.0] });
         var json = JsonSerializer.Serialize(op, JsonOpts);
         Assert.Equal("""{"modify":{"operation":"add","blocks":{"a":[1,2,3]}}}""", json);
+    }
+
+    [Fact]
+    public void TensorModifyFactories_RejectUndefinedOperation()
+    {
+        var invalid = (TensorModifyOperation)42;
+
+        Assert.Throws<ArgumentOutOfRangeException>("operation", () => FieldOp.Modify(invalid, []));
+        Assert.Throws<ArgumentOutOfRangeException>("operation", () => FieldOp.ModifyCells(invalid, new Dictionary<string, double>()));
+        Assert.Throws<ArgumentOutOfRangeException>("operation", () => FieldOp.ModifyBlocks(invalid, new Dictionary<string, IReadOnlyList<double>>()));
+    }
+
+    [Fact]
+    public void FieldOperation_ModifyWithNativePayload_PreservesOperationString()
+    {
+        var op = new FieldOperation("modify", new { operation = "replace", cells = new Dictionary<string, double> { ["b"] = 2 } });
+
+        Assert.Equal("""{"modify":{"operation":"replace","cells":{"b":2}}}""", JsonSerializer.Serialize(op, JsonOpts));
     }
 
     [Fact]

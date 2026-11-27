@@ -134,6 +134,7 @@ public sealed partial class MixedFeedTests
         var result = await feed.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(["POST", "POST"], beforeRelease.Select(request => request.Method));
+        Assert.Equal(operations.Length, result.TotalOperations);
         Assert.Equal(4, result.SuccessCount);
         Assert.Empty(result.Errors);
         var requests = harness.Requests.Where(request => request.Uri.AbsolutePath.EndsWith("/item", StringComparison.Ordinal)).ToArray();

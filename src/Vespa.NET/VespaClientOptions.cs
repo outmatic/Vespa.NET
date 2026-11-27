@@ -8,6 +8,12 @@ namespace Vespa;
 public sealed class VespaClientOptions
 {
     /// <summary>
+    /// JSON metadata for models used by document reads, writes, visits, and search.
+    /// Register each fields or projection type used by those operations.
+    /// </summary>
+    public VespaJsonModels? JsonModels { get; init; }
+
+    /// <summary>
     /// Vespa endpoint URL (e.g., "https://myapp.vespa-cloud.com" or "http://localhost:8080")
     /// </summary>
     public string Endpoint { get; init; } = string.Empty;
@@ -89,17 +95,7 @@ public sealed class VespaClientOptions
         // PFX / P12 — bundle contains both cert and private key
         if (CertificatePath.EndsWith(".pfx", StringComparison.OrdinalIgnoreCase) ||
             CertificatePath.EndsWith(".p12", StringComparison.OrdinalIgnoreCase))
-#if NET9_0_OR_GREATER
-            return X509CertificateLoader.LoadPkcs12FromFile(
-                CertificatePath,
-                CertificatePassword);
-#else
-#pragma warning disable SYSLIB0057
-            return CertificatePassword is not null
-                ? new X509Certificate2(CertificatePath, CertificatePassword)
-                : new X509Certificate2(CertificatePath);
-#pragma warning restore SYSLIB0057
-#endif
+            return ClientCertificateLoader.LoadPkcs12FromFile(CertificatePath, CertificatePassword);
 
         // PEM cert + separate PEM key (Vespa Cloud style)
         if (ClientKeyPath is not null)
@@ -111,23 +107,11 @@ public sealed class VespaClientOptions
             // Windows SChannel cannot use the ephemeral private key produced by
             // CreateFromPemFile for TLS client authentication — round-trip through PKCS#12.
             using (pemCert)
-#if NET9_0_OR_GREATER
-                return X509CertificateLoader.LoadPkcs12(pemCert.Export(X509ContentType.Pkcs12), null);
-#else
-#pragma warning disable SYSLIB0057
-                return new X509Certificate2(pemCert.Export(X509ContentType.Pkcs12));
-#pragma warning restore SYSLIB0057
-#endif
+                return ClientCertificateLoader.LoadPkcs12(pemCert.Export(X509ContentType.Pkcs12));
         }
 
         // PEM cert only (public cert, no private key — unusual but allowed)
-#if NET9_0_OR_GREATER
-        return X509CertificateLoader.LoadCertificateFromFile(CertificatePath);
-#else
-#pragma warning disable SYSLIB0057
-        return new X509Certificate2(CertificatePath);
-#pragma warning restore SYSLIB0057
-#endif
+        return ClientCertificateLoader.LoadCertificateFromFile(CertificatePath);
     }
 
     /// <summary>
@@ -193,11 +177,12 @@ public sealed class VespaClientOptions
     public bool EnableCircuitBreaker { get; init; } = true;
 
     /// <summary>
-    /// Minimum number of requests in the sampling window before the circuit breaker
-    /// can open; it opens when at least half of them fail. Must be at least 2
-    /// (Polly's <c>MinimumThroughput</c> lower bound).
+    /// Minimum number of HTTP attempts in the sampling window before the default
+    /// circuit breaker can open. Once the minimum is reached, a handled failure opens
+    /// the circuit if at least half of the sampled attempts have failed.
+    /// Defaults to 5 and must be at least 2 when the circuit breaker is enabled.
     /// </summary>
-    public int CircuitBreakerFailureThreshold { get; init; } = 5;
+    public int CircuitBreakerMinimumThroughput { get; init; } = 5;
 
     /// <summary>
     /// Duration to keep circuit breaker open
@@ -212,7 +197,8 @@ public sealed class VespaClientOptions
     public bool UseConnectionPooling { get; init; } = true;
 
     /// <summary>
-    /// Enable compression for requests and responses
+    /// Enables automatic gzip and deflate response decompression on handlers built by the SDK.
+    /// The handler advertises those encodings through <c>Accept-Encoding</c>.
     /// </summary>
     public bool UseCompression { get; init; } = true;
 
@@ -277,11 +263,11 @@ public sealed class VespaClientOptions
         ArgumentOutOfRangeException.ThrowIfNegative(MaxRetryAttempts);
         ThrowIfTimeSpanZeroOrNegative(FeedRetryBaseDelay, nameof(FeedRetryBaseDelay));
         ArgumentOutOfRangeException.ThrowIfNegative(FeedMaxRetainedErrors);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CircuitBreakerFailureThreshold);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CircuitBreakerMinimumThroughput);
         // Polly's HttpCircuitBreakerStrategyOptions requires MinimumThroughput >= 2;
         // validating here surfaces the error at registration instead of on the first request.
         if (EnableCircuitBreaker)
-            ArgumentOutOfRangeException.ThrowIfLessThan(CircuitBreakerFailureThreshold, 2);
+            ArgumentOutOfRangeException.ThrowIfLessThan(CircuitBreakerMinimumThroughput, 2);
         ThrowIfTimeSpanZeroOrNegative(CircuitBreakerDuration, nameof(CircuitBreakerDuration));
         ThrowIfTimeSpanZeroOrNegative(Timeout, nameof(Timeout));
         ThrowIfTimeSpanZeroOrNegative(PooledConnectionLifetime, nameof(PooledConnectionLifetime));

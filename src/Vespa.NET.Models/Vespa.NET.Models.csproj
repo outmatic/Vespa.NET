@@ -15,8 +15,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The feed pipeline (Vespa.NET) populates FeedResult via internal mutators. -->
+    <!-- The schema builder shares runtime rank profile definitions with package options. -->
+    <InternalsVisibleTo Include="Vespa.NET" />
+    <InternalsVisibleTo Include="Vespa.NET.AgentFramework" />
+    <InternalsVisibleTo Include="Vespa.NET.VectorData" />
     <InternalsVisibleTo Include="Vespa.NET.Tests" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <EmbeddedResource Include="ILLink.Substitutions.xml" LogicalName="ILLink.Substitutions.xml" />
   </ItemGroup>
 
 </Project>

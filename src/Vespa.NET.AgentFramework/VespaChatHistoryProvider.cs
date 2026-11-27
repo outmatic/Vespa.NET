@@ -1,12 +1,16 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Vespa.Models;
 
 namespace Vespa.AgentFramework;
 
 /// <summary>Ordered conversation history, separate from semantic memory and from serialized sessions.</summary>
 public sealed class VespaChatHistoryProvider : ChatHistoryProvider
 {
+    private static readonly JsonTypeInfo<List<ChatMessage>> HistoryMessages = CreateHistoryMetadata();
     private readonly VespaAgentStateStore _store;
     private readonly VespaChatHistoryProviderOptions _options;
     private readonly ProviderSessionState<State> _state;
@@ -20,7 +24,7 @@ public sealed class VespaChatHistoryProvider : ChatHistoryProvider
         _store = store;
         _options = options ?? new();
         ArgumentException.ThrowIfNullOrWhiteSpace(_options.StateKey);
-        _state = new(stateInitializer ?? (_ => new()), _options.StateKey);
+        _state = new(stateInitializer ?? (_ => new()), _options.StateKey, HistoryStateJsonContext.StateOptions);
     }
 
     public override IReadOnlyList<string> StateKeys => [_state.StateKey];
@@ -43,7 +47,7 @@ public sealed class VespaChatHistoryProvider : ChatHistoryProvider
             messages = (await reducer.ReduceAsync(messages, cancellationToken)).ToList();
             if (snapshot is not null)
             {
-                var reduced = JsonSerializer.SerializeToElement(messages);
+                var reduced = JsonSerializer.SerializeToElement(messages, HistoryMessages);
                 // Compare serialized content: reducers may mutate the original messages in place.
                 if (!string.Equals(reduced.GetRawText(), snapshot.Payload.GetRawText(), StringComparison.Ordinal))
                     snapshot = await _store.WriteAsync(Key(state), reduced, snapshot.Revision, cancellationToken);
@@ -64,13 +68,28 @@ public sealed class VespaChatHistoryProvider : ChatHistoryProvider
         messages.AddRange(context.RequestMessages.Concat(context.ResponseMessages ?? []));
         if (_options.ChatReducer is { } reducer && _options.ReducerTriggerEvent == VespaHistoryReductionEvent.AfterMessagesAdded)
             messages = (await reducer.ReduceAsync(messages, cancellationToken)).ToList();
-        var saved = await _store.WriteAsync(Key(state), JsonSerializer.SerializeToElement(messages), state.Revision, cancellationToken);
+        var payload = JsonSerializer.SerializeToElement(messages, HistoryMessages);
+        var saved = await _store.WriteAsync(Key(state), payload, state.Revision, cancellationToken);
         state.Revision = saved.Revision;
         _state.SaveState(context.Session, state);
     }
 
     private static List<ChatMessage> Messages(VespaAgentStateSnapshot? snapshot) => snapshot is null ? []
-        : snapshot.Payload.Deserialize<List<ChatMessage>>() ?? throw new JsonException("The history snapshot is missing its messages.");
+        : snapshot.Payload.Deserialize(HistoryMessages)
+            ?? throw new JsonException("The history snapshot is missing its messages.");
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "The reflection serializer is selected only when reflection JSON is enabled. The other path uses generated history metadata.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Native AOT uses the generated history context with reflection JSON disabled.")]
+    private static JsonTypeInfo<List<ChatMessage>> CreateHistoryMetadata()
+    {
+        // Keep the original serializer for application-defined message values in JIT apps with reflection.
+        if (VespaJsonReflection.IsEnabled)
+            return (JsonTypeInfo<List<ChatMessage>>)JsonSerializerOptions.Default.GetTypeInfo(typeof(List<ChatMessage>));
+
+        return AgentStorageJsonContext.Default.ListChatMessage;
+    }
 
     private static string Key(State state)
     {

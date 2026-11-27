@@ -54,61 +54,63 @@ public sealed class TypedDocumentOptionsTests
         switch (operation)
         {
             case "put":
-                await documents.PutAsync(options, "item", new Inventory { Price = 12 }, condition: condition, create: true);
+                await documents.PutAsync("item", new Inventory { Price = 12 }, rawCondition: condition, create: true, requestOptions: options);
                 break;
             case "get":
-                await documents.GetAsync<Inventory>(options, "item", fieldSet: "inventory:unit_price");
+                await documents.GetAsync<Inventory>("item", fieldSet: "inventory:unit_price", requestOptions: options);
                 break;
             case "delete":
-                await documents.DeleteAsync<Inventory>(options, "item", condition: condition);
+                await documents.DeleteAsync<Inventory>("item", rawCondition: condition, requestOptions: options);
                 break;
             case "update":
-                await documents.UpdateFieldsAsync<Inventory>(options, "item", fields, createIfMissing: true, condition: condition);
+                await documents.UpdateFieldsAsync<Inventory>("item", fields, createIfMissing: true, rawCondition: condition, requestOptions: options);
                 break;
             case "update-builder":
-                await documents.UpdateFieldsAsync(options, "item", configure, createIfMissing: true, condition: condition);
+                await documents.UpdateFieldsAsync("item", configure, createIfMissing: true, rawCondition: condition, requestOptions: options);
                 break;
             case "group-get":
-                await documents.GetByGroupAsync<Inventory>(options, "team", "item", fieldSet: "inventory:unit_price");
+                await documents.GetByGroupAsync<Inventory>("team", "item", fieldSet: "inventory:unit_price", requestOptions: options);
                 break;
             case "number-get":
-                await documents.GetByNumberAsync<Inventory>(options, 42, "item", fieldSet: "inventory:unit_price");
+                await documents.GetByNumberAsync<Inventory>(42, "item", fieldSet: "inventory:unit_price", requestOptions: options);
                 break;
             case "group-update":
-                await documents.UpdateFieldsByGroupAsync<Inventory>(options, "team", "item", fields, createIfMissing: true, condition: condition);
+                await documents.UpdateFieldsByGroupAsync<Inventory>("team", "item", fields, createIfMissing: true, rawCondition: condition, requestOptions: options);
                 break;
             case "group-update-builder":
-                await documents.UpdateFieldsByGroupAsync(options, "team", "item", configure, createIfMissing: true, condition: condition);
+                await documents.UpdateFieldsByGroupAsync("team", "item", configure, createIfMissing: true, rawCondition: condition, requestOptions: options);
                 break;
             case "number-update":
-                await documents.UpdateFieldsByNumberAsync<Inventory>(options, 42, "item", fields, createIfMissing: true, condition: condition);
+                await documents.UpdateFieldsByNumberAsync<Inventory>(42, "item", fields, createIfMissing: true, rawCondition: condition, requestOptions: options);
                 break;
             case "number-update-builder":
-                await documents.UpdateFieldsByNumberAsync(options, 42, "item", configure, createIfMissing: true, condition: condition);
+                await documents.UpdateFieldsByNumberAsync(42, "item", configure, createIfMissing: true, rawCondition: condition, requestOptions: options);
                 break;
             case "get-many":
-                await documents.GetManyAsync<Inventory>(options, ["item"]);
+                await documents.GetManyAsync<Inventory>(["item"], fieldSet: "inventory:unit_price", requestOptions: options);
                 break;
             case "get-many-explicit":
-                await documents.GetManyAsync<Inventory>(options, ["item"], "inventory", "tenant");
+                await documents.GetManyAsync<Inventory>(["item"], "other_inventory", "other_tenant",
+                    fieldSet: "other_inventory:unit_price", requestOptions: options);
                 break;
             case "group-put":
-                await documents.PutByGroupAsync("team", "item", new Inventory { Price = 12 }, condition: condition, create: true, requestOptions: options);
+                await documents.PutByGroupAsync("team", "item", new Inventory { Price = 12 }, rawCondition: condition, create: true, requestOptions: options);
                 break;
             case "number-put":
-                await documents.PutByNumberAsync(42, "item", new Inventory { Price = 12 }, condition: condition, create: true, requestOptions: options);
+                await documents.PutByNumberAsync(42, "item", new Inventory { Price = 12 }, rawCondition: condition, create: true, requestOptions: options);
                 break;
             case "group-delete":
-                await documents.DeleteByGroupAsync<Inventory>("team", "item", condition: condition, requestOptions: options);
+                await documents.DeleteByGroupAsync<Inventory>("team", "item", rawCondition: condition, requestOptions: options);
                 break;
             case "number-delete":
-                await documents.DeleteByNumberAsync<Inventory>(42, "item", condition: condition, requestOptions: options);
+                await documents.DeleteByNumberAsync<Inventory>(42, "item", rawCondition: condition, requestOptions: options);
                 break;
         }
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(method, request.Method.Method);
-        Assert.Equal($"/document/v1/tenant/inventory/{path}", request.RequestUri!.AbsolutePath);
+        var target = operation == "get-many-explicit" ? "other_tenant/other_inventory" : "tenant/inventory";
+        Assert.Equal($"/document/v1/{target}/{path}", request.RequestUri!.AbsolutePath);
         var query = Query(request.RequestUri);
         Assert.Equal("2000ms", query["timeout"]);
         Assert.Equal("3", query["tracelevel"]);
@@ -116,8 +118,7 @@ public sealed class TypedDocumentOptionsTests
         {
             Assert.Equal("storage", query["cluster"]);
             Assert.Equal("long", query["format.tensors"]);
-            if (!operation.StartsWith("get-many", StringComparison.Ordinal))
-                Assert.Equal("inventory:unit_price", query["fieldSet"]);
+            Assert.Equal(operation == "get-many-explicit" ? "other_inventory:unit_price" : "inventory:unit_price", query["fieldSet"]);
         }
         else
         {
@@ -135,7 +136,7 @@ public sealed class TypedDocumentOptionsTests
     }
 
     [Fact]
-    public async Task ExistingPositionalSignatures_AcceptDefaultCancellationTokens()
+    public async Task CanonicalWritesAndReads_AcceptNamedCancellationTokens()
     {
         var handler = new MockHttpMessageHandler();
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:8080") };
@@ -146,26 +147,26 @@ public sealed class TypedDocumentOptionsTests
         Dictionary<string, FieldOperation> fields = new() { ["unit_price"] = FieldOp.Assign(12) };
         Action<TypedFieldUpdateBuilder<Inventory>> configure = update => update.Field(x => x.Price, FieldOp.Assign(12));
 
-        await DocumentOperationsExtensions.PutAsync(documents, "item", new Inventory(), null, false, default);
-        await DocumentOperationsExtensions.GetAsync<Inventory>(documents, "item", null, default);
-        await DocumentOperationsExtensions.DeleteAsync<Inventory>(documents, "item", null, default);
-        await DocumentOperationsExtensions.UpdateFieldsAsync<Inventory>(documents, "item", fields, false, null, default);
-        await DocumentOperationsExtensions.UpdateFieldsAsync(documents, "item", configure, false, null, default);
-        await DocumentOperationsExtensions.UpdateFieldsByGroupAsync<Inventory>(documents, "team", "item", fields, false, null, default);
-        await DocumentOperationsExtensions.UpdateFieldsByGroupAsync(documents, "team", "item", configure, false, null, default);
-        await DocumentOperationsExtensions.UpdateFieldsByNumberAsync<Inventory>(documents, 42, "item", fields, false, null, default);
-        await DocumentOperationsExtensions.UpdateFieldsByNumberAsync(documents, 42, "item", configure, false, null, default);
-        await DocumentOperationsExtensions.GetByGroupAsync<Inventory>(documents, "team", "item", null, default);
-        await DocumentOperationsExtensions.GetByNumberAsync<Inventory>(documents, 42, "item", null, default);
-        await DocumentOperationsExtensions.GetManyAsync<Inventory>(documents, ["item"], "inventory", "tenant", 1, default);
-        await DocumentOperationsExtensions.GetManyAsync<Inventory>(documents, ["item"], 1, default);
+        await DocumentOperationsExtensions.PutAsync(documents, "item", new Inventory(), condition: null, create: false, cancellationToken: default);
+        await DocumentOperationsExtensions.GetAsync<Inventory>(documents, "item", fieldSet: null, cancellationToken: default);
+        await DocumentOperationsExtensions.DeleteAsync<Inventory>(documents, "item", condition: null, cancellationToken: default);
+        await DocumentOperationsExtensions.UpdateFieldsAsync<Inventory>(documents, "item", fields, condition: null, createIfMissing: false, cancellationToken: default);
+        await DocumentOperationsExtensions.UpdateFieldsAsync(documents, "item", configure, condition: null, createIfMissing: false, cancellationToken: default);
+        await DocumentOperationsExtensions.UpdateFieldsByGroupAsync<Inventory>(documents, "team", "item", fields, condition: null, createIfMissing: false, cancellationToken: default);
+        await DocumentOperationsExtensions.UpdateFieldsByGroupAsync(documents, "team", "item", configure, condition: null, createIfMissing: false, cancellationToken: default);
+        await DocumentOperationsExtensions.UpdateFieldsByNumberAsync<Inventory>(documents, 42, "item", fields, condition: null, createIfMissing: false, cancellationToken: default);
+        await DocumentOperationsExtensions.UpdateFieldsByNumberAsync(documents, 42, "item", configure, condition: null, createIfMissing: false, cancellationToken: default);
+        await DocumentOperationsExtensions.GetByGroupAsync<Inventory>(documents, "team", "item", fieldSet: null, cancellationToken: default);
+        await DocumentOperationsExtensions.GetByNumberAsync<Inventory>(documents, 42, "item", fieldSet: null, cancellationToken: default);
+        await DocumentOperationsExtensions.GetManyAsync<Inventory>(documents, ["item"], "inventory", "tenant", 1, cancellationToken: default);
+        await DocumentOperationsExtensions.GetManyAsync<Inventory>(documents, ["item"], 1, cancellationToken: default);
 
         Assert.Equal(13, handler.Requests.Count);
         Assert.All(handler.Requests, request => Assert.StartsWith("/document/v1/tenant/inventory/", request.RequestUri!.AbsolutePath));
     }
 
     [Fact]
-    public async Task OptionsOverload_ForwardsCallerCancellation()
+    public async Task ReadWithOptions_ForwardsCallerCancellation()
     {
         using var source = new CancellationTokenSource();
         source.Cancel();
@@ -173,7 +174,7 @@ public sealed class TypedDocumentOptionsTests
         IDocumentOperations documents = new DocumentOperations(http, new());
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            documents.GetAsync<Inventory>(new DocumentRequestOptions { Cluster = "storage" }, "item", cancellationToken: source.Token));
+            documents.GetAsync<Inventory>("item", requestOptions: new() { Cluster = "storage" }, cancellationToken: source.Token));
     }
 
     private static Dictionary<string, string> Query(Uri uri) => uri.Query.TrimStart('?').Split('&')

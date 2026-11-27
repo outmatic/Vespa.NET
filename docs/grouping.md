@@ -1,7 +1,6 @@
 # Grouping & Aggregation
 
-Vespa.NET provides a fluent builder for Vespa's grouping expressions. Results are returned as
-`GroupingSearchResponse<T>`; call `.AsTyped()` for a grouping hierarchy with typed document summaries.
+Vespa.NET provides a fluent builder for Vespa's grouping expressions. Results are returned as `GroupingSearchResponse<T>`; call `.AsTyped()` for a grouping hierarchy with typed document summaries.
 
 ---
 
@@ -31,16 +30,11 @@ foreach (var group in groupList.Groups)
     Console.WriteLine($"{group.Value}: count={group.GetAggregation<long>("count()")}");
 ```
 
-`VespaGroup.Aggregations` holds the numeric outputs; non-numeric outputs (e.g.
-`tostring(...)`/`toraw(...)`) are available as `JsonElement`s in
-`VespaGroup.RawAggregations`.
+`VespaGroup.Aggregations` holds the numeric outputs; non-numeric outputs (e.g. `tostring(...)`/`toraw(...)`) are available as `JsonElement`s in `VespaGroup.RawAggregations`.
 
 ### Typed results and exact aggregation values
 
-Call `.AsTyped()` once to obtain a `TypedGroupingSearchResponse<T>`. Its
-`GroupingResults` and `GroupingRoots` contain `VespaGroupList<T>` and
-`VespaGroup<T>` at every level, so `group.Hits` is an
-`IReadOnlyList<SearchHit<T>>` and `group.SubGroups` retains the same document type:
+Call `.AsTyped()` once per response when you need typed summaries throughout the tree. `group.Hits` gives you an `IReadOnlyList<SearchHit<T>>`, and the same document type carries through `group.SubGroups` and `GroupingRoots`.
 
 ```csharp
 var result = (await client.Search.GroupByAsync<Product>(request)).AsTyped();
@@ -56,24 +50,13 @@ foreach (var group in list.Groups)
 }
 ```
 
-The projection runs in memory, makes no HTTP requests and leaves the original
-response available. It preserves ordinary hits, root outputs and summaries,
-rest buckets, nested groups, coverage, errors, timing, trace and continuation
-tokens. Existing `GroupByAsync<T>`, `GetHits<T>()` and response constructors remain
-available. Manually constructed responses must contain `SearchHit<T>` summaries
-matching their document type; mismatched summaries throw `InvalidCastException`.
+The projection creates typed groups and lists in memory and reuses the existing summary objects, aggregation values and continuation tokens. Reuse the typed result if you traverse the same response again. For aggregations alone, read the original groups directly. To read summaries from a single group, use `group.GetHits<Product>()`.
 
-Both typed and original groups expose `GetAggregation<TValue>(name)` and
-`TryGetAggregation<TValue>(name, out value)`. They deserialize the original
-`RawAggregations` JSON instead of converting the legacy `double` values.
-This preserves 64-bit integer values beyond `2^53` and the precision present
-in JSON decimal values. Choosing `double` still uses floating-point precision;
-choosing `decimal` cannot recover precision already lost by the server.
+Both views expose root outputs and summaries, rest buckets, nested groups, coverage, errors, timing and trace. If you construct a response yourself, supply `SearchHit<T>` summaries matching its document type. A mismatch throws `InvalidCastException` when you read the summaries through `GetHits<T>()` or `AsTyped()`.
 
-Vespa returns `count()` as a long, and outputs can also contain structured
-values such as the array returned by `quantiles(...)` (see the official
-[grouping reference](https://docs.vespa.ai/en/reference/querying/grouping-language.html#group-aggregators)).
-Select the corresponding CLR type, or use `JsonElement` for arbitrary JSON:
+Both typed and original groups expose `GetAggregation<TValue>(name)` and `TryGetAggregation<TValue>(name, out value)`. They deserialize the original `RawAggregations` JSON instead of converting the legacy `double` values. This preserves 64-bit integer values beyond `2^53` and the precision present in JSON decimal values. Choosing `double` still uses floating-point precision; choosing `decimal` cannot recover precision already lost by the server.
+
+Vespa returns `count()` as a long, and outputs can also contain structured values such as the array returned by `quantiles(...)` (see the official [grouping reference](https://docs.vespa.ai/en/reference/querying/grouping-language.html#group-aggregators)). Select the corresponding CLR type, or use `JsonElement` for arbitrary JSON:
 
 ```csharp
 using System.Text.Json;
@@ -86,13 +69,7 @@ if (group.TryGetAggregation<double>("avg(price)", out var average))
     Console.WriteLine(average);
 ```
 
-Use an aggregation's alias, such as `"total"`, when the query uses
-`count() as(total)`. Structured outputs can also be read into arrays or DTOs;
-an optional `JsonSerializerOptions` argument controls deserialization. By
-default, standard `System.Text.Json` rules apply, including case-sensitive
-property matching and no conversion of JSON strings to numbers.
-For string-rendered `"NaN"` or infinities, pass options with
-`NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals`.
+Use an aggregation's alias, such as `"total"`, when the query uses `count() as(total)`. Structured outputs can also be read into arrays or DTOs; an optional `JsonSerializerOptions` argument controls deserialization. By default, standard `System.Text.Json` rules apply, including case-sensitive property matching and no conversion of JSON strings to numbers. For string-rendered `"NaN"` or infinities, pass options with `NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals`.
 
 | Situation | `GetAggregation<TValue>` | `TryGetAggregation<TValue>` |
 |---|---|---|
@@ -102,23 +79,13 @@ For string-rendered `"NaN"` or infinities, pass options with
 | JSON null, non-nullable value target | `JsonException` | `false`, default output |
 | Unsupported CLR type or invalid serializer configuration | Exception | Exception |
 
-Null or empty names throw an argument exception in both methods. Manually
-constructed groups must populate `RawAggregations` to use these accessors;
-there is no fallback to potentially rounded `Aggregations` values.
+Null or empty names throw an argument exception in both methods. Manually constructed groups must populate `RawAggregations` to use these accessors; there is no fallback to potentially rounded `Aggregations` values.
 
-`GroupingSearchResponse.Coverage`, `Errors`, and `Trace` retain the same metadata
-as a regular search response. Check coverage and errors when consuming results:
-Vespa can return partial results with HTTP 200.
+`GroupingSearchResponse.Coverage`, `Errors`, and `Trace` retain the same metadata as a regular search response. Check coverage and errors when consuming results: Vespa can return partial results with HTTP 200.
 
-`GroupingRoots` contains the root of each grouping expression, including its
-aggregations and hit lists. For example, a request containing
-`| all(output(count()))` exposes the count through
-`result.GroupingRoots[0].GetAggregation<long>("count()")`.
+`GroupingRoots` contains the root of each grouping expression, including its aggregations and hit lists. For example, a request containing `| all(output(count()))` exposes the count through `result.GroupingRoots[0].GetAggregation<long>("count()")`.
 
-For numeric aggregations over all matched documents, create a single constant
-group, for example `all(group(1) each(output(sum(price))))`, and read the value
-from `result.GroupingResults[0].Groups[0]`. This follows the official
-[whole-document aggregation example](https://docs.vespa.ai/en/querying/grouping.html#aggregating-over-all-documents).
+For numeric aggregations over all matched documents, create a single constant group, for example `all(group(1) each(output(sum(price))))`, and read the value from `result.GroupingResults[0].Groups[0]`. This follows the official [whole-document aggregation example](https://docs.vespa.ai/en/querying/grouping.html#aggregating-over-all-documents).
 
 ---
 
@@ -132,9 +99,7 @@ GroupingBuilder.All().GroupByFixedWidth("price", 100);
 
 ### Predefined buckets
 
-Tuple buckets are inclusive of `From`, exclusive of `To`; values outside every
-bucket land in the rest group. Use `GroupingBucket` for `inf` endpoints or
-open/closed bounds:
+Numeric and string tuples include `From` and exclude `To`. Values outside every bucket land in the rest group. Use `GroupingBucket` for infinite endpoints or custom inclusion rules. Vespa's `<` delimiter excludes the lower endpoint. [Vespa bucket expressions](https://docs.vespa.ai/en/reference/querying/grouping-language.html#bucket-expressions)
 
 ```csharp
 GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500));
@@ -143,17 +108,14 @@ GroupingBuilder.All().GroupByBuckets("price", (0, 100), (100, 500));
 GroupingBuilder.All().GroupByBuckets("price",
     GroupingBucket.Numeric(null, 100),                      // bucket[-inf,100)
     GroupingBucket.Numeric(100, 500, toInclusive: true),    // bucket[100,500]
-    GroupingBucket.Numeric(500, null));                     // bucket[500,inf)
+    GroupingBucket.Numeric(500, null, fromInclusive: false)); // bucket<500,inf)
 ```
 
-Rest groups are retained in the results: `group.IsRestBucket` identifies them,
-and `group.Id` preserves Vespa's `group:null` identity. Their aggregation values
-are included just like those of the explicit buckets.
+Rest groups are retained in the results: `group.IsRestBucket` identifies them, and `group.Id` preserves Vespa's `group:null` identity. Their aggregation values are included just like those of the explicit buckets.
 
 ### Filtering groups
 
-`filter(...)` / `keep(...)` restrict which values are collected when grouping on
-multivalue attributes (`where(true)` was removed from the grouping grammar):
+`filter(...)` / `keep(...)` restrict which values are collected when grouping on multivalue attributes (`where(true)` was removed from the grouping grammar):
 
 ```csharp
 GroupingBuilder.All()
@@ -167,7 +129,11 @@ GroupingFilter.Range(1990, 2012, "year", minInclusive: true, maxInclusive: true)
 GroupingFilter.IsTrue("my_bool").And(GroupingFilter.Not(GroupingFilter.Regex(".*foo", "f")));
 ```
 
+`GroupingFilter.IsTrue` requires Vespa 8.646.22 or later. [Boolean grouping filter](https://github.com/vespa-engine/vespa/pull/35907)
+
 ### Labels, parallel each blocks, max(inf), multi-key order
+
+Use bounded grouping for routine queries. To use `MaxAll()` with `max(inf)`, select a deployed query profile where `grouping.globalMaxGroups` is set to `-1`. Current Vespa versions enforce this setting at the query-profile level. [Vespa query parameters](https://docs.vespa.ai/en/reference/api/query.html#grouping)
 
 ```csharp
 GroupingBuilder.All()
@@ -181,8 +147,7 @@ GroupingBuilder.All()
 
 ### Per-group document summaries
 
-Return the actual documents inside each group (`hitlist:*` in the response).
-Use `.AsTyped()` to read `SearchHit<T>` directly from `group.Hits`:
+Return the actual documents inside each group (`hitlist:*` in the response). Use `.AsTyped()` to read `SearchHit<T>` directly from `group.Hits`:
 
 ```csharp
 var request = YqlBuilder<Product>.Select()
@@ -199,8 +164,7 @@ foreach (var group in response.GroupingResults[0].Groups)
 
 ### Nested grouping
 
-`SubGroup` may be called multiple times for parallel sub-groupings (label them
-with `.As("name")`):
+`SubGroup` may be called multiple times for parallel sub-groupings (label them with `.As("name")`):
 
 ```csharp
 GroupingBuilder.All().Group("category").Each(e => e
@@ -211,16 +175,31 @@ GroupingBuilder.All().Group("category").Each(e => e
 
 ### Paginated streaming
 
-`GroupByStreamAsync` follows `GroupingSearchResponse.ContinuationTokens`
-automatically, passing them back through the YQL `continuations` annotation
-(Vespa has no `grouping.continuation` query parameter). For manual paging use
-`GroupingContinuations.Apply(yql, tokens)`.
+`GroupByStreamAsync` follows group-list continuations for a single grouping expression. Use either a YQL pipe built with `YqlBuilder.GroupBy(grouping)` or a separate `select` parameter. Both forms use the same grouping expression.
+
+```csharp
+var grouping = GroupingBuilder.All()
+    .Group("category")
+    .Max(5)
+    .Each(e => e.Output(GroupingAgg.Count()));
+
+var request = YqlBuilder<Product>.Select().Limit(0).ToSearchRequest() with
+{
+    Select = grouping.Build()
+};
+```
+
+`Select` carries a grouping expression string. Vespa also has a separate JSON query language with its own request shape. [Query API](https://docs.vespa.ai/en/reference/api/query.html#grouping-and-aggregation) · [JSON query language](https://docs.vespa.ai/en/reference/querying/json-query-language.html)
 
 ```csharp
 await foreach (var page in client.Search.GroupByStreamAsync<Product>(request))
-    foreach (var list in page.AsTyped().GroupingResults)
+    foreach (var list in page.GroupingResults)
         Console.WriteLine(list.Label);
 ```
+
+Use `page.AsTyped()` for pages whose summary hits you need. The typed result carries the same continuation tokens.
+
+For manual paging with a YQL pipe, use `request with { Yql = GroupingContinuations.Apply(request.Yql, tokens) }`. With `Select`, keep the expression and pass the request returned by `request.WithParameter("continue", string.Join(' ', tokens))`. Pass the tokens in the order returned by `ContinuationTokens`.
 
 ---
 

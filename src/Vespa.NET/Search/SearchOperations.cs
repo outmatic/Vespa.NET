@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -29,6 +31,7 @@ public sealed partial class SearchOperations(
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Yql, nameof(request));
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "search");
 
         using var activity = VespaActivitySource.Instance.StartActivity(VespaActivitySource.Search);
         RecordYql(activity, request);
@@ -42,8 +45,12 @@ public sealed partial class SearchOperations(
             activity,
             async response =>
             {
-                var result = await VespaIdInjector.DeserializeSearchAndInjectAsync<T>(response.Content, cancellationToken)
-                    ?? throw new VespaException("Failed to deserialize search response");
+                var result = VespaJsonReflection.IsEnabled && model is null
+                    ? await VespaIdInjector.DeserializeSearchAndInjectAsync<T>(response.Content, cancellationToken)
+                    : (await response.Content.ReadFromJsonAsync(
+                        VespaProtocolJsonContext.Default.SearchResponseWire, cancellationToken))?.ToResponse(model!);
+                if (result is null)
+                    throw new VespaException("Failed to deserialize search response");
 
                 var totalCount = result.Root.Fields?.TotalCount ?? 0;
                 activity?.SetTag(VespaActivitySource.TagTotalCount, totalCount);
@@ -53,7 +60,8 @@ public sealed partial class SearchOperations(
 
                 return result;
             },
-            cancellationToken);
+            cancellationToken,
+            useGeneratedMetadata: model is not null);
     }
 
     public async Task<VespaSearchResponse<T>> NearestNeighborSearchAsync<T>(
@@ -70,7 +78,8 @@ public sealed partial class SearchOperations(
         if (queryEmbedding.Format != TensorFormat.IndexedDense)
             throw new ArgumentException($"Unsupported tensor format for nearest neighbor search: {queryEmbedding.Format}. Use IndexedDense format.", nameof(queryEmbedding));
 
-        var values = ExtractDenseValues(queryEmbedding);
+        var values = queryEmbedding.GetDenseValues<double>()
+            ?? throw new ArgumentException("Unable to extract dense values from tensor", nameof(queryEmbedding));
 
         if (values.Length == 0)
             throw new ArgumentException("Query embedding values cannot be empty", nameof(queryEmbedding));
@@ -108,7 +117,7 @@ public sealed partial class SearchOperations(
             Yql = yql,
             Hits = hits,
             Offset = offset,
-            CustomParameters = parameters
+            CustomParameters = (IReadOnlyDictionary<string, object?>?)parameters
         };
 
         return await SearchAsync<T>(request, cancellationToken);
@@ -120,6 +129,7 @@ public sealed partial class SearchOperations(
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Yql, nameof(request));
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "grouping");
 
         if (logger != null)
             LogExecutingSearch(logger, request.Yql);
@@ -134,9 +144,10 @@ public sealed partial class SearchOperations(
             {
                 using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-                return GroupingResponseParser.Parse<T>(doc.RootElement);
+                return GroupingResponseParser.Parse(doc.RootElement, model);
             },
-            cancellationToken);
+            cancellationToken,
+            useGeneratedMetadata: model is not null);
     }
 
     /// <summary>
@@ -153,16 +164,19 @@ public sealed partial class SearchOperations(
         VespaSearchRequest request,
         Activity? activity,
         Func<HttpResponseMessage, Task<TResult>> parseResponse,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool useGeneratedMetadata = false)
     {
         try
         {
             // ResponseHeadersRead lets large result sets stream into the JSON parser
             // instead of buffering the whole body first. The error path is safe: it
             // reads the (unbuffered) body to a string exactly once.
-            var httpRequest = new HttpRequestMessage(HttpMethod.Post, VespaPaths.Search)
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, VespaPaths.Search)
             {
-                Content = JsonContent.Create(request, options: VespaJsonOptions.Default)
+                Version = _httpClient.DefaultRequestVersion,
+                VersionPolicy = _httpClient.DefaultVersionPolicy,
+                Content = CreateSearchContent(request, useGeneratedMetadata)
             };
             using var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             await EnsureSearchSuccessAsync(response, activity, cancellationToken);
@@ -173,6 +187,23 @@ public sealed partial class SearchOperations(
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw;
         }
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "The reflection-disabled path creates search content with the generated protocol context.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path serializes the request using generated JsonTypeInfo.")]
+    private static HttpContent CreateSearchContent(VespaSearchRequest request, bool useGeneratedMetadata)
+    {
+        if (VespaJsonReflection.IsEnabled && !useGeneratedMetadata)
+            return JsonContent.Create(request, options: VespaJsonOptions.Default);
+
+        // Resolve any runtime parameter types before the transport starts the request.
+        var json = JsonSerializer.SerializeToUtf8Bytes(request, VespaProtocolJsonContext.Default.VespaSearchRequest);
+        return new ByteArrayContent(json)
+        {
+            Headers = { ContentType = new MediaTypeHeaderValue("application/json", "utf-8") }
+        };
     }
 
     private static async Task EnsureSearchSuccessAsync(
@@ -186,20 +217,6 @@ public sealed partial class SearchOperations(
         var exception = await VespaErrorResponse.CreateAsync(response, cancellationToken, context: "Search failed");
         activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
         throw exception;
-    }
-
-    private static double[] ExtractDenseValues(VespaTensor queryEmbedding)
-    {
-        if (queryEmbedding.GetDenseValues<double>() is { } doubleValues)
-            return doubleValues;
-        if (queryEmbedding.GetDenseValues<float>() is { } floatValues)
-            return Array.ConvertAll(floatValues, x => (double)x);
-        if (queryEmbedding.GetDenseValues<sbyte>() is { } sbyteValues)
-            return Array.ConvertAll(sbyteValues, x => (double)x);
-        if (queryEmbedding.GetDenseValues<Half>() is { } halfValues)
-            return Array.ConvertAll(halfValues, x => (double)x);
-
-        throw new ArgumentException("Unable to extract dense values from tensor", nameof(queryEmbedding));
     }
 
     private static VespaSearchRequest BuildNearestNeighborRequest(
@@ -226,7 +243,7 @@ public sealed partial class SearchOperations(
             Ranking = !string.IsNullOrWhiteSpace(rankProfile)
                 ? new RankingConfig { Profile = rankProfile }
                 : null,
-            Input = new Dictionary<string, object>
+            Input = new Dictionary<string, object?>
             {
                 [$"query({queryTensorName})"] = new Dictionary<string, object>
                 {

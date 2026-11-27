@@ -117,7 +117,10 @@ public sealed class RankingBuilder
         return this;
     }
 
-    /// <summary>Sort specification (e.g. "+year -relevance")</summary>
+    /// <summary>
+    /// Vespa sort specification, for example <c>+year -[relevance]</c>.
+    /// Use <see cref="SortingBuilder"/> for attribute and relevance keys.
+    /// </summary>
     public RankingBuilder Sorting(string spec) { _sorting = spec; return this; }
 
     /// <summary>Enable soft timeout with optional factor (0.0-1.0)</summary>
@@ -150,12 +153,14 @@ public sealed class RankingBuilder
     public RankingBuilder GlobalPhaseRankScoreDropLimit(double limit) { _globalPhaseRankScoreDropLimit = limit; return this; }
 
     /// <summary>
-    /// Configure match-phase early termination.
+    /// Configure match-phase early termination. Omit <paramref name="direction"/>
+    /// to use the server's configured direction.
     /// Prefer <paramref name="totalMaxHits"/> (over all content nodes) to the per-node
     /// <paramref name="maxHits"/>.
     /// </summary>
-    public RankingBuilder MatchPhase(string attribute, long? maxHits = null, bool? ascending = null, long? totalMaxHits = null)
+    public RankingBuilder MatchPhase(string attribute, long? maxHits = null, SortDirection? direction = null, long? totalMaxHits = null)
     {
+        var ascending = direction?.IsAscending();
         _matchPhaseAttribute = attribute;
         _matchPhaseMaxHits = maxHits;
         _matchPhaseAscending = ascending;
@@ -192,12 +197,12 @@ public sealed class RankingBuilder
     public RankingConfig Build() => new()
     {
         Profile = _profile,
-        Features = _features.Count > 0 ? new Dictionary<string, object>(_features) : null,
+        Features = _features.Count > 0 ? _features : null,
         RerankCount = _rerankCount,
         TotalRerankCount = _totalRerankCount,
         SecondPhaseRankScoreDropLimit = _secondPhaseRankScoreDropLimit,
         ListFeatures = _listFeatures,
-        Properties = _properties.Count > 0 ? new Dictionary<string, object>(_properties) : null,
+        Properties = _properties.Count > 0 ? _properties : null,
         Sorting = _sorting,
         SoftTimeoutEnable = _softTimeoutEnable,
         SoftTimeoutFactor = _softTimeoutFactor,

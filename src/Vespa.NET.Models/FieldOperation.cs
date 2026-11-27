@@ -33,40 +33,48 @@ public static class FieldOp
     /// Tensor cell-level modify operation (replace, add, or multiply individual cells).
     /// Serializes as <c>{"modify":{"operation":…,"cells":[{"address":…,"value":…},…]}}</c>.
     /// </summary>
-    /// <param name="operation">One of <c>"replace"</c>, <c>"add"</c>, or <c>"multiply"</c>.</param>
+    /// <param name="operation">Operation to apply to each addressed cell.</param>
     /// <param name="cells">
     /// A list of cell updates, each with an <c>Address</c> dictionary and a <c>Value</c>.
     /// Example: <c>[new TensorCellUpdate(new() { ["x"] = "0" }, 5.0)]</c>
     /// </param>
     /// <param name="create">
-    /// When <see langword="true"/>, treat the tensor as empty (all cells zero) if the field
-    /// is not set, so the modify applies instead of being ignored. Serializes as
-    /// <c>"create": true</c> inside the modify object.
+    /// Creates missing cells before applying the update. Newly created mapped cells start
+    /// at zero for <c>replace</c> or <c>add</c> and at one for <c>multiply</c>.
+    /// Vespa 8.218.31 and later can also apply the update to an unset tensor field.
     /// </param>
-    public static FieldOperation Modify(string operation, IReadOnlyList<TensorCellUpdate> cells, bool create = false) =>
-        new("modify", new ModifyPayload(operation, cells, null, null, create));
+    public static FieldOperation Modify(TensorModifyOperation operation, IReadOnlyList<TensorCellUpdate> cells, bool create = false) =>
+        new("modify", new ModifyPayload(ModifyOperationName(operation), cells, null, null, create));
 
     /// <summary>
     /// Tensor cell-level modify operation using the short-form <c>cells</c> object for
     /// tensors with a single mapped dimension. Serializes as
     /// <c>{"modify":{"operation":…,"cells":{"label":value,…}}}</c>.
     /// </summary>
-    /// <param name="operation">One of <c>"replace"</c>, <c>"add"</c>, or <c>"multiply"</c>.</param>
+    /// <param name="operation">Operation to apply to each addressed cell.</param>
     /// <param name="cells">Map from the single mapped dimension's label to the cell value.</param>
-    /// <param name="create">See <see cref="Modify(string, IReadOnlyList{TensorCellUpdate}, bool)"/>.</param>
-    public static FieldOperation ModifyCells(string operation, IReadOnlyDictionary<string, double> cells, bool create = false) =>
-        new("modify", new ModifyPayload(operation, null, cells, null, create));
+    /// <param name="create">See <see cref="Modify(TensorModifyOperation, IReadOnlyList{TensorCellUpdate}, bool)"/>.</param>
+    public static FieldOperation ModifyCells(TensorModifyOperation operation, IReadOnlyDictionary<string, double> cells, bool create = false) =>
+        new("modify", new ModifyPayload(ModifyOperationName(operation), null, cells, null, create));
 
     /// <summary>
     /// Tensor block-level modify operation for mixed tensors (one mapped plus indexed
     /// dimensions). Serializes as <c>{"modify":{"operation":…,"blocks":{"label":[…],…}}}</c>,
-    /// replacing whole dense blocks addressed by the mapped dimension's label.
+    /// applying the operation to each cell in dense blocks addressed by the mapped label.
     /// </summary>
-    /// <param name="operation">One of <c>"replace"</c>, <c>"add"</c>, or <c>"multiply"</c>.</param>
+    /// <param name="operation">Operation to apply to each addressed cell.</param>
     /// <param name="blocks">Map from the mapped dimension's label to the dense block values.</param>
-    /// <param name="create">See <see cref="Modify(string, IReadOnlyList{TensorCellUpdate}, bool)"/>.</param>
-    public static FieldOperation ModifyBlocks(string operation, IReadOnlyDictionary<string, IReadOnlyList<double>> blocks, bool create = false) =>
-        new("modify", new ModifyPayload(operation, null, null, blocks, create));
+    /// <param name="create">See <see cref="Modify(TensorModifyOperation, IReadOnlyList{TensorCellUpdate}, bool)"/>.</param>
+    public static FieldOperation ModifyBlocks(TensorModifyOperation operation, IReadOnlyDictionary<string, IReadOnlyList<double>> blocks, bool create = false) =>
+        new("modify", new ModifyPayload(ModifyOperationName(operation), null, null, blocks, create));
+
+    private static string ModifyOperationName(TensorModifyOperation operation) => operation switch
+    {
+        TensorModifyOperation.Replace => "replace",
+        TensorModifyOperation.Add => "add",
+        TensorModifyOperation.Multiply => "multiply",
+        _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, "Expected a valid tensor modify operation.")
+    };
 
     /// <summary>
     /// Tensor add-cells update: adds cells to a tensor with mapped dimensions, keeping
@@ -141,7 +149,7 @@ internal sealed class ClearFieldSentinel
 /// <summary>
 /// Serializes FieldOperation as { "type": value } for the Vespa Document API
 /// </summary>
-file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
+internal sealed class FieldOperationConverter : JsonConverter<FieldOperation>
 {
     public override FieldOperation Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
         throw new NotSupportedException("FieldOperation deserialization is not supported.");
@@ -161,7 +169,7 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
             writer.WritePropertyName(value.Type);
             writer.WriteStartObject();
             writer.WritePropertyName("element");
-            JsonSerializer.Serialize(writer, match.Key, options);
+            JsonSerializer.Serialize(writer, match.Key, options.GetTypeInfo(typeof(object)));
             WriteOperation(writer, match.InnerOp, options);
             writer.WriteEndObject();
         }
@@ -179,6 +187,7 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
                 writer.WriteBoolean("create", true);
             if (modify.Cells is not null)
             {
+                // Vespa's tensor modify system test uses a cells array; the JSON reference shows addresses.
                 writer.WritePropertyName("cells");
                 WriteCellArray(writer, modify.Cells);
             }
@@ -228,7 +237,7 @@ file sealed class FieldOperationConverter : JsonConverter<FieldOperation>
         else
         {
             writer.WritePropertyName(value.Type);
-            JsonSerializer.Serialize(writer, value.Value, options);
+            JsonSerializer.Serialize(writer, value.Value, options.GetTypeInfo(typeof(object)));
         }
     }
 

@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace Vespa.Models.Schema;
 
 /// <summary>
@@ -5,6 +7,23 @@ namespace Vespa.Models.Schema;
 /// </summary>
 public sealed record ApplicationPackageOptions
 {
+    private readonly IReadOnlyDictionary<string, string>? _documentSelections;
+
+    internal IReadOnlyDictionary<Type, IReadOnlyList<RankProfileDefinition>>? RankProfiles { get; init; }
+
+    /// <summary>
+    /// Native keep selections keyed by document type. Values are copied when assigned.
+    /// Selections control feed routing and enable garbage collection of non-matching documents.
+    /// A target must belong to the package and must not also declare an attribute selection.
+    /// Cannot be combined with <see cref="CustomServicesXml"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? DocumentSelections
+    {
+        get => _documentSelections;
+        init => _documentSelections = value is null ? null :
+            new Dictionary<string, string>(value, StringComparer.Ordinal).ToFrozenDictionary(StringComparer.Ordinal);
+    }
+
     /// <summary>
     /// Number of redundant copies of each document. Default: 1.
     /// </summary>
@@ -48,6 +67,14 @@ public sealed record ApplicationPackageOptions
     /// via the other options on this record.
     /// </summary>
     public string? CustomServicesXml { get; init; }
+
+    /// <summary>
+    /// Minimum Vespa server version declared in the generated <c>services.xml</c>.
+    /// Supply a three-component version such as <c>8.640.27</c>.
+    /// The config server checks it during deployment. Omit it to leave the requirement unset.
+    /// For <see cref="CustomServicesXml"/>, declare the requirement directly in the XML.
+    /// </summary>
+    public Version? MinimumRequiredVespaVersion { get; init; }
 
     /// <summary>
     /// Additional raw XML fragments to inject inside the <c>&lt;container&gt;</c> element

@@ -11,36 +11,13 @@ public sealed class YqlFieldClause(string fieldName, YqlWhereClause parent)
         return parent.AddPredicate(new YqlPredicate.Contains(fieldName, value));
     }
 
-    /// <summary>
-    /// <c>field contains ({annotations}"value")</c> — contains with term annotations.
-    /// </summary>
+    /// <summary>Matches a term with the specified Vespa annotations.</summary>
     /// <param name="value">The term to match.</param>
-    /// <param name="filter">Mark as non-ranking filter term.</param>
-    /// <param name="termId">Term ID for connectivity linking.</param>
-    /// <param name="connectivityWeight">Weight for connectivity to the term identified by <paramref name="termId"/>.</param>
-    /// <param name="stem">Override stemming for this term.</param>
-    /// <param name="normalizeCase">Override case normalization for this term.</param>
-    /// <param name="accentDrop">Override accent removal for this term.</param>
-    /// <param name="usePositionData">Override position data usage for this term.</param>
-    /// <param name="weight">Term weight for ranking (default 100).</param>
-    /// <param name="prefix">Prefix matching ("word*").</param>
-    /// <param name="suffix">Suffix matching ("*word").</param>
-    /// <param name="substring">Substring matching ("*word*", streaming search only).</param>
-    /// <param name="significance">Significance value for text ranking features.</param>
-    /// <param name="ranked">Include this term in ranking calculation (false speeds up evaluation).</param>
-    /// <param name="language">RFC 3066 language code for linguistics handling of this term.</param>
-    /// <param name="nfkc">NFKC normalization.</param>
-    /// <param name="implicitTransforms">Master switch for schema-driven term transforms (stemming, normalization, …).</param>
-    public YqlWhereClause ContainsAnnotated(string value,
-        bool? filter = null, int? termId = null, double? connectivityWeight = null,
-        bool? stem = null, bool? normalizeCase = null, bool? accentDrop = null, bool? usePositionData = null,
-        int? weight = null, bool? prefix = null, bool? suffix = null, bool? substring = null,
-        double? significance = null, bool? ranked = null, string? language = null,
-        bool? nfkc = null, bool? implicitTransforms = null)
+    /// <param name="annotations">The annotations to apply to this term.</param>
+    public YqlWhereClause ContainsAnnotated(string value, YqlTermAnnotations annotations)
     {
-        var annotations = new TermAnnotations(
-            filter, termId, connectivityWeight, stem, normalizeCase, accentDrop, usePositionData,
-            weight, prefix, suffix, substring, significance, ranked, language, nfkc, implicitTransforms);
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        ArgumentNullException.ThrowIfNull(annotations);
         return parent.AddPredicate(new YqlPredicate.Contains(fieldName, value, annotations));
     }
 

@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Json;
 using System.Reflection;
-using System.Text.Json;
 using Vespa.Models;
 using Vespa.Models.Attributes;
 
@@ -21,6 +21,10 @@ internal static class VespaIdInjector
     /// Deserializes a <see cref="VespaDocument{T}"/> from HTTP content and
     /// injects the wrapper-level ID into the <see cref="VespaIdAttribute"/>-marked property.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Document reads call this fallback only when reflection JSON is enabled and no model metadata is registered.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Native AOT document reads use the registered JsonTypeInfo and its optional ID callback.")]
     internal static async Task<VespaDocument<T>?> DeserializeAndInjectAsync<T>(
         HttpContent content, CancellationToken cancellationToken) where T : class
     {
@@ -31,21 +35,13 @@ internal static class VespaIdInjector
     }
 
     /// <summary>
-    /// Deserializes a <see cref="VespaDocument{T}"/> from a JSON string and
-    /// injects the wrapper-level ID into the <see cref="VespaIdAttribute"/>-marked property.
-    /// </summary>
-    internal static VespaDocument<T>? DeserializeAndInject<T>(string json) where T : class
-    {
-        var doc = JsonSerializer.Deserialize<VespaDocument<T>>(json, VespaJsonOptions.Default);
-        if (doc is not null)
-            Inject(doc);
-        return doc;
-    }
-
-    /// <summary>
     /// Deserializes a <see cref="VespaSearchResponse{T}"/> from HTTP content and
     /// injects wrapper-level IDs into the <see cref="VespaIdAttribute"/>-marked property on each hit.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Search calls this fallback only when reflection JSON is enabled and no model metadata is registered.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Native AOT search reads the generated envelope and uses the optional registered ID callback.")]
     internal static async Task<VespaSearchResponse<T>?> DeserializeSearchAndInjectAsync<T>(
         HttpContent content, CancellationToken cancellationToken) where T : class
     {
@@ -60,6 +56,10 @@ internal static class VespaIdInjector
     /// Deserializes a <see cref="VespaVisitResponse{T}"/> from HTTP content and
     /// injects wrapper-level IDs into the <see cref="VespaIdAttribute"/>-marked property on each document.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Visits call this fallback only when reflection JSON is enabled and no model metadata is registered.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Native AOT visits read documents with the registered JsonTypeInfo and its optional ID callback.")]
     internal static async Task<VespaVisitResponse<T>?> DeserializeVisitAndInjectAsync<T>(
         HttpContent content, CancellationToken cancellationToken) where T : class
     {
@@ -81,13 +81,19 @@ internal static class VespaIdInjector
 
     internal static void Inject<T>(SearchHit<T> hit) where T : class
     {
-        if (hit.Fields is null || string.IsNullOrEmpty(hit.Id))
+        if (hit.Fields is null)
+            return;
+
+        var id = hit.Id;
+        if (string.IsNullOrEmpty(id))
             return;
 
         var setter = GetOrCreateSetter(typeof(T));
-        setter?.Invoke(hit.Fields, hit.Id);
+        setter?.Invoke(hit.Fields, id);
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2070",
+        Justification = "The reflection-only ID injector is bypassed when JSON reflection is disabled. Registered metadata supplies its own callback.")]
     private static Action<object, string>? GetOrCreateSetter(Type type) =>
         SetterCache.GetOrAdd(type, static t =>
         {

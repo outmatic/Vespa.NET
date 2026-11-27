@@ -53,7 +53,8 @@ public sealed partial class FeedOperations(
         {
             Id = u.Id,
             Fields = u.FieldOperations,
-            Condition = u.Condition
+            Condition = u.Condition,
+            ExpectedDocumentType = u.ExpectedDocumentType
         });
 
         return ExecutePipelineAsync(
@@ -209,27 +210,11 @@ public sealed partial class FeedOperations(
             {
                 await foreach (var doc in channel.Reader.ReadAllAsync(pipelineToken))
                 {
-                    try
+                    if (await ExecuteFeedItemAsync(doc, doc.Id, operation, accumulator, pipelineToken,
+                        (doc.ExpectedDocumentType, documentType)) is { } error)
                     {
-                        var response = await ExecuteWithRetryAsync(doc, doc.Id, operation, pipelineToken);
-                        if (response.HadIgnoredFields && accumulator.MarkIgnoredFields() && _logger != null)
-                            LogIgnoredFields(_logger, doc.Id);
-                        accumulator.IncrementSuccess();
-                    }
-                    catch (OperationCanceledException) when (pipelineToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
-                    {
-                        accumulator.IncrementFailure();
-                        accumulator.AddError(new FeedError
-                        {
-                            DocumentId = doc.Id,
-                            Message = ex.Message,
-                            StatusCode = (ex as VespaException)?.StatusCode
-                        });
-                        onError(doc.Id, ex);
+                        accumulator.RecordFailure(doc.Id, error);
+                        onError(doc.Id, error);
                     }
 
                     // Single shared counter incremented once per outcome; success/failure are

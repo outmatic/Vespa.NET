@@ -110,7 +110,9 @@ public sealed class SearchFeatureTests
         using var harness = new TestHarness((_, _) => TestHarness.Json(Hit(0, relevance: 0.42)));
         using var store = new VespaVectorStore(harness.Client, TestHarness.Options with
         {
-            HybridRankProfile = "hybrid", HybridVectorTargetHits = 40, HybridKeywordTargetHits = 80
+            HybridRankProfile = "hybrid",
+            HybridVectorTargetHits = 40,
+            HybridKeywordTargetHits = 80
         });
         using var collection = store.GetDynamicCollection("article", Definition(DistanceFunction.CosineSimilarity));
         var hybrid = Assert.IsAssignableFrom<IKeywordHybridSearchable<Dictionary<string, object?>>>(collection);
@@ -135,7 +137,9 @@ public sealed class SearchFeatureTests
         using var harness = new TestHarness((_, _) => TestHarness.Json(Hit(0)));
         using var store = new VespaVectorStore(harness.Client, TestHarness.Options with
         {
-            HybridRankProfile = "hybrid", HybridVectorTargetHits = vectorTarget, HybridKeywordTargetHits = keywordTarget
+            HybridRankProfile = "hybrid",
+            HybridVectorTargetHits = vectorTarget,
+            HybridKeywordTargetHits = keywordTarget
         });
         using var collection = store.GetDynamicCollection("article", Definition(DistanceFunction.CosineSimilarity));
         var hybrid = (IKeywordHybridSearchable<Dictionary<string, object?>>)collection;
@@ -159,7 +163,9 @@ public sealed class SearchFeatureTests
         using var harness = new TestHarness((_, _) => TestHarness.Json(Hit(0)));
         using var store = new VespaVectorStore(harness.Client, TestHarness.Options with
         {
-            HybridRankProfile = "hybrid", HybridVectorTargetHits = vectorTarget, HybridKeywordTargetHits = keywordTarget
+            HybridRankProfile = "hybrid",
+            HybridVectorTargetHits = vectorTarget,
+            HybridKeywordTargetHits = keywordTarget
         });
         using var collection = store.GetDynamicCollection("article", Definition(DistanceFunction.CosineSimilarity));
         var hybrid = (IKeywordHybridSearchable<Dictionary<string, object?>>)collection;
@@ -208,7 +214,10 @@ public sealed class SearchFeatureTests
         using var harness = new TestHarness();
         using var store = new VespaVectorStore(harness.Client, TestHarness.Options with
         {
-            EmbeddingGenerator = firstGenerator, UpsertBatchSize = 3, EmbeddingBatchSize = 2, UpsertConcurrency = 1
+            EmbeddingGenerator = firstGenerator,
+            UpsertBatchSize = 3,
+            EmbeddingBatchSize = 2,
+            UpsertConcurrency = 1
         });
         var definition = new VectorStoreCollectionDefinition
         {
@@ -222,7 +231,9 @@ public sealed class SearchFeatureTests
         using var collection = store.GetDynamicCollection("article", definition);
         await collection.UpsertAsync(Enumerable.Range(0, 5).Select(i => new Dictionary<string, object?>
         {
-            ["Id"] = "same", ["First"] = "first-" + i, ["Second"] = "second-" + i
+            ["Id"] = "same",
+            ["First"] = "first-" + i,
+            ["Second"] = "second-" + i
         }));
         Assert.Equal(new[] { 2, 1, 2 }, firstGenerator.BatchSizes);
         Assert.Equal(new[] { 2, 1, 2 }, secondGenerator.BatchSizes);

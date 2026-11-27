@@ -18,14 +18,14 @@ var yql = YqlBuilder<Product>
     .Where(w => w.Field(p => p.Price).LessThan(500))
     .Limit(20)
     .Build();
-// select * from product where price < 500 limit 20;
+// select * from product where price < 500 limit 20
 
 // Specific fields — names resolved via [VespaField]
 var yql2 = YqlBuilder<Product>
     .Select(p => p.Name, p => p.Price)
     .Where(w => w.Field(p => p.Price).GreaterThan(10)
                  .And(sub => sub.Field(p => p.Name).Contains("laptop")))
-    .OrderBy(p => p.Price, descending: true)
+    .OrderBy(p => p.Price, SortDirection.Descending)
     .Build();
 ```
 
@@ -38,7 +38,7 @@ var yql = YqlBuilder
     .Where(w => w
         .Field("price").GreaterThan(10)
         .And(sub => sub.Field("category").Contains("electronics")))
-    .OrderBy("price", descending: true)
+    .OrderBy("price", SortDirection.Descending)
     .Build();
 ```
 
@@ -49,7 +49,7 @@ var yql = YqlBuilder
 | Method | YQL Output |
 |---|---|
 | `.Contains("text")` | `field contains "text"` |
-| `.ContainsAnnotated("text", filter: true)` | `field contains ({filter: true}"text")` |
+| `.ContainsAnnotated("text", new() { Filter = true })` | `field contains ({filter: true}"text")` |
 | `.Text("value")` | `field contains text("value")` |
 | `.Matches("regex.*")` | `field matches "regex.*"` |
 | `.EqualTo(val)` | `field = val` |
@@ -65,14 +65,28 @@ var yql = YqlBuilder
 | `.ONear(["t1", "t2"])` | `field contains onear("t1", "t2")` |
 | `.Equiv("t1", "t2")` | `field contains equiv("t1", "t2")` |
 | `.SameElement(...)` | `field contains sameElement(...)` — `elementFilter: [0, 2]` adds `{elementFilter:[0, 2]}` |
-| `.Uri("vespa.ai")` | `field contains uri("vespa.ai")` (deprecated upstream) |
+| `.Uri("vespa.ai")` | `field contains (uri("vespa.ai"))` (deprecated upstream) |
 
-`ContainsAnnotated` supports the full set of term annotations: `filter`, `weight`,
-`prefix`/`suffix`/`substring`, `significance`, `ranked`, `language`, `nfkc`,
-`implicitTransforms`, `stem`, `normalizeCase`, `accentDrop`, `usePositionData`
-and connectivity (`termId` + `connectivityWeight`).
+Pass a `YqlTermAnnotations` object to set term weight, ranking, matching, or linguistic options. Omitted properties use Vespa's defaults. Set `TermId` to identify the current term and `Connectivity` to give the target term's ID and a proximity weight. [Vespa term annotations](https://docs.vespa.ai/en/reference/querying/yql.html#annotations)
+
+```csharp
+var query = YqlBuilder<Product>.Select().Where(w =>
+{
+    var name = w.Field(p => p.Name);
+    name.ContainsAnnotated("wireless", new() { TermId = 1, Connectivity = new(2, 0.8) });
+    name.ContainsAnnotated("headphones", new() { TermId = 2 });
+}).Build();
+```
+
+### URL component matching
+
+`Uri(...)` queries an existing indexed Vespa `uri` field or one of its URL components. If the field is named `url`, `w.Field("url.hostname").Uri("vespa.ai")` matches both `vespa.ai` and `docs.vespa.ai`. With the default end anchor, adding `startAnchor: true` restricts the match to `vespa.ai`. [Vespa hostname anchors](https://docs.vespa.ai/en/reference/querying/yql.html#endanchor)
+
+Vespa recommends `string` for new schemas. If an application needs exact hostname lookup, store the normalized hostname in a dedicated field and query that field using exact matching. [Vespa URI fields](https://docs.vespa.ai/en/reference/schemas/schemas.html#uri)
 
 ## Clause-Level Predicates
+
+Vespa added `totalTargetHits` in different releases for each operator: 8.639.59 for `nearestNeighbor`, 8.640.27 for `weakAnd` and 8.664.22 for `wand`. Use `targetHits` for a per-node target. [Nearest-neighbor support](https://github.com/vespa-engine/vespa/pull/35803) · [WeakAnd support](https://github.com/vespa-engine/vespa/pull/35815) · [Wand support](https://github.com/vespa-engine/vespa/pull/36233)
 
 | Method | YQL Output |
 |---|---|
@@ -84,7 +98,8 @@ and connectivity (`termId` + `connectivityWeight`).
 | `w.WeightedSet("f", tokens)` | `weightedSet(f, {...})` |
 | `w.GeoLocation("pos", lat, lon, 10.0)` | `geoLocation(pos, lat, lon, "10km")` |
 | `w.GeoBoundingBox("pos", s, w, n, e)` | `geoBoundingBox(pos, s, w, n, e)` |
-| `w.UserQuery("free text")` | `userQuery()` — the text travels in `model.queryString`, set by `ToSearchRequest()`/`WithYql()` |
+| `w.UserQuery("query expression")` | `userQuery()` reads `model.queryString`, set by `ToSearchRequest()` or `WithYql()` |
+| `w.UserQuery()` | `userQuery()` reads the [model query set on the request](search.md#user-text-and-model-filters) |
 | `w.UserInput("param")` | `userInput(@param)` |
 | `w.Rank(...)` | `rank(...)` |
 | `w.Not(n => ...)` | `!( ... )` |
@@ -160,7 +175,7 @@ Each callback builds one predicate, all are OR'd:
 
 ## Fluent Request Builder
 
-`ToSearchRequest()` captures YQL, Hits, and Offset. Chain helpers for ranking and tensors:
+`ToSearchRequest()` creates a request from the builder. Use the value returned by `request.WithYql(builder)` to carry the builder's query into a derived request. Chain helpers for ranking and tensors:
 
 ```csharp
 var request = YqlBuilder<Product>
@@ -200,8 +215,8 @@ The builder validates at build time:
 
 ### Limit / Offset
 
-YQL's `limit` keyword caps the total result-set index (not the page size), so
-`Build()` translates: `.Limit(10).Offset(20)` emits `limit 30 offset 20` — the
-same page (rows 20–29) that `ToSearchRequest()` selects via `hits=10&offset=20`.
+`ToSearchRequest()` and `WithYql()` put each explicit builder value in the request. `.Limit(10).Offset(20)` sets `Hits=10` and `Offset=20`. An omitted value on `WithYql()` leaves that property at its existing value. You can set either property after applying the builder to choose a different page.
+
+`Build()` produces standalone YQL. It renders the same window as `limit 30 offset 20`, because YQL's `limit` is the exclusive end of the slice. When you send raw YQL, inline pagination takes precedence over the request values. [Vespa YQL limit and offset](https://docs.vespa.ai/en/reference/querying/yql.html#limit-offset)
 
 The query tensor name is derived automatically: for a field named `embedding`, the query input is `query(query_embedding)`.

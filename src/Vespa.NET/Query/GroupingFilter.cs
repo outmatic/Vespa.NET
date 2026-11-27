@@ -40,6 +40,7 @@ public abstract class GroupingFilter
     /// <summary>
     /// <c>istrue(expression)</c> — collect only documents where the boolean
     /// expression evaluates to true. The <paramref name="expression"/> is embedded verbatim.
+    /// Requires Vespa 8.646.22 or later.
     /// </summary>
     public static GroupingFilter IsTrue(string expression)
     {
@@ -70,14 +71,12 @@ public abstract class GroupingFilter
 
     internal abstract string Build();
 
-    private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
-
     private static string Parenthesize(GroupingFilter f) =>
         f is BinaryFilter ? $"({f.Build()})" : f.Build();
 
     private sealed class RegexFilter(string pattern, string expression) : GroupingFilter
     {
-        internal override string Build() => $"regex(\"{Escape(pattern)}\", {expression})";
+        internal override string Build() => $"regex(\"{QuotedQueryString.EscapeContent(pattern)}\", {expression})";
     }
 
     private sealed class RangeFilter(double min, double max, string expression, bool minInclusive, bool maxInclusive) : GroupingFilter

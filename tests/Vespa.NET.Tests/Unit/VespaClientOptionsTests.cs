@@ -58,27 +58,28 @@ public class VespaClientOptionsTests
     }
 
     [Fact]
-    public void Validate_ThrowsException_WhenCircuitBreakerThresholdBelowPollyMinimum()
+    public void Validate_ThrowsException_WhenCircuitBreakerMinimumThroughputIsOne()
     {
         // Polly's HttpCircuitBreakerStrategyOptions requires MinimumThroughput >= 2;
         // a threshold of 1 passed registration and blew up on the first request.
         var options = new VespaClientOptions
         {
             Endpoint = "http://localhost:8080",
-            CircuitBreakerFailureThreshold = 1
+            CircuitBreakerMinimumThroughput = 1
         };
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => options.Validate());
+        var error = Assert.Throws<ArgumentOutOfRangeException>(() => options.Validate());
+        Assert.Equal(nameof(VespaClientOptions.CircuitBreakerMinimumThroughput), error.ParamName);
     }
 
     [Fact]
-    public void Validate_AllowsThresholdOfOne_WhenCircuitBreakerDisabled()
+    public void Validate_AllowsMinimumThroughputOfOne_WhenCircuitBreakerDisabled()
     {
         var options = new VespaClientOptions
         {
             Endpoint = "http://localhost:8080",
             EnableCircuitBreaker = false,
-            CircuitBreakerFailureThreshold = 1
+            CircuitBreakerMinimumThroughput = 1
         };
 
         options.Validate();
@@ -167,6 +168,7 @@ public class VespaClientOptionsTests
         Assert.True(options.EnableRetry);
         Assert.Equal(3, options.MaxRetryAttempts);
         Assert.True(options.EnableCircuitBreaker);
+        Assert.Equal(5, options.CircuitBreakerMinimumThroughput);
         Assert.True(options.UseConnectionPooling);
         Assert.True(options.UseCompression);
         // Privacy/behavior-preserving defaults: no proxy, no query text in traces

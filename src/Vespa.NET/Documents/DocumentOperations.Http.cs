@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Http.Json;
 using Vespa.Models;
@@ -30,18 +31,37 @@ public sealed partial class DocumentOperations
         };
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Resolve requires registered model metadata when reflection JSON is disabled.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path writes with the registered JsonTypeInfo.")]
     private async Task<VespaResponse> SendPutAsync<T>(string url, T document, CancellationToken cancellationToken) where T : class
     {
-        var payload = new { fields = document };
-        using var response = await _httpClient.PostAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "document writes");
+        using var content = VespaJsonReflection.IsEnabled && model is null
+            ? (HttpContent)JsonContent.Create(new { fields = document }, options: VespaJsonOptions.Default)
+            : new DocumentJsonContent<T>(document, model!.TypeInfo);
+        using var response = await _httpClient.PostAsync(url, content, cancellationToken);
         return await ParseResponseAsync(response, cancellationToken);
     }
 
     private async Task<VespaResponse> SendUpdateAsync(string url, Dictionary<string, FieldOperation> fieldOperations, CancellationToken cancellationToken)
     {
-        var payload = new { fields = fieldOperations };
-        using var response = await _httpClient.PutAsJsonAsync(url, payload, VespaJsonOptions.Default, cancellationToken);
+        using var content = CreateUpdateContent(fieldOperations);
+        using var response = await _httpClient.PutAsync(url, content, cancellationToken);
         return await ParseResponseAsync(response, cancellationToken);
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "When reflection JSON is disabled, the update envelope uses the generated protocol context.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "The reflection-disabled path creates content with generated metadata for the update envelope.")]
+    private JsonContent CreateUpdateContent(Dictionary<string, FieldOperation> fieldOperations)
+    {
+        if (VespaJsonReflection.IsEnabled && _options.JsonModels is null)
+            return JsonContent.Create(new { fields = fieldOperations }, options: VespaJsonOptions.Default);
+
+        return JsonContent.Create(new FieldUpdateWire(fieldOperations), VespaProtocolJsonContext.Default.FieldUpdateWire);
     }
 
     private async Task<VespaResponse> SendDeleteAsync(string url, CancellationToken cancellationToken)
@@ -55,6 +75,7 @@ public sealed partial class DocumentOperations
         string? documentId,
         CancellationToken cancellationToken) where T : class
     {
+        var model = VespaJsonModels.Resolve<T>(_options.JsonModels, "document reads");
         using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
@@ -67,6 +88,10 @@ public sealed partial class DocumentOperations
         if (!response.IsSuccessStatusCode)
             throw await VespaErrorResponse.CreateAsync(response, cancellationToken);
 
-        return await VespaIdInjector.DeserializeAndInjectAsync<T>(response.Content, cancellationToken);
+        if (VespaJsonReflection.IsEnabled && model is null)
+            return await VespaIdInjector.DeserializeAndInjectAsync<T>(response.Content, cancellationToken);
+
+        var wire = await response.Content.ReadFromJsonAsync(VespaProtocolJsonContext.Default.DocumentWire, cancellationToken);
+        return wire?.ToDocument(model!);
     }
 }

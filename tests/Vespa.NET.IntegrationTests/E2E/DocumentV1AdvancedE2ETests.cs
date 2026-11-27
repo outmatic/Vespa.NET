@@ -35,7 +35,7 @@ public class DocumentV1AdvancedE2ETests(VespaFixture fixture)
             var response = await fixture.Client.Documents.PutAsync(
                 id,
                 new TestProduct { Name = "created", Price = 5, Category = "cond-create" },
-                condition: "product.category==\"cond-create\"",
+                rawCondition: "product.category==\"cond-create\"",
                 create: true);
             Assert.True(response.IsSuccess);
 
@@ -58,7 +58,7 @@ public class DocumentV1AdvancedE2ETests(VespaFixture fixture)
             fixture.Client.Documents.PutAsync(
                 id,
                 new TestProduct { Name = "never", Price = 1, Category = "cond-nocreate" },
-                condition: "product.category==\"cond-nocreate\""));
+                rawCondition: "product.category==\"cond-nocreate\""));
     }
 
     // ── Group / number-level visiting ────────────────────────────────────────
@@ -179,7 +179,7 @@ public class DocumentV1AdvancedE2ETests(VespaFixture fixture)
             var response = await fixture.Client.Documents.UpdateFieldsAsync<TestProduct>(id,
                 new Dictionary<string, FieldOperation>
                 {
-                    ["weights"] = FieldOp.ModifyCells("replace", new Dictionary<string, double> { ["a"] = 5.0 })
+                    ["weights"] = FieldOp.ModifyCells(TensorModifyOperation.Replace, new Dictionary<string, double> { ["a"] = 5.0 })
                 });
             Assert.True(response.IsSuccess);
 
@@ -191,6 +191,84 @@ public class DocumentV1AdvancedE2ETests(VespaFixture fixture)
         finally
         {
             await fixture.Client.Documents.DeleteAsync<TestProduct>(id);
+        }
+    }
+
+    [Fact]
+    public async Task TensorModify_AppliesAllOperationsAcrossTheThreePayloadForms()
+    {
+        if (!Enabled) return;
+
+        var id = NewId();
+        var documents = fixture.Client.Documents;
+        try
+        {
+            await documents.PutAsync(id, new TestProduct
+            {
+                Name = "tensor-modify",
+                DenseDouble = VespaTensor.FromDenseValues<double>([2, 3, 4]),
+                Weights = VespaTensor.FromMappedValues(new Dictionary<string, float> { ["a"] = 1 }),
+                BlockScores = VespaTensor.FromMixedSingleSparse(new Dictionary<string, float[]>
+                {
+                    ["a"] = [1, 2],
+                    ["b"] = [3, 4]
+                })
+            });
+
+            var response = await documents.UpdateFieldsAsync<TestProduct>(id, new Dictionary<string, FieldOperation>
+            {
+                ["dense_double"] = FieldOp.Modify(TensorModifyOperation.Multiply,
+                    [new TensorCellUpdate(new() { ["x"] = "1" }, 2)]),
+                ["weights"] = FieldOp.ModifyCells(TensorModifyOperation.Add,
+                    new Dictionary<string, double> { ["a"] = 4, ["b"] = 2 }, create: true),
+                ["block_scores"] = FieldOp.ModifyBlocks(TensorModifyOperation.Replace,
+                    new Dictionary<string, IReadOnlyList<double>> { ["a"] = [8, 9] })
+            });
+            Assert.True(response.IsSuccess);
+
+            var stored = Assert.IsType<TestProduct>((await documents.GetAsync<TestProduct>(id))?.Fields);
+            Assert.Equal(new double[] { 2, 6, 4 }, stored.DenseDouble?.GetDenseValues<double>());
+            var weights = Assert.IsType<Dictionary<string, float>>(stored.Weights?.GetMappedValues<float>());
+            Assert.Equal(5f, weights["a"]);
+            Assert.Equal(2f, weights["b"]);
+            var scores = Assert.IsType<Dictionary<string, float[]>>(stored.BlockScores?.GetMixedSingleSparse<float>());
+            Assert.Equal(new float[] { 8, 9 }, scores["a"]);
+            Assert.Equal(new float[] { 3, 4 }, scores["b"]);
+        }
+        finally
+        {
+            await documents.DeleteAsync<TestProduct>(id);
+        }
+    }
+
+    [Fact]
+    public async Task TensorModify_ReplaceWithCellArray_ChangesOnlyAddressedDenseCell()
+    {
+        if (!Enabled) return;
+
+        var id = NewId();
+        var documents = fixture.Client.Documents;
+        try
+        {
+            await documents.PutAsync(id, new TestProduct
+            {
+                Name = "tensor-modify-replace",
+                DenseDouble = VespaTensor.FromDenseValues<double>([2, 3, 4])
+            });
+
+            var response = await documents.UpdateFieldsAsync<TestProduct>(id, new Dictionary<string, FieldOperation>
+            {
+                ["dense_double"] = FieldOp.Modify(TensorModifyOperation.Replace,
+                    [new TensorCellUpdate(new() { ["x"] = "1" }, 9.5)])
+            });
+            Assert.True(response.IsSuccess);
+
+            var stored = Assert.IsType<TestProduct>((await documents.GetAsync<TestProduct>(id))?.Fields);
+            Assert.Equal(new double[] { 2, 9.5, 4 }, stored.DenseDouble?.GetDenseValues<double>());
+        }
+        finally
+        {
+            await documents.DeleteAsync<TestProduct>(id);
         }
     }
 

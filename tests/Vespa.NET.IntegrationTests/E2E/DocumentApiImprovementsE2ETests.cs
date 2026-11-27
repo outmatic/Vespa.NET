@@ -21,20 +21,22 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
         var documents = fixture.Client.Documents;
         try
         {
-            await documents.PutAsync(WriteOptions, id, new TestProduct { Name = "Typed options", Price = 10 });
-            var before = await documents.GetAsync<TestProduct>(ReadOptions, id, fieldSet: "product:product_name,price");
+            await documents.PutAsync(id, new TestProduct { Name = "Typed options", Price = 10 }, requestOptions: WriteOptions);
+            var before = await documents.GetAsync<TestProduct>(id, fieldSet: "product:product_name,price", requestOptions: ReadOptions);
             Assert.Equal("Typed options", before!.Fields!.Name);
             Assert.Equal(10, before.Fields.Price);
 
-            await documents.UpdateFieldsAsync<TestProduct>(WriteOptions, id,
-                update => update.Field(product => product.Price, FieldOp.Assign(25.0)));
+            await documents.UpdateFieldsAsync<TestProduct>(id,
+                update => update.Field(product => product.Price, FieldOp.Assign(25.0)), requestOptions: WriteOptions);
 
-            var after = Assert.Single(await documents.GetManyAsync<TestProduct>(ReadOptions, [id]));
+            var after = Assert.Single(await documents.GetManyAsync<TestProduct>([id, id + "-missing"],
+                fieldSet: DocumentFieldSet.For<TestProduct>(p => p.Price), requestOptions: ReadOptions));
             Assert.Equal(25, after.Fields!.Price);
+            Assert.Equal("", after.Fields.Name);
             Assert.Equal($"id:test:product::{id}", after.FullId);
 
-            await documents.DeleteAsync<TestProduct>(WriteOptions, id);
-            Assert.Null(await documents.GetAsync<TestProduct>(ReadOptions, id));
+            await documents.DeleteAsync<TestProduct>(id, requestOptions: WriteOptions);
+            Assert.Null(await documents.GetAsync<TestProduct>(id, requestOptions: ReadOptions));
         }
         finally
         {
@@ -59,19 +61,19 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
             if (groupAddressing)
             {
                 await documents.PutByGroupAsync(group, localId, item, requestOptions: WriteOptions);
-                await documents.UpdateFieldsByGroupAsync<TestEvent>(WriteOptions, group, localId,
-                    update => update.Field(document => document.Payload, FieldOp.Assign("after")));
+                await documents.UpdateFieldsByGroupAsync<TestEvent>(group, localId,
+                    update => update.Field(document => document.Payload, FieldOp.Assign("after")), requestOptions: WriteOptions);
             }
             else
             {
                 await documents.PutByNumberAsync(number, localId, item, requestOptions: WriteOptions);
-                await documents.UpdateFieldsByNumberAsync<TestEvent>(WriteOptions, number, localId,
-                    update => update.Field(document => document.Payload, FieldOp.Assign("after")));
+                await documents.UpdateFieldsByNumberAsync<TestEvent>(number, localId,
+                    update => update.Field(document => document.Payload, FieldOp.Assign("after")), requestOptions: WriteOptions);
             }
 
             var read = groupAddressing
-                ? await documents.GetByGroupAsync<TestEvent>(ReadOptions, group, localId)
-                : await documents.GetByNumberAsync<TestEvent>(ReadOptions, number, localId);
+                ? await documents.GetByGroupAsync<TestEvent>(group, localId, requestOptions: ReadOptions)
+                : await documents.GetByNumberAsync<TestEvent>(number, localId, requestOptions: ReadOptions);
             Assert.Equal("after", read!.Fields!.Payload);
             Assert.Equal(localId, read.Id);
         }
@@ -95,12 +97,13 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
         var ids = Enumerable.Range(0, 16).Select(i => $"{category}-{i}").ToArray();
         try
         {
-            await Task.WhenAll(ids.Select(id => fixture.Client.Documents.PutAsync(WriteOptions, id,
-                new TestProduct { Name = id, Category = category })));
+            await Task.WhenAll(ids.Select(id => fixture.Client.Documents.PutAsync(id,
+                new TestProduct { Name = id, Category = category }, requestOptions: WriteOptions)));
 
             var endpoint = fixture.Endpoint ?? Environment.GetEnvironmentVariable("VESPA_ENDPOINT")!;
             var options = new VisitOptions { WantedDocumentCount = 1, Concurrency = 1 };
-            var selection = $"product.category == \"{category}\"";
+            var filterCategory = category;
+            var selection = DocumentSelection.For<TestProduct>(product => product.Category == filterCategory);
             var visited = new List<VespaDocument<TestProduct>>();
             string? continuation = null;
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -117,8 +120,13 @@ public sealed class DocumentApiImprovementsE2ETests(VespaFixture fixture)
                 });
                 var page = root
                     ? await reader.Documents.VisitAllPageAsync<TestProduct>("content", selection, continuation, options, deadline.Token)
-                    : await reader.Documents.VisitPageAsync<TestProduct>(selection: selection, cluster: "content",
+                    : await reader.Documents.VisitPageAsync<TestProduct>(rawSelection: selection, cluster: "content",
                         continuation: continuation, options: options, cancellationToken: deadline.Token);
+                if (continuation is null)
+                {
+                    Assert.NotNull(page.Continuation);
+                    filterCategory = "changed-after-first-page";
+                }
                 visited.AddRange(page.Documents);
                 continuation = page.Continuation;
             }
