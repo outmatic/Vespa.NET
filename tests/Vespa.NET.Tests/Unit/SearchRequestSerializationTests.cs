@@ -9,7 +9,7 @@ public class SearchRequestSerializationTests
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
@@ -510,6 +510,46 @@ public class SearchRequestSerializationTests
     }
 
     [Fact]
+    public void ShallowClone_RankProfileChangesDoNotAffectOriginal()
+    {
+        var original = new VespaSearchRequest
+        {
+            Ranking = new RankingConfig { Profile = "original_profile", TotalRerankCount = 25 }
+        };
+
+        var clone = original.ShallowClone().WithRankProfile("clone_profile");
+
+        Assert.Equal("original_profile", original.Ranking.Profile);
+        Assert.Equal("clone_profile", clone.Ranking!.Profile);
+        Assert.Equal(25, clone.Ranking.TotalRerankCount);
+        Assert.Null(clone.Ranking.Features);
+        Assert.Null(clone.Ranking.Properties);
+    }
+
+    [Fact]
+    public void ShallowClone_RankingDictionaryChangesDoNotAffectOriginal()
+    {
+        var original = new VespaSearchRequest
+        {
+            Ranking = new RankingConfig
+            {
+                Features = new(StringComparer.OrdinalIgnoreCase) { ["query(weight)"] = 2.0 },
+                Properties = new(StringComparer.OrdinalIgnoreCase) { ["scale"] = 1 }
+            }
+        };
+
+        var clone = original.ShallowClone().WithRankFeature("threshold", 0.5);
+        clone.Ranking!.Properties!["SCALE"] = 5;
+
+        Assert.Single(original.Ranking.Features);
+        Assert.Equal(1, original.Ranking.Properties["scale"]);
+        Assert.Equal(2.0, clone.Ranking.Features!["query(WEIGHT)"]);
+        Assert.Equal(0.5, clone.Ranking.Features["query(threshold)"]);
+        Assert.Single(clone.Ranking.Properties);
+        Assert.Equal(5, clone.Ranking.Properties["scale"]);
+    }
+
+    [Fact]
     public void ShallowClone_WithNullDictionaries_LeavesThemNull()
     {
         var original = new VespaSearchRequest { Yql = "select * from doc" };
@@ -518,6 +558,7 @@ public class SearchRequestSerializationTests
 
         Assert.Null(clone.CustomParameters);
         Assert.Null(clone.Input);
+        Assert.Null(clone.Ranking);
         Assert.Equal(original.Yql, clone.Yql);
     }
 }

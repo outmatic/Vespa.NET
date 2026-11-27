@@ -291,16 +291,15 @@ public sealed class VespaSearchRequest
 
     /// <summary>
     /// Creates a shallow copy of this request suitable for pagination.
-    /// The <see cref="CustomParameters"/> and <see cref="Input"/> dictionaries are copied
-    /// so per-page mutations never bleed between clones; the values they hold (and other
-    /// reference-typed properties such as <see cref="Ranking"/>) are still shared.
-    /// Cheaper than a JSON serialize→deserialize round-trip.
+    /// Copies <see cref="Ranking"/> and its dictionaries, as well as <see cref="CustomParameters"/>
+    /// and <see cref="Input"/>. Values stored in those dictionaries are shared.
     /// </summary>
     public VespaSearchRequest ShallowClone()
     {
         var clone = (VespaSearchRequest)MemberwiseClone();
         clone.CustomParameters = CustomParameters is null ? null : new(CustomParameters);
         clone.Input = Input is null ? null : new(Input);
+        clone.Ranking = Ranking?.ShallowClone();
         return clone;
     }
 
@@ -489,4 +488,12 @@ public sealed class RankingConfig
     /// <summary>Use the language model for significance estimation.</summary>
     [JsonPropertyName("significance.useModel")]
     public bool? SignificanceUseModel { get; set; }
+
+    internal RankingConfig ShallowClone()
+    {
+        var clone = (RankingConfig)MemberwiseClone();
+        clone.Features = Features is null ? null : new(Features, Features.Comparer);
+        clone.Properties = Properties is null ? null : new(Properties, Properties.Comparer);
+        return clone;
+    }
 }
